@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Shipment Manager",
+  "description": "Application de suivi des expéditions aériennes et maritimes avec assistant IA et automatisation Supply Chain.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
