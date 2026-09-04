@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { sql } from './neon';
+import { getDb } from './neon';
 
 export type UserRole = 'ADMIN' | 'SUPPLY_CHAIN' | 'VIEWER';
 
@@ -14,13 +14,20 @@ export interface UserRecord {
   last_login_at: string | null;
 }
 
+export interface UserWithPassword extends UserRecord {
+  password_hash: string;
+}
+
 export async function createUser(params: {
   email: string;
   password: string;
   displayName: string;
   role?: UserRole;
 }): Promise<UserRecord> {
+  const sql = getDb();
+
   const email = params.email.trim().toLowerCase();
+  const displayName = params.displayName.trim();
   const passwordHash = await bcrypt.hash(params.password, 12);
 
   const rows = await sql`
@@ -33,7 +40,7 @@ export async function createUser(params: {
     VALUES (
       ${email},
       ${passwordHash},
-      ${params.displayName.trim()},
+      ${displayName},
       ${params.role ?? 'VIEWER'}
     )
     RETURNING
@@ -50,7 +57,11 @@ export async function createUser(params: {
   return rows[0] as UserRecord;
 }
 
-export async function findUserByEmail(email: string) {
+export async function findUserByEmail(
+  email: string
+): Promise<UserWithPassword | null> {
+  const sql = getDb();
+
   const normalizedEmail = email.trim().toLowerCase();
 
   const rows = await sql`
@@ -69,12 +80,12 @@ export async function findUserByEmail(email: string) {
     LIMIT 1
   `;
 
-  return rows[0] ?? null;
+  return (rows[0] as UserWithPassword) ?? null;
 }
 
 export async function verifyUserPassword(
   password: string,
   passwordHash: string
-) {
+): Promise<boolean> {
   return bcrypt.compare(password, passwordHash);
 }
