@@ -1,5 +1,5 @@
-import { getDb, initNeonSchema, isNeonConfigured } from './neon';
-import { Shipment } from '../types';
+import { getDb, initNeonSchema, isNeonConfigured } from './neon.js';
+import { Shipment } from '../types.js';
 
 let schemaEnsuredPromise: Promise<void> | null = null;
 
