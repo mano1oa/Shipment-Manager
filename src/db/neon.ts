@@ -5,6 +5,7 @@ import { neon, NeonQueryFunction } from '@neondatabase/serverless';
  * Utilise la variable d'environnement DATABASE_URL.
  */
 
+let currentConnectionUrl: string | null = null;
 let sqlClient: NeonQueryFunction<false, false> | null = null;
 
 /**
@@ -43,7 +44,8 @@ export function getDb(): NeonQueryFunction<false, false> {
     );
   }
 
-  if (!sqlClient) {
+  if (!sqlClient || currentConnectionUrl !== databaseUrl) {
+    currentConnectionUrl = databaseUrl;
     // Initialisation du client Neon HTTP ultra-rapide (compatible Serverless & Edge)
     sqlClient = neon(databaseUrl);
   }

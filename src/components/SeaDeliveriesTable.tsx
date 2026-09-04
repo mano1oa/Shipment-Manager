@@ -44,16 +44,16 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
     const newItem: SeaDeliveryItem = {
       id: `DEL-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       item_no: formatItemNo(newIndex),
-      description: 'Nouveaux composants industriels',
-      colisage_info: '1 palette (120x80x120cm), 150kg',
-      volume_m3: 1.15,
-      supplier: shipment.supplier || 'Fournisseur Validé',
+      description: '',
+      colisage_info: '',
+      volume_m3: 0,
+      supplier: shipment.supplier || '',
       delivery_type: 'Livraison par fournisseur',
-      tracking_no: `TRK-ROUEN-${Math.floor(100000 + Math.random() * 900000)}`,
-      carrier: 'Kuehne+Nagel',
-      carrier_delivery_status: 'En transit vers Hub Rouen',
+      tracking_no: '',
+      carrier: '',
+      carrier_delivery_status: '',
       recep_rouen: 'A confirmer svp',
-      remarks: 'Arrivée prévue entrepôt Rouen sous 48h',
+      remarks: '',
     };
 
     const updatedDeliveries = [...deliveries, newItem];

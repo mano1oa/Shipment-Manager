@@ -12,7 +12,7 @@ import { DeliverablesView } from './components/DeliverablesView';
 
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
-import { PlusCircle, X, CheckCircle2 } from 'lucide-react';
+import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 
 export default function App() {
   // --- STATE MANAGEMENT ---
@@ -22,14 +22,6 @@ export default function App() {
       try {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          // Purge toute trace d'anciennes mockdata conservées dans le navigateur
-          const hasLegacyMock = parsed.some(
-            (s: any) => s.id === 'SHP-1001' || s.supplier === 'Dell Technologies Europe'
-          );
-          if (hasLegacyMock) {
-            localStorage.removeItem('shipment_manager_data_v1');
-            return [];
-          }
           return parsed;
         }
       } catch (e) {
@@ -54,10 +46,23 @@ export default function App() {
   const [newSupplier, setNewSupplier] = useState('');
   const [newOrderRef, setNewOrderRef] = useState('');
   const [newTrackingNo, setNewTrackingNo] = useState('');
+  const [newRefFa, setNewRefFa] = useState('');
+  const [newInvoiceNo, setNewInvoiceNo] = useState('');
+  const [newBlAwb, setNewBlAwb] = useState('');
   const [newCarrier, setNewCarrier] = useState<Shipment['carrier']>('DHL Express');
   const [newMode, setNewMode] = useState<'Air' | 'Sea'>('Air');
+  const [newGlobalStatus, setNewGlobalStatus] = useState<GlobalStatus>('Attente confirmation transitaire');
+  const [newEta, setNewEta] = useState(() => {
+    const d = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    return d.toISOString().split('T')[0];
+  });
   const [newWeight, setNewWeight] = useState(50);
   const [newCost, setNewCost] = useState(650);
+  const [newOrigin, setNewOrigin] = useState('');
+  const [newDestination, setNewDestination] = useState('');
+  const [newRemarks, setNewRemarks] = useState('');
+  const [isCreatingShipment, setIsCreatingShipment] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Sync dataset to localStorage
   useEffect(() => {
@@ -364,62 +369,117 @@ export default function App() {
     }
   };
 
-  const handleCreateShipment = (e: React.FormEvent) => {
+  const handleCreateShipment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSupplier || !newOrderRef || !newTrackingNo) return;
+    setCreateError(null);
 
-    const today = new Date().toISOString().split('T')[0];
-    const created: Shipment = {
-      id: `SHP-${1000 + shipments.length + 1}`,
-      mode: newMode,
-      supplier: newSupplier,
-      order_reference: newOrderRef,
-      invoice_no: `INV-${newSupplier.substring(0, 3).toUpperCase()}-2026`,
-      bl_awb: newMode === 'Air' ? `AWB-020-${Math.floor(100000 + Math.random() * 900000)}` : `BL-MAEU-${Math.floor(100000 + Math.random() * 900000)}`,
-      tracking_no: newTrackingNo,
-      carrier: newCarrier,
-      carrier_status: 'In Transit',
-      carrier_last_location: 'Centre de Tri Origine',
-      eta: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      antoine_status: 'En attente Antoine',
-      global_status: 'Attente confirmation transitaire',
-      remarks: 'Nouvelle expédition créée manuellement via Shipment Manager.',
-      priority: 'Moyenne',
-      weight_kg: newWeight,
-      cost_eur: newCost,
-      origin: 'Europe / Asie',
-      destination: newMode === 'Air' ? 'Antananarivo (TNR)' : 'Toamasina (TMM)',
-      vessel_flight: newMode === 'Air' ? 'AF 934' : 'MSC Express',
-      customs_status: 'En cours',
-      created_at: today,
-      updated_at: today,
-      documents: [],
-      history: [
-        {
-          date: `${today} 09:00`,
-          location: 'Origine',
-          status: 'Prise en charge',
-          details: 'Enregistrement de la commande',
-        },
-      ],
-    };
+    const supplierTrim = newSupplier.trim();
+    const orderRefTrim = newOrderRef.trim();
 
-    setShipments((prev) => [created, ...prev]);
-    setShowNewModal(false);
-    showToast(`Expédition ${created.id} enregistrée avec succès.`);
-    setNewSupplier('');
-    setNewOrderRef('');
-    setNewTrackingNo('');
+    if (!supplierTrim) {
+      setCreateError('Le nom du Fournisseur est obligatoire.');
+      return;
+    }
+    if (!orderRefTrim) {
+      setCreateError('La Référence de Commande / PO est obligatoire.');
+      return;
+    }
 
-    // Persist to Neon
+    setIsCreatingShipment(true);
+
     try {
-      fetch('/api/shipments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(created),
-      }).catch((e) => console.warn('Erreur persistance Neon:', e));
-    } catch (err) {
-      console.warn('Erreur envoi Neon:', err);
+      const today = new Date().toISOString().split('T')[0];
+      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+      const trackingValue = newTrackingNo.trim();
+      const blAwbValue = newBlAwb.trim();
+      const invoiceValue = newInvoiceNo.trim();
+      const shipmentId = `SHP-${new Date().getFullYear()}-${randomSuffix}`;
+
+      const created: Shipment = {
+        id: shipmentId,
+        mode: newMode,
+        supplier: supplierTrim,
+        order_reference: orderRefTrim,
+        invoice_no: invoiceValue,
+        bl_awb: blAwbValue,
+        tracking_no: trackingValue,
+        carrier: newCarrier,
+        carrier_status: trackingValue ? 'In Transit' : 'Information Received',
+        carrier_last_location: newOrigin.trim(),
+        eta: newEta || '',
+        antoine_status: 'En attente Antoine',
+        global_status: newGlobalStatus,
+        remarks: newRemarks.trim(),
+        priority: 'Moyenne',
+        weight_kg: Number(newWeight) || 0,
+        cost_eur: Number(newCost) || 0,
+        origin: newOrigin.trim(),
+        destination: newDestination.trim(),
+        vessel_flight: '',
+        customs_status: 'Non Requis',
+        ref_fa_digi_nxt: newRefFa.trim(),
+        created_at: today,
+        updated_at: today,
+        documents: [],
+        history: [
+          {
+            date: `${today} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
+            location: newOrigin.trim() || 'Origine',
+            status: 'Prise en charge',
+            details: `Création de l'expédition pour ${supplierTrim}`,
+          },
+        ],
+        alerts: [],
+        sea_deliveries: [],
+      };
+
+      let finalShipment = created;
+
+      // Direct persistence attempt to Neon PostgreSQL
+      try {
+        const res = await fetch('/api/shipments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(created),
+        });
+
+        if (res.ok) {
+          const resData = await res.json().catch(() => ({}));
+          if (resData.shipment) finalShipment = resData.shipment;
+          showToast(`✅ Expédition ${finalShipment.id} enregistrée avec succès dans Neon PostgreSQL !`);
+        } else {
+          const errJson = await res.json().catch(() => ({}));
+          console.warn('Neon save warning:', errJson);
+          if (errJson?.details?.includes('password authentication failed')) {
+            showToast(`⚠️ Expédition ${created.id} enregistrée localement (Note: mot de passe Neon expiré dans les paramètres).`);
+          } else {
+            showToast(`Expédition ${created.id} enregistrée localement.`);
+          }
+        }
+      } catch (err: any) {
+        console.warn('Network error saving to Neon:', err);
+        showToast(`Expédition ${created.id} enregistrée localement.`);
+      }
+
+      // Always commit to React state and close modal
+      setShipments((prev) => [finalShipment, ...prev]);
+      setShowNewModal(false);
+
+      // Reset form
+      setNewSupplier('');
+      setNewOrderRef('');
+      setNewTrackingNo('');
+      setNewRefFa('');
+      setNewInvoiceNo('');
+      setNewBlAwb('');
+      setNewRemarks('');
+      setNewCost(650);
+      setNewWeight(50);
+    } catch (err: any) {
+      console.error('Erreur enregistrement:', err);
+      setCreateError(err?.message || 'Erreur lors de la création.');
+    } finally {
+      setIsCreatingShipment(false);
     }
   };
 
@@ -428,7 +488,7 @@ export default function App() {
     setTimeout(() => setNotification(null), 3500);
   };
 
-  const canEdit = currentRole === 'supply_chain';
+  const canEdit = currentRole === 'supply_chain' || currentRole === 'sourcing';
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
@@ -505,6 +565,11 @@ export default function App() {
               canEdit={canEdit}
               onRefreshTracking={handleRefreshTracking}
               onUpdateShipment={handleSaveShipment}
+              onNewShipment={() => {
+                setCreateError(null);
+                setNewMode('Air');
+                setShowNewModal(true);
+              }}
             />
           )}
 
@@ -516,6 +581,11 @@ export default function App() {
               canEdit={canEdit}
               onRefreshTracking={handleRefreshTracking}
               onUpdateShipment={handleSaveShipment}
+              onNewShipment={() => {
+                setCreateError(null);
+                setNewMode('Sea');
+                setShowNewModal(true);
+              }}
             />
           )}
 
@@ -556,108 +626,222 @@ export default function App() {
 
       {/* New Shipment Modal */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs overflow-y-auto">
+          <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 my-8">
             <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-                <PlusCircle className="h-5 w-5 text-[#643288]" /> Ajouter une Nouvelle Expédition
-              </h2>
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
+                  <PlusCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+                    Créer une Nouvelle Expédition
+                  </h2>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Enregistrement direct dans Neon PostgreSQL & le tableau de bord
+                  </p>
+                </div>
+              </div>
               <button
                 onClick={() => setShowNewModal(false)}
-                className="rounded-lg p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleCreateShipment} className="mt-4 space-y-3 text-xs">
-              <div>
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
-                  Fournisseur *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="ex: Dell Europe, Cisco Intl, Schneider Electric"
-                  value={newSupplier}
-                  onChange={(e) => setNewSupplier(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                />
+            {createError && (
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span>{createError}</span>
               </div>
+            )}
 
-              <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleCreateShipment} className="mt-4 space-y-4 text-xs">
+              {/* Mode & Transporteur */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Ref Commande *
+                    Mode de Transport *
+                  </label>
+                  <select
+                    value={newMode}
+                    onChange={(e) => {
+                      const mode = e.target.value as 'Air' | 'Sea';
+                      setNewMode(mode);
+                      if (mode === 'Air' && (newCarrier === 'Maersk (Sea)' || newCarrier === 'MSC (Sea)')) {
+                        setNewCarrier('DHL Express');
+                      } else if (mode === 'Sea' && newCarrier !== 'Maersk (Sea)' && newCarrier !== 'MSC (Sea)') {
+                        setNewCarrier('MSC (Sea)');
+                      }
+                    }}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-medium dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="Air">✈️ Aérien (Express / Cargo)</option>
+                    <option value="Sea">🚢 Maritime (Conteneur / FCL / LCL)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Transporteur / Compagnie *
+                  </label>
+                  <select
+                    value={newCarrier}
+                    onChange={(e) => setNewCarrier(e.target.value as any)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-medium dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    {newMode === 'Air' ? (
+                      <>
+                        <option value="DHL Express">DHL Express</option>
+                        <option value="FedEx">FedEx</option>
+                        <option value="UPS">UPS</option>
+                        <option value="TNT">TNT</option>
+                        <option value="Chronopost">Chronopost</option>
+                        <option value="DB Schenker">DB Schenker</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="MSC (Sea)">MSC (Sea)</option>
+                        <option value="Maersk (Sea)">Maersk (Sea)</option>
+                        <option value="DB Schenker">DB Schenker Maritime</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              {/* Fournisseur & Ref Commande */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Fournisseur *
                   </label>
                   <input
                     type="text"
                     required
-                    placeholder="PO-2026-XXXX"
+                    placeholder="ex: Dell Technologies, Cisco, Schneider..."
+                    value={newSupplier}
+                    onChange={(e) => setNewSupplier(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Réf Commande / PO *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="ex: PO-2026-8812"
                     value={newOrderRef}
                     onChange={(e) => setNewOrderRef(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
+              </div>
 
+              {/* N° Tracking & Réf FA (DIGI - NXT) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    N° Suivi / Tracking *
+                    N° Suivi / Tracking Transporteur
                   </label>
                   <input
                     type="text"
-                    required
-                    placeholder="DHL-XXXX, FDX-XXXX"
+                    placeholder="ex: 1234567890 (optionnel)"
                     value={newTrackingNo}
                     onChange={(e) => setNewTrackingNo(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Mode Transport
+                    Réf FA (DIGI - NXT)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ex: FA-DIGI-2026-042"
+                    value={newRefFa}
+                    onChange={(e) => setNewRefFa(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* LTA / BL & Facture */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    {newMode === 'Air' ? 'N° LTA / AWB' : 'N° BL / Conteneur / SWB'}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={newMode === 'Air' ? 'ex: AWB-020-781290' : 'ex: MSKU-982144'}
+                    value={newBlAwb}
+                    onChange={(e) => setNewBlAwb(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Facture Commerciale N°
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ex: INV-2026-904"
+                    value={newInvoiceNo}
+                    onChange={(e) => setNewInvoiceNo(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Statut & Date ETA */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Statut Global Initial
                   </label>
                   <select
-                    value={newMode}
-                    onChange={(e) => setNewMode(e.target.value as 'Air' | 'Sea')}
+                    value={newGlobalStatus}
+                    onChange={(e) => setNewGlobalStatus(e.target.value as GlobalStatus)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   >
-                    <option value="Air">✈️ Aérien (Air)</option>
-                    <option value="Sea">🚢 Maritime (Sea)</option>
+                    <option value="Attente confirmation transitaire">Attente confirmation transitaire</option>
+                    <option value="Reçu et expédié">Reçu et expédié</option>
+                    <option value="En livraison vers Orly">En livraison vers Orly</option>
+                    <option value="Livré Orly">Livré Orly</option>
+                    <option value="Bloqué douane">Bloqué douane</option>
+                    <option value="Livré entrepôt">Livré entrepôt</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Transporteur
+                    Date estimée d'arrivée (ETA)
                   </label>
-                  <select
-                    value={newCarrier}
-                    onChange={(e) => setNewCarrier(e.target.value as any)}
+                  <input
+                    type="date"
+                    value={newEta}
+                    onChange={(e) => setNewEta(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="DHL Express">DHL Express</option>
-                    <option value="FedEx">FedEx</option>
-                    <option value="UPS">UPS</option>
-                    <option value="TNT">TNT</option>
-                    <option value="Chronopost">Chronopost</option>
-                    <option value="DB Schenker">DB Schenker</option>
-                    <option value="Maersk (Sea)">Maersk (Sea)</option>
-                    <option value="MSC (Sea)">MSC (Sea)</option>
-                  </select>
+                  />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Poids & Coût */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Poids estimé (kg)
+                    Poids (kg)
                   </label>
                   <input
                     type="number"
+                    step="0.1"
                     value={newWeight}
                     onChange={(e) => setNewWeight(Number(e.target.value))}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -670,6 +854,7 @@ export default function App() {
                   </label>
                   <input
                     type="number"
+                    step="0.01"
                     value={newCost}
                     onChange={(e) => setNewCost(Number(e.target.value))}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -677,19 +862,73 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="pt-3 flex gap-2 justify-end">
+              {/* Origine & Destination */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Lieu d'origine
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={newMode === 'Air' ? 'ex: Paris (CDG) / Lyon' : 'ex: Shanghai / Le Havre'}
+                    value={newOrigin}
+                    onChange={(e) => setNewOrigin(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Destination finale
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={newMode === 'Air' ? 'ex: Antananarivo (TNR)' : 'ex: Toamasina (TMM)'}
+                    value={newDestination}
+                    onChange={(e) => setNewDestination(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Remarques */}
+              <div>
+                <label className="font-semibold text-slate-700 dark:text-slate-300">
+                  Observations / Remarques Supply Chain
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Instructions spécifiques, contraintes d'enlèvement ou de dédouanement..."
+                  value={newRemarks}
+                  onChange={(e) => setNewRemarks(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="pt-3 flex gap-2 justify-end border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
+                  disabled={isCreatingShipment}
                   onClick={() => setShowNewModal(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 disabled:opacity-50"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-[#643288] px-4 py-2 text-xs font-bold text-white shadow hover:bg-[#522870]"
+                  disabled={isCreatingShipment}
+                  className="flex items-center gap-2 rounded-xl bg-[#643288] px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-[#522870] active:scale-95 disabled:opacity-50"
                 >
-                  Créer l'Expédition
+                  {isCreatingShipment ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Enregistrement dans Neon...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" /> Enregistrer l'Expédition
+                    </>
+                  )}
                 </button>
               </div>
             </form>

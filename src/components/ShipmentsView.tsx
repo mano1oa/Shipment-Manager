@@ -20,6 +20,7 @@ import {
   Copy,
   Check,
   Printer,
+  PlusCircle,
 } from 'lucide-react';
 import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
@@ -33,6 +34,7 @@ interface ShipmentsViewProps {
   canEdit: boolean;
   onRefreshTracking: (shipmentId: string) => void;
   onUpdateShipment?: (updated: Shipment) => void;
+  onNewShipment?: () => void;
 }
 
 export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
@@ -42,6 +44,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   canEdit,
   onRefreshTracking,
   onUpdateShipment,
+  onNewShipment,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCarrier, setSelectedCarrier] = useState('all');
@@ -240,6 +243,18 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* New Shipment Button */}
+          {onNewShipment && (
+            <button
+              id="shipments-btn-new-shipment"
+              onClick={onNewShipment}
+              className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#522870] active:scale-95"
+              title="Ajouter une nouvelle expédition"
+            >
+              <PlusCircle className="h-4 w-4" /> Nouvelle Expédition
+            </button>
+          )}
+
           {/* Claim Button */}
           <button
             id="shipments-btn-generate-claim"
@@ -424,9 +439,31 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                 <tr>
                   <td
                     colSpan={modeFilter === 'Air' ? 17 : 14}
-                    className="px-4 py-12 text-center text-slate-400"
+                    className="px-4 py-16 text-center"
                   >
-                    Aucune expédition ne correspond aux critères sélectionnés.
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500">
+                        <Package className="h-6 w-6" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
+                          Aucune expédition enregistrée
+                        </p>
+                        <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
+                          {search || selectedCarrier !== 'all' || selectedGlobalStatus !== 'all' || selectedSupplier !== 'all'
+                            ? 'Aucun résultat ne correspond à vos filtres actuels.'
+                            : 'Commencez par ajouter une nouvelle expédition pour initialiser le suivi.'}
+                        </p>
+                      </div>
+                      {onNewShipment && (
+                        <button
+                          onClick={onNewShipment}
+                          className="mt-1 flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#522870]"
+                        >
+                          <PlusCircle className="h-4 w-4" /> Créer une Expédition
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (
