@@ -6,7 +6,7 @@
   "crons": [
     {
       "path": "/api/cron/update-tracking",
-      "schedule": "0 */1 * * *"
+      "schedule": "0 */7 * * *"
     }
   ],
   "rewrites": [
