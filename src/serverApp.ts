@@ -11,7 +11,7 @@ import {
   upsertShipmentInNeon,
   deleteShipmentInNeon,
   clearAllShipmentsInNeon,
-} from './db/index';
+} from './db/index.js';
 
 dotenv.config();
 
