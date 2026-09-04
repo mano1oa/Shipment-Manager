@@ -71,7 +71,7 @@ export function createServerApp(): Express {
 
   // 3. Google Chat Webhook Endpoint
   const DEFAULT_GCHAT_WEBHOOK_URL =
-    'https://chat.googleapis.com/v1/spaces/AAQAHYAbzjU/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=uHH66xQDjO0TyrvApF-RPYf-vOtq-gD4Oo_iBe16HXo';
+  process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
 
   app.post('/api/google-chat-webhook', async (req, res) => {
     const { message, webhookUrl, recipientSpace } = req.body;
