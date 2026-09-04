@@ -77,25 +77,62 @@ export function createServerApp(): Express {
     const { message, webhookUrl, recipientSpace } = req.body;
     const targetUrl = webhookUrl || DEFAULT_GCHAT_WEBHOOK_URL;
 
+      if (!targetUrl) {
+    return res.status(500).json({
+      success: false,
+      error: 'GOOGLE_CHAT_WEBHOOK_URL is not configured',
+    });
+  }
+
     console.log(`[Google Chat Webhook Dispatch] Target: ${targetUrl}`);
     console.log(`Payload: ${message}`);
+    
+try {
+  const webhookRes = await fetch(targetUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+    },
+    body: JSON.stringify({
+      text: message,
+    }),
+  });
+
+  if (webhookRes.ok) {
+    let webhookData: any = {};
 
     try {
-      const webhookRes = await fetch(targetUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-        body: JSON.stringify({ text: message }),
-      });
+      webhookData = await webhookRes.json();
+    } catch {
+      // Google Chat peut parfois répondre sans JSON exploitable.
+    }
 
-      if (webhookRes.ok) {
-        const webhookData = await webhookRes.json();
-        return res.json({
-          success: true,
-          message_id: webhookData.name || `MSG-GCHAT-${Date.now()}`,
-          space: recipientSpace || 'SupplyChain-Alerts',
-          status: 'DISPATCHED_TO_GOOGLE_CHAT',
-          delivered_at: new Date().toISOString(),
-        });
+    return res.json({
+      success: true,
+      message_id: webhookData?.name || `MSG-GCHAT-${Date.now()}`,
+      space: recipientSpace || 'SupplyChain-Alerts',
+      status: 'DISPATCHED_TO_GOOGLE_CHAT',
+      delivered_at: new Date().toISOString(),
+    });
+  }
+
+  const errorText = await webhookRes.text();
+
+  return res.status(webhookRes.status).json({
+    success: false,
+    error: 'Google Chat webhook rejected the request',
+    details: errorText,
+  });
+} catch (err: any) {
+  console.error('Google Chat webhook error:', err);
+
+  return res.status(500).json({
+    success: false,
+    error: 'Failed to send Google Chat message',
+    details: err?.message || 'Unknown error',
+  });
+}
+
       } else {
         return res.json({
           success: true,
