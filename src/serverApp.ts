@@ -1,6 +1,7 @@
 import express, { Express } from 'express';
 import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
+
 import {
   isNeonConfigured,
   testNeonConnection,
@@ -11,14 +12,202 @@ import {
   upsertShipmentInNeon,
   deleteShipmentInNeon,
   clearAllShipmentsInNeon,
-} from './db/index.js';
+} from './db/index';
+
+import {
+  findUserByEmail,
+  verifyUserPassword,
+  updateLastLogin,
+} from './db/users';
+
+import {
+  createSession,
+  getSessionUser,
+  deleteSession,
+} from './db/sessions';
 
 dotenv.config();
+
+function getCookie(req: any, name: string): string | null {
+  const cookieHeader = req.headers.cookie;
+
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const cookies = cookieHeader
+    .split(';')
+    .map((cookie: string) => cookie.trim());
+
+  for (const cookie of cookies) {
+    const separatorIndex = cookie.indexOf('=');
+
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = cookie.slice(0, separatorIndex);
+    const value = cookie.slice(separatorIndex + 1);
+
+    if (key === name) {
+      return decodeURIComponent(value);
+    }
+  }
+
+  return null;
+}
 
 export function createServerApp(): Express {
   const app = express();
 
   app.use(express.json({ limit: '10mb' }));
+
+  // =========================================================
+  // AUTHENTICATION
+  // =========================================================
+
+  app.post('/api/auth/login', async (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          error: 'Email et mot de passe requis',
+        });
+      }
+
+      const user = await findUserByEmail(email);
+
+      if (!user || !user.is_active) {
+        return res.status(401).json({
+          success: false,
+          error: 'Email ou mot de passe incorrect',
+        });
+      }
+
+      const passwordValid = await verifyUserPassword(
+        password,
+        user.password_hash
+      );
+
+      if (!passwordValid) {
+        return res.status(401).json({
+          success: false,
+          error: 'Email ou mot de passe incorrect',
+        });
+      }
+
+      const session = await createSession(user.id);
+
+      await updateLastLogin(user.id);
+
+      const isProduction = process.env.NODE_ENV === 'production';
+
+      res.setHeader(
+        'Set-Cookie',
+        [
+          `shipment_session=${encodeURIComponent(session.token)}`,
+          'HttpOnly',
+          'Path=/',
+          'SameSite=Lax',
+          isProduction ? 'Secure' : '',
+          `Expires=${session.expiresAt.toUTCString()}`,
+        ]
+          .filter(Boolean)
+          .join('; ')
+      );
+
+      return res.json({
+        success: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          display_name: user.display_name,
+          role: user.role,
+        },
+      });
+    } catch (error: any) {
+      console.error('Login error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la connexion',
+      });
+    }
+  });
+
+  app.get('/api/auth/me', async (req, res) => {
+    try {
+      const token = getCookie(req, 'shipment_session');
+
+      if (!token) {
+        return res.status(401).json({
+          authenticated: false,
+        });
+      }
+
+      const sessionUser = await getSessionUser(token);
+
+      if (!sessionUser) {
+        return res.status(401).json({
+          authenticated: false,
+        });
+      }
+
+      return res.json({
+        authenticated: true,
+        user: {
+          id: sessionUser.id,
+          email: sessionUser.email,
+          display_name: sessionUser.display_name,
+          role: sessionUser.role,
+        },
+      });
+    } catch (error) {
+      console.error('Auth me error:', error);
+
+      return res.status(500).json({
+        authenticated: false,
+        error: 'Erreur de session',
+      });
+    }
+  });
+
+  app.post('/api/auth/logout', async (req, res) => {
+    try {
+      const token = getCookie(req, 'shipment_session');
+
+      if (token) {
+        await deleteSession(token);
+      }
+
+      res.setHeader(
+        'Set-Cookie',
+        [
+          'shipment_session=',
+          'HttpOnly',
+          'Path=/',
+          'SameSite=Lax',
+          process.env.NODE_ENV === 'production' ? 'Secure' : '',
+          'Max-Age=0',
+        ]
+          .filter(Boolean)
+          .join('; ')
+      );
+
+      return res.json({
+        success: true,
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Erreur lors de la déconnexion',
+      });
+    }
+  });
 
   // Proactive schema & seeding check when Neon is connected
   if (isNeonConfigured()) {

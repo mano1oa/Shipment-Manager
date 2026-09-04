@@ -89,3 +89,14 @@ export async function verifyUserPassword(
 ): Promise<boolean> {
   return bcrypt.compare(password, passwordHash);
 }
+export async function updateLastLogin(userId: string) {
+  const sql = getDb();
+
+  await sql`
+    UPDATE users
+    SET
+      last_login_at = NOW(),
+      updated_at = NOW()
+    WHERE id = ${userId}
+  `;
+}
