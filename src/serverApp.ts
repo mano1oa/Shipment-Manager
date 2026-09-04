@@ -69,87 +69,67 @@ export function createServerApp(): Express {
     });
   });
 
-  // 3. Google Chat Webhook Endpoint
+   // 3. Google Chat Webhook Endpoint
   const DEFAULT_GCHAT_WEBHOOK_URL =
-  process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
+    process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
 
   app.post('/api/google-chat-webhook', async (req, res) => {
     const { message, webhookUrl, recipientSpace } = req.body;
+
     const targetUrl = webhookUrl || DEFAULT_GCHAT_WEBHOOK_URL;
 
-      if (!targetUrl) {
-    return res.status(500).json({
-      success: false,
-      error: 'GOOGLE_CHAT_WEBHOOK_URL is not configured',
-    });
-  }
-
-    console.log(`[Google Chat Webhook Dispatch] Target: ${targetUrl}`);
-    console.log(`Payload: ${message}`);
-    
-try {
-  const webhookRes = await fetch(targetUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json; charset=UTF-8',
-    },
-    body: JSON.stringify({
-      text: message,
-    }),
-  });
-
-  if (webhookRes.ok) {
-    let webhookData: any = {};
-
-    try {
-      webhookData = await webhookRes.json();
-    } catch {
-      // Google Chat peut parfois répondre sans JSON exploitable.
+    if (!targetUrl) {
+      return res.status(500).json({
+        success: false,
+        error: 'GOOGLE_CHAT_WEBHOOK_URL is not configured',
+      });
     }
 
-    return res.json({
-      success: true,
-      message_id: webhookData?.name || `MSG-GCHAT-${Date.now()}`,
-      space: recipientSpace || 'SupplyChain-Alerts',
-      status: 'DISPATCHED_TO_GOOGLE_CHAT',
-      delivered_at: new Date().toISOString(),
-    });
-  }
+    try {
+      const webhookRes = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+        },
+        body: JSON.stringify({
+          text: message,
+        }),
+      });
 
-  const errorText = await webhookRes.text();
+      if (!webhookRes.ok) {
+        const errorText = await webhookRes.text();
 
-  return res.status(webhookRes.status).json({
-    success: false,
-    error: 'Google Chat webhook rejected the request',
-    details: errorText,
-  });
-} catch (err: any) {
-  console.error('Google Chat webhook error:', err);
-
-  return res.status(500).json({
-    success: false,
-    error: 'Failed to send Google Chat message',
-    details: err?.message || 'Unknown error',
-  });
-}
-
-      } else {
-        return res.json({
-          success: true,
-          message_id: `MSG-GCHAT-${Date.now()}`,
-          space: recipientSpace || 'SupplyChain-Alerts',
-          status: 'DISPATCHED_FALLBACK',
-          delivered_at: new Date().toISOString(),
-          note: 'Post simulé avec succès (serveur Google Chat prêt).',
+        return res.status(webhookRes.status).json({
+          success: false,
+          error: 'Google Chat webhook rejected the request',
+          details: errorText,
         });
       }
-    } catch (err: any) {
+
+      let webhookData: any = {};
+
+      try {
+        webhookData = await webhookRes.json();
+      } catch {
+        // Google Chat may return an empty/non-JSON response
+      }
+
       return res.json({
         success: true,
-        message_id: `MSG-GCHAT-${Date.now()}`,
-        space: recipientSpace || 'SupplyChain-Alerts',
-        status: 'DISPATCHED_LOCAL_SIMULATION',
+        message_id:
+          webhookData?.name || `MSG-GCHAT-${Date.now()}`,
+        space:
+          recipientSpace || 'SupplyChain-Alerts',
+        status: 'DISPATCHED_TO_GOOGLE_CHAT',
         delivered_at: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('[Google Chat Webhook]', err);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to dispatch Google Chat webhook',
+        details: err?.message || 'Unknown error',
       });
     }
   });
