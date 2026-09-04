@@ -97,7 +97,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
-                {carrierStats.map((item) => (
+                {carrierStats.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
+                      Aucune expédition enregistrée pour le calcul des indicateurs SLA.
+                    </td>
+                  </tr>
+                ) : (
+                  carrierStats.map((item) => (
                   <tr key={item.carrier} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
                     <td className="px-3 py-3 font-bold text-slate-900 dark:text-slate-100">
                       {item.carrier}
@@ -144,7 +151,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>
@@ -158,7 +165,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
             </h2>
 
             <div className="mt-4 space-y-3">
-              {topSuppliers.map((sup, idx) => (
+              {topSuppliers.length === 0 ? (
+                <div className="py-4 text-center text-xs text-slate-400 dark:text-slate-500">
+                  Aucun fournisseur répertorié.
+                </div>
+              ) : (
+                topSuppliers.map((sup, idx) => (
                 <div
                   key={sup.supplier}
                   className="flex items-center justify-between rounded-xl bg-slate-50 p-2.5 text-xs dark:bg-slate-900/60"
@@ -175,7 +187,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
                     {sup.count} expéditions
                   </span>
                 </div>
-              ))}
+              )))}
             </div>
           </div>
 

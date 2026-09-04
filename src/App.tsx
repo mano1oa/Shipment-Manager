@@ -10,7 +10,6 @@ import { AIAssistantView } from './components/AIAssistantView';
 import { AdminView } from './components/AdminView';
 import { DeliverablesView } from './components/DeliverablesView';
 
-import { INITIAL_SHIPMENTS } from './data/mockData';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
 import { PlusCircle, X, CheckCircle2 } from 'lucide-react';
@@ -21,12 +20,23 @@ export default function App() {
     const saved = localStorage.getItem('shipment_manager_data_v1');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Purge toute trace d'anciennes mockdata conservées dans le navigateur
+          const hasLegacyMock = parsed.some(
+            (s: any) => s.id === 'SHP-1001' || s.supplier === 'Dell Technologies Europe'
+          );
+          if (hasLegacyMock) {
+            localStorage.removeItem('shipment_manager_data_v1');
+            return [];
+          }
+          return parsed;
+        }
       } catch (e) {
-        return INITIAL_SHIPMENTS;
+        return [];
       }
     }
-    return INITIAL_SHIPMENTS;
+    return [];
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
@@ -53,6 +63,63 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shipment_manager_data_v1', JSON.stringify(shipments));
   }, [shipments]);
+
+  const [dbConnected, setDbConnected] = useState<boolean | null>(null);
+  const [isLoadingDb, setIsLoadingDb] = useState(false);
+
+  // Load live data from Neon PostgreSQL on startup
+  const loadShipmentsFromNeon = async () => {
+    setIsLoadingDb(true);
+    try {
+      const statusRes = await fetch('/api/db/status');
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setDbConnected(Boolean(statusData.connected));
+
+        if (statusData.connected) {
+          const res = await fetch('/api/shipments');
+          if (res.ok) {
+            const data = await res.json();
+            if (data.success && Array.isArray(data.shipments)) {
+              setShipments(data.shipments);
+              console.log(`[Neon DB] ${data.shipments.length} expéditions réelles chargées en direct depuis Neon.`);
+              if (data.shipments.length > 0) {
+                showToast(`${data.shipments.length} expéditions chargées depuis Neon PostgreSQL`);
+              }
+              return;
+            }
+          }
+        }
+      } else {
+        setDbConnected(false);
+      }
+    } catch (err) {
+      console.warn('Neon DB non accessible au démarrage, utilisation des données locales.');
+      setDbConnected(false);
+    } finally {
+      setIsLoadingDb(false);
+    }
+  };
+
+  useEffect(() => {
+    loadShipmentsFromNeon();
+  }, []);
+
+  const handleDeleteShipment = async (shipmentId: string) => {
+    setShipments((prev) => prev.filter((s) => s.id !== shipmentId));
+    if (selectedShipment?.id === shipmentId) {
+      setSelectedShipment(null);
+    }
+    showToast(`Expédition ${shipmentId} supprimée.`);
+
+    try {
+      await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}`, {
+        method: 'DELETE',
+      });
+    } catch (err) {
+      console.warn('Erreur lors de la suppression distante Neon:', err);
+    }
+  };
 
   // Dark mode class toggle
   useEffect(() => {
@@ -149,10 +216,20 @@ export default function App() {
   }, [shipmentsWithAlerts, allAlerts]);
 
   // Handlers
-  const handleSaveShipment = (updated: Shipment) => {
+  const handleSaveShipment = async (updated: Shipment) => {
     setShipments((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     setSelectedShipment(updated);
     showToast(`Expédition ${updated.id} mise à jour avec succès.`);
+
+    try {
+      await fetch(`/api/shipments/${encodeURIComponent(updated.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+    } catch (err) {
+      console.warn('Persistance Neon asynchrone non disponible:', err);
+    }
   };
 
   const handleResolveAlert = (alertId: string) => {
@@ -333,6 +410,17 @@ export default function App() {
     setNewSupplier('');
     setNewOrderRef('');
     setNewTrackingNo('');
+
+    // Persist to Neon
+    try {
+      fetch('/api/shipments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(created),
+      }).catch((e) => console.warn('Erreur persistance Neon:', e));
+    } catch (err) {
+      console.warn('Erreur envoi Neon:', err);
+    }
   };
 
   const showToast = (msg: string) => {
@@ -376,6 +464,9 @@ export default function App() {
         }}
         onSyncShipments={handleSyncShipments}
         isSyncing={isSyncing}
+        dbConnected={dbConnected}
+        isLoadingDb={isLoadingDb}
+        onRefreshDb={loadShipmentsFromNeon}
       />
 
       {/* Main Container */}
@@ -458,6 +549,7 @@ export default function App() {
           onClose={() => setSelectedShipment(null)}
           canEdit={canEdit}
           onSave={handleSaveShipment}
+          onDelete={handleDeleteShipment}
           onDispatchGoogleChat={handleDispatchGoogleChat}
         />
       )}

@@ -300,7 +300,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
-                {recentShipments.map((shp) => (
+                {recentShipments.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
+                      Aucune expédition enregistrée pour le moment. Cliquez sur « Nouvelle Expédition » pour commencer.
+                    </td>
+                  </tr>
+                ) : (
+                  recentShipments.map((shp) => (
                   <tr
                     key={shp.id}
                     className="hover:bg-slate-50/80 transition dark:hover:bg-slate-700/30 cursor-pointer"
@@ -359,7 +366,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </button>
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>

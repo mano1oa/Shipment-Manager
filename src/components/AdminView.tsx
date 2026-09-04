@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings,
   Database,
@@ -11,6 +11,11 @@ import {
   ExternalLink,
   ShieldCheck,
   Zap,
+  Server,
+  AlertCircle,
+  Code2,
+  UploadCloud,
+  Trash2,
 } from 'lucide-react';
 
 export const AdminView: React.FC = () => {
@@ -24,6 +29,92 @@ export const AdminView: React.FC = () => {
   const [transitaireThreshold, setTransitaireThreshold] = useState(4);
   const [webhookStatus, setWebhookStatus] = useState<string | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
+
+  // Neon DB State
+  const [dbStatus, setDbStatus] = useState<{
+    configured: boolean;
+    connected: boolean;
+    database?: string;
+    version?: string;
+    error?: string;
+    message?: string;
+  } | null>(null);
+  const [isCheckingDb, setIsCheckingDb] = useState(false);
+  const [dbActionMessage, setDbActionMessage] = useState<string | null>(null);
+  const [isExecutingDbAction, setIsExecutingDbAction] = useState(false);
+
+  const fetchDbStatus = async () => {
+    setIsCheckingDb(true);
+    try {
+      const res = await fetch('/api/db/status');
+      const data = await res.json();
+      setDbStatus(data);
+    } catch (err: any) {
+      setDbStatus({
+        configured: false,
+        connected: false,
+        error: err?.message || 'Impossible de contacter le serveur',
+      });
+    } finally {
+      setIsCheckingDb(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDbStatus();
+  }, []);
+
+  const handleInitSchema = async () => {
+    setIsExecutingDbAction(true);
+    setDbActionMessage(null);
+    try {
+      const res = await fetch('/api/db/init', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok) {
+        setDbActionMessage('✅ ' + (data.message || 'Schéma Neon initialisé avec succès.'));
+        fetchDbStatus();
+      } else {
+        setDbActionMessage('❌ ' + (data.error || 'Erreur lors de l\'initialisation du schéma.'));
+      }
+    } catch (err: any) {
+      setDbActionMessage('❌ Erreur: ' + err.message);
+    } finally {
+      setIsExecutingDbAction(false);
+    }
+  };
+
+  const handleClearNeon = async () => {
+    if (
+      !window.confirm(
+        'Êtes-vous certain de vouloir vider toutes les données d’expéditions dans la base Neon ? Cette action supprimera définitivement toutes les données de test/mock.'
+      )
+    ) {
+      return;
+    }
+    setIsExecutingDbAction(true);
+    setDbActionMessage(null);
+    try {
+      const res = await fetch('/api/shipments/clear-all', {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDbActionMessage(`✅ Base Neon purgée avec succès (${data.deleted_count || 0} expédition(s) supprimée(s)). Aucune donnée de test restante.`);
+        fetchDbStatus();
+        // Clear local storage as well to ensure total consistency
+        localStorage.removeItem('shipment_manager_data_v1');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1200);
+      } else {
+        setDbActionMessage('❌ ' + (data.error || 'Erreur lors de la purge de la base.'));
+      }
+    } catch (err: any) {
+      setDbActionMessage('❌ Erreur: ' + err.message);
+    } finally {
+      setIsExecutingDbAction(false);
+    }
+  };
 
   const carriersConnectors = [
     { name: 'DHL Express API', type: 'Air', status: 'Actif (REST/OAuth)', ping: '42ms' },
@@ -70,6 +161,112 @@ export const AdminView: React.FC = () => {
         <p className="text-xs text-slate-500 dark:text-slate-400">
           Configuration des connecteurs transporteurs, synchro Google Sheets et règles de déclenchement
         </p>
+      </div>
+
+      {/* NEON DATABASE MANAGEMENT PANEL */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs dark:border-slate-800 dark:bg-slate-800">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-4 dark:border-slate-700">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <Server className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                Base de données Neon (PostgreSQL Serverless)
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                  SQL Direct
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Connexion directe sans ORM via driver HTTP Serverless (<code className="font-mono text-[11px] text-emerald-600">@neondatabase/serverless</code>)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={fetchDbStatus}
+              disabled={isCheckingDb}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isCheckingDb ? 'animate-spin' : ''}`} />
+              Vérifier connexion
+            </button>
+            <button
+              onClick={handleInitSchema}
+              disabled={isExecutingDbAction}
+              className="flex items-center gap-1.5 rounded-xl bg-slate-800 px-3.5 py-2 text-xs font-bold text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-50"
+            >
+              <Database className="h-3.5 w-3.5" />
+              {isExecutingDbAction ? 'Exécution SQL...' : '1. Initialiser Schéma SQL'}
+            </button>
+            <button
+              onClick={handleClearNeon}
+              disabled={isExecutingDbAction}
+              className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-rose-700 disabled:opacity-50 shadow-sm"
+              title="Supprime définitivement toutes les expéditions de test / mockdata dans la base Neon"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Purger / Vider la table Neon
+            </button>
+          </div>
+        </div>
+
+        {/* Status banner */}
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">État Connexion</span>
+            <div className="mt-1 flex items-center gap-2">
+              {dbStatus?.connected ? (
+                <span className="flex items-center gap-1.5 font-bold text-xs text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 className="h-4 w-4" /> Connecté à Neon
+                </span>
+              ) : dbStatus?.configured ? (
+                <span className="flex items-center gap-1.5 font-bold text-xs text-rose-600 dark:text-rose-400">
+                  <AlertCircle className="h-4 w-4" /> Erreur de connexion
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 font-bold text-xs text-amber-600 dark:text-amber-400">
+                  <AlertCircle className="h-4 w-4" /> En attente de DATABASE_URL
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Base active</span>
+            <div className="mt-1 font-mono text-xs font-bold text-slate-800 dark:text-slate-200">
+              {dbStatus?.database || 'Non connectée'}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Version Moteur</span>
+            <div className="mt-1 font-mono text-xs text-slate-700 dark:text-slate-300 truncate" title={dbStatus?.version}>
+              {dbStatus?.version ? dbStatus.version.split(' ')[0] + ' ' + (dbStatus.version.split(' ')[1] || '') : 'PostgreSQL Serverless'}
+            </div>
+          </div>
+        </div>
+
+        {dbActionMessage && (
+          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            {dbActionMessage}
+          </div>
+        )}
+
+        {/* Connection guide */}
+        {!dbStatus?.connected && (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="font-bold flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4" /> Comment activer la persistance Neon :
+            </p>
+            <ol className="mt-2 list-decimal list-inside space-y-1 pl-1">
+              <li>Copiez votre URL de connexion depuis votre projet <strong>Neon.tech</strong> (<code className="font-mono text-[11px]">postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require</code>).</li>
+              <li>Renseignez-la dans les variables d’environnement sous la clé <strong className="font-mono">DATABASE_URL</strong>.</li>
+              <li>Cliquez sur <strong>Initialiser Schéma SQL</strong> pour créer automatiquement la table <code className="font-mono">shipments</code> et ses index.</li>
+            </ol>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

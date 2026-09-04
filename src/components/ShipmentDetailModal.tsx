@@ -18,6 +18,7 @@ import {
   Save,
   Download,
   Search,
+  Trash2,
 } from 'lucide-react';
 import { Shipment, GlobalStatus, AntoineStatus, ShipmentDocument } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
@@ -28,6 +29,7 @@ interface ShipmentDetailModalProps {
   onClose: () => void;
   canEdit: boolean;
   onSave: (updatedShipment: Shipment) => void;
+  onDelete?: (shipmentId: string) => void;
   onDispatchGoogleChat: (message: string, space?: string) => Promise<void>;
 }
 
@@ -36,6 +38,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   onClose,
   canEdit,
   onSave,
+  onDelete,
   onDispatchGoogleChat,
 }) => {
   if (!shipment) return null;
@@ -347,20 +350,36 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 <Building2 className="h-4 w-4 text-[#643288]" /> Pilotage Opérationnel Métier
               </h3>
               {canEdit && (
-                <button
-                  onClick={() => (isEditing ? handleSaveClick() : setIsEditing(true))}
-                  className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-[#522870]"
-                >
-                  {isEditing ? (
-                    <>
-                      <Save className="h-3.5 w-3.5" /> Enregistrer les modifications
-                    </>
-                  ) : (
-                    <>
-                      <Edit2 className="h-3.5 w-3.5" /> Modifier les statuts
-                    </>
+                <div className="flex items-center gap-2">
+                  {isEditing && onDelete && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (window.confirm(`Confirmez-vous la suppression définitive de l'expédition ${shipment.id} ?`)) {
+                          onDelete(shipment.id);
+                          onClose();
+                        }
+                      }}
+                      className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Supprimer
+                    </button>
                   )}
-                </button>
+                  <button
+                    onClick={() => (isEditing ? handleSaveClick() : setIsEditing(true))}
+                    className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-1.5 text-xs font-semibold text-white shadow hover:bg-[#522870]"
+                  >
+                    {isEditing ? (
+                      <>
+                        <Save className="h-3.5 w-3.5" /> Enregistrer les modifications
+                      </>
+                    ) : (
+                      <>
+                        <Edit2 className="h-3.5 w-3.5" /> Modifier les statuts
+                      </>
+                    )}
+                  </button>
+                </div>
               )}
             </div>
 

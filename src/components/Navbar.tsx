@@ -29,6 +29,9 @@ interface NavbarProps {
   onOpenAlerts: () => void;
   onSyncShipments?: () => void;
   isSyncing?: boolean;
+  dbConnected?: boolean | null;
+  isLoadingDb?: boolean;
+  onRefreshDb?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -43,6 +46,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAlerts,
   onSyncShipments,
   isSyncing = false,
+  dbConnected = null,
+  isLoadingDb = false,
+  onRefreshDb,
 }) => {
   return (
     <header
@@ -153,6 +159,32 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Actions, SYNC button & Role Switcher */}
       <div className="flex items-center gap-2.5">
+        {/* Database Neon / Local Indicator */}
+        <div
+          onClick={onRefreshDb}
+          title={
+            dbConnected
+              ? 'Connecté en direct à Neon PostgreSQL via DATABASE_URL / POSTGRES_URL. Cliquez pour recharger.'
+              : 'Mode local actif (fallback). Dès que DATABASE_URL est configuré sur Vercel, la base Neon prendra le relais automatiquement.'
+          }
+          className={`hidden sm:flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition ${
+            dbConnected
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+              : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
+          }`}
+        >
+          <Database className={`h-3 w-3 ${isLoadingDb ? 'animate-pulse' : ''}`} />
+          <span className="flex items-center gap-1">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                dbConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
+              }`}
+            />
+            {dbConnected ? 'Neon PostgreSQL' : 'Données Locales'}
+          </span>
+          {isLoadingDb && <RefreshCw className="h-2.5 w-2.5 animate-spin" />}
+        </div>
+
         {/* SYNC. SHIPMENT Button */}
         {onSyncShipments && (
           <button
