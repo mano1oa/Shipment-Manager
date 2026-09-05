@@ -11,7 +11,7 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { AIAssistantView } from './components/AIAssistantView';
 import { AdminView } from './components/AdminView';
 import { DeliverablesView } from './components/DeliverablesView';
-
+import { SettingsUsersView } from './components/SettingsUsersView';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
 import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
@@ -47,6 +47,9 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  {activeTab === 'settings' && currentRole === 'supply_chain' && (
+  <SettingsUsersView />
+)}
   const currentRole: UserRole =
   authUser?.role === 'SUPPLY_CHAIN'
     ? 'supply_chain'
@@ -541,7 +544,7 @@ useEffect(() => {
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
-    supply_chain: ['dashboard', 'air', 'sea', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables'],
+    supply_chain: ['dashboard', 'air', 'sea', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables','settings'],
     sourcing: ['dashboard', 'air', 'sea', 'assistant'],
     direction: ['dashboard', 'assistant'],
   }), []);

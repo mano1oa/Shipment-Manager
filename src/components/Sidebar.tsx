@@ -22,7 +22,8 @@ export type NavTab =
   | 'analytics'
   | 'assistant'
   | 'admin'
-  | 'deliverables';
+  | 'deliverables'
+  | 'settings';
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -63,6 +64,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: 'Sea',
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
     },
+    {
+      id: 'settings' as NavTab,
+      label: 'Paramètres',
+      icon: Settings,
+      badge: null,
+      allowedRoles: ['supply_chain'] as UserRole[],
+},
     {
       id: 'alerts' as NavTab,
       label: 'Centre d’Alertes',
