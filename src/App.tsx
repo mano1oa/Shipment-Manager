@@ -20,7 +20,7 @@ type AuthUser = {
   id: string;
   email: string;
   display_name: string;
-  role: string;
+  role: 'SUPPLY_CHAIN' | 'SOURCING' | 'DIRECTION';
 };
 
 export default function App() {
@@ -46,8 +46,12 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [currentRole, setCurrentRole] = useState<UserRole>('supply_chain');
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
+  const currentRole: UserRole =
+  authUser?.role === 'SUPPLY_CHAIN'
+    ? 'supply_chain'
+    : authUser?.role === 'SOURCING'
+      ? 'sourcing'
+      : 'direction';  const [darkMode, setDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('shipment_manager_theme') === 'dark';
   });
   const [globalSearch, setGlobalSearch] = useState('');
