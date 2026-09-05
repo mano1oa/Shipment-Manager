@@ -18,13 +18,13 @@ import {
   findUserByEmail,
   verifyUserPassword,
   updateLastLogin,
-} from './db/users';
+} from './db/users.js';
 
 import {
   createSession,
   getSessionUser,
   deleteSession,
-} from './db/sessions';
+} from './db/sessions.js';
 
 dotenv.config();
 
