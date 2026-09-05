@@ -1,7 +1,10 @@
 import bcrypt from 'bcryptjs';
 import { getDb } from './neon.js';
 
-export type UserRole = 'ADMIN' | 'SUPPLY_CHAIN' | 'VIEWER';
+export type UserRole =
+  | 'SUPPLY_CHAIN'
+  | 'SOURCING'
+  | 'DIRECTION';
 
 export interface UserRecord {
   id: string;
