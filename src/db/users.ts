@@ -44,7 +44,7 @@ export async function createUser(params: {
       ${email},
       ${passwordHash},
       ${displayName},
-      ${params.role ?? 'VIEWER'}
+      ${params.role ?? 'SOURCING'}
     )
     RETURNING
       id,
