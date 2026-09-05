@@ -15,9 +15,13 @@ import {
 } from './db/index.js';
 
 import {
+  createUser,
   findUserByEmail,
   verifyUserPassword,
   updateLastLogin,
+  listUsers,
+  updateUserRole,
+  updateUserStatus,
 } from './db/users.js';
 
 import {
@@ -270,8 +274,193 @@ export function createServerApp(): Express {
   });
 
     app.use('/api', requireAuth);
-    
 
+    // Liste des utilisateurs (accessible uniquement aux rôles SUPPLY_CHAIN)
+    app.get(
+  '/api/admin/users',
+  requireRole('SUPPLY_CHAIN'),
+  async (_req, res) => {
+    try {
+      const users = await listUsers();
+
+      return res.json({
+        success: true,
+        users,
+      });
+    } catch (error) {
+      console.error('List users error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Unable to load users',
+      });
+    }
+  }
+);
+
+// Créer un utilisateur 
+app.post(
+  '/api/admin/users',
+  requireRole('SUPPLY_CHAIN'),
+  async (req, res) => {
+    try {
+      const {
+        email,
+        password,
+        displayName,
+        role,
+      } = req.body || {};
+
+      if (!email || !password || !displayName || !role) {
+        return res.status(400).json({
+          success: false,
+          error: 'Missing required fields',
+        });
+      }
+
+      const allowedRoles = [
+        'SUPPLY_CHAIN',
+        'SOURCING',
+        'DIRECTION',
+      ];
+
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid role',
+        });
+      }
+
+      if (password.length < 12) {
+        return res.status(400).json({
+          success: false,
+          error: 'Password must contain at least 12 characters',
+        });
+      }
+
+      const existingUser = await findUserByEmail(email);
+
+      if (existingUser) {
+        return res.status(409).json({
+          success: false,
+          error: 'A user with this email already exists',
+        });
+      }
+
+      const user = await createUser({
+        email,
+        password,
+        displayName,
+        role,
+      });
+
+      return res.status(201).json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error('Create user error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Unable to create user',
+      });
+    }
+  }
+);
+
+// Modifier le rôle 
+
+app.put(
+  '/api/admin/users/:id/role',
+  requireRole('SUPPLY_CHAIN'),
+  async (req, res) => {
+    try {
+      const { role } = req.body || {};
+
+      const allowedRoles = [
+        'SUPPLY_CHAIN',
+        'SOURCING',
+        'DIRECTION',
+      ];
+
+      if (!allowedRoles.includes(role)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid role',
+        });
+      }
+
+      const user = await updateUserRole(
+        req.params.id,
+        role
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found',
+        });
+      }
+
+      return res.json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error('Update user role error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Unable to update user role',
+      });
+    }
+  }
+);
+
+// Activier ou désactiver un rôle
+
+app.put(
+  '/api/admin/users/:id/status',
+  requireRole('SUPPLY_CHAIN'),
+  async (req, res) => {
+    try {
+      const { isActive } = req.body || {};
+
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({
+          success: false,
+          error: 'isActive must be a boolean',
+        });
+      }
+
+      const user = await updateUserStatus(
+        req.params.id,
+        isActive
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          error: 'User not found',
+        });
+      }
+
+      return res.json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error('Update user status error:', error);
+
+      return res.status(500).json({
+        success: false,
+        error: 'Unable to update user status',
+      });
+    }
+  }
+);
+    
   // Proactive schema & seeding check when Neon is connected
   if (isNeonConfigured()) {
     ensureNeonSchema().catch((err) => {

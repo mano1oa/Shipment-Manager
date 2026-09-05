@@ -103,3 +103,74 @@ export async function updateLastLogin(userId: string) {
     WHERE id = ${userId}
   `;
 }
+
+
+export async function listUsers() {
+  const sql = getDb();
+
+  return await sql`
+    SELECT
+      id,
+      email,
+      display_name,
+      role,
+      is_active,
+      created_at,
+      updated_at,
+      last_login_at
+    FROM users
+    ORDER BY created_at DESC
+  `;
+}
+
+export async function updateUserRole(
+  userId: string,
+  role: UserRole
+) {
+  const sql = getDb();
+
+  const rows = await sql`
+    UPDATE users
+    SET
+      role = ${role},
+      updated_at = NOW()
+    WHERE id = ${userId}
+    RETURNING
+      id,
+      email,
+      display_name,
+      role,
+      is_active,
+      created_at,
+      updated_at,
+      last_login_at
+  `;
+
+  return rows[0] ?? null;
+}
+
+export async function updateUserStatus(
+  userId: string,
+  isActive: boolean
+) {
+  const sql = getDb();
+
+  const rows = await sql`
+    UPDATE users
+    SET
+      is_active = ${isActive},
+      updated_at = NOW()
+    WHERE id = ${userId}
+    RETURNING
+      id,
+      email,
+      display_name,
+      role,
+      is_active,
+      created_at,
+      updated_at,
+      last_login_at
+  `;
+
+  return rows[0] ?? null;
+}
