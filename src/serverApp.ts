@@ -57,6 +57,46 @@ function getCookie(req: any, name: string): string | null {
   return null;
 }
 
+async function requireAuth(req: any, res: any, next: any) {
+  try {
+    const token = getCookie(req, 'shipment_session');
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required',
+      });
+    }
+
+    const sessionUser = await getSessionUser(token);
+
+    if (!sessionUser) {
+      return res.status(401).json({
+        success: false,
+        error: 'Invalid or expired session',
+      });
+    }
+
+    req.user = {
+      id: sessionUser.id,
+      email: sessionUser.email,
+      display_name: sessionUser.display_name,
+      role: sessionUser.role,
+    };
+
+    next();
+  } catch (error) {
+    console.error('Authentication middleware error:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'Authentication check failed',
+    });
+  }
+}
+
+
+
 export function createServerApp(): Express {
   const app = express();
 
@@ -208,6 +248,8 @@ export function createServerApp(): Express {
       });
     }
   });
+
+    app.use('/api', requireAuth);
 
   // Proactive schema & seeding check when Neon is connected
   if (isNeonConfigured()) {
