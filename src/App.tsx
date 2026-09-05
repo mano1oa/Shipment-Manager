@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+
+import LoginView from './components/LoginView';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -14,9 +16,21 @@ import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
 import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 
+type AuthUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+};
+
 export default function App() {
   // --- STATE MANAGEMENT ---
+
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [shipments, setShipments] = useState<Shipment[]>(() => {
+    
     const saved = localStorage.getItem('shipment_manager_data_v1');
     if (saved) {
       try {
@@ -68,6 +82,36 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shipment_manager_data_v1', JSON.stringify(shipments));
   }, [shipments]);
+
+useEffect(() => {
+  async function checkAuthentication() {
+    try {
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        setAuthUser(null);
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.authenticated && data.user) {
+        setAuthUser(data.user);
+      } else {
+        setAuthUser(null);
+      }
+    } catch (error) {
+      console.error('Authentication check failed:', error);
+      setAuthUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  checkAuthentication();
+}, []);
 
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
@@ -504,6 +548,26 @@ export default function App() {
       setActiveTab('dashboard');
     }
   }, [currentRole, activeTab, allowedTabsByRole]);
+
+if (authLoading) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <p className="text-sm text-slate-500">
+        Chargement...
+      </p>
+    </div>
+  );
+}
+
+if (!authUser) {
+  return (
+    <LoginView
+      onLoginSuccess={(user) => {
+        setAuthUser(user);
+      }}
+    />
+  );
+}
 
   return (
     <div className="h-screen w-full overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100 flex flex-col">
