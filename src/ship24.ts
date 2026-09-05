@@ -1,7 +1,4 @@
-import type {
-  TrackingProvider,
-  TrackingResult,
-} from './types';
+import type { TrackingProvider, TrackingResult } from './types';
 
 export class Ship24Provider implements TrackingProvider {
   private apiKey: string;
@@ -43,13 +40,16 @@ export class Ship24Provider implements TrackingProvider {
     const data: any = await response.json();
 
     const tracking =
-      data?.data?.trackings?.[0] ?? null;
+      data?.data?.trackings?.[0] ??
+      null;
 
     const events =
-      tracking?.events ?? [];
+      tracking?.events ??
+      [];
 
     const latestEvent =
-      events[0] ?? null;
+      events[0] ??
+      null;
 
     const status =
       tracking?.shipment?.statusMilestone ??
