@@ -65,13 +65,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
     },
     {
-      id: 'settings' as NavTab,
-      label: 'Paramètres',
-      icon: Settings,
-      badge: null,
-      allowedRoles: ['supply_chain'] as UserRole[],
-},
-    {
       id: 'alerts' as NavTab,
       label: 'Centre d’Alertes',
       icon: AlertTriangle,
@@ -109,7 +102,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badgeColor: 'bg-[#643288] text-white',
       allowedRoles: ['supply_chain'] as UserRole[],
     },
-  ];
+  
+      {
+      id: 'settings' as NavTab,
+      label: 'Paramètres',
+      icon: Settings,
+      badge: null,
+      allowedRoles: ['supply_chain'] as UserRole[],
+    },
+    ];
 
   const visibleNavItems = navItems.filter((item) =>
     item.allowedRoles.includes(currentRole)

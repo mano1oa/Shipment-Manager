@@ -47,9 +47,6 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  {activeTab === 'settings' && currentRole === 'supply_chain' && (
-  <SettingsUsersView />
-)}
   const currentRole: UserRole =
   authUser?.role === 'SUPPLY_CHAIN'
     ? 'supply_chain'
@@ -671,7 +668,8 @@ if (!authUser) {
               onUnresolveAlert={handleUnresolveAlert}
             />
           )}
-
+          {activeTab === 'settings' && currentRole === 'supply_chain' && (<SettingsUsersView />
+          )}
           {activeTab === 'analytics' && <AnalyticsView shipments={shipmentsWithAlerts} />}
 
           {activeTab === 'assistant' && (
