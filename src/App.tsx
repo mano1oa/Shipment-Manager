@@ -21,6 +21,7 @@ type AuthUser = {
   email: string;
   display_name: string;
   role: 'SUPPLY_CHAIN' | 'SOURCING' | 'DIRECTION';
+
 };
 
 export default function App() {
@@ -578,7 +579,7 @@ if (!authUser) {
       {/* Top Navigation Bar */}
       <Navbar
         currentRole={currentRole}
-        onRoleChange={setCurrentRole}
+        onRoleChange={() => {}}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         globalSearch={globalSearch}
