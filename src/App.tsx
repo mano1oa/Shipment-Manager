@@ -269,6 +269,19 @@ useEffect(() => {
     };
   }, [shipmentsWithAlerts, allAlerts]);
 
+  async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+  } finally {
+    setAuthUser(null);
+  }
+}
+
   // Handlers
   const handleSaveShipment = async (updated: Shipment) => {
     setShipments((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
@@ -579,6 +592,8 @@ if (!authUser) {
       {/* Top Navigation Bar */}
       <Navbar
         currentRole={currentRole}
+        authUser={authUser}
+        onLogout={handleLogout}
         onRoleChange={() => {}}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
