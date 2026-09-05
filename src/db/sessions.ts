@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getDb } from './neon.ts';
+import { getDb } from './neon.js';
 
 const SESSION_DURATION_DAYS = 7;
 
