@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+
+import LoginView from './components/LoginView';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -9,14 +11,27 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { AIAssistantView } from './components/AIAssistantView';
 import { AdminView } from './components/AdminView';
 import { DeliverablesView } from './components/DeliverablesView';
-
+import { SettingsUsersView } from './components/SettingsUsersView';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
 import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 
+type AuthUser = {
+  id: string;
+  email: string;
+  display_name: string;
+  role: 'SUPPLY_CHAIN' | 'SOURCING' | 'DIRECTION';
+
+};
+
 export default function App() {
   // --- STATE MANAGEMENT ---
+
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [shipments, setShipments] = useState<Shipment[]>(() => {
+    
     const saved = localStorage.getItem('shipment_manager_data_v1');
     if (saved) {
       try {
@@ -32,8 +47,12 @@ export default function App() {
   });
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [currentRole, setCurrentRole] = useState<UserRole>('supply_chain');
-  const [darkMode, setDarkMode] = useState<boolean>(() => {
+  const currentRole: UserRole =
+  authUser?.role === 'SUPPLY_CHAIN'
+    ? 'supply_chain'
+    : authUser?.role === 'SOURCING'
+      ? 'sourcing'
+      : 'direction';  const [darkMode, setDarkMode] = useState<boolean>(() => {
     return localStorage.getItem('shipment_manager_theme') === 'dark';
   });
   const [globalSearch, setGlobalSearch] = useState('');
@@ -68,6 +87,36 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shipment_manager_data_v1', JSON.stringify(shipments));
   }, [shipments]);
+
+useEffect(() => {
+  async function checkAuthentication() {
+    try {
+      const response = await fetch('/api/auth/me', {
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        setAuthUser(null);
+        return;
+      }
+
+      const data = await response.json();
+
+      if (data.authenticated && data.user) {
+        setAuthUser(data.user);
+      } else {
+        setAuthUser(null);
+      }
+    } catch (error) {
+      console.error('Authentication check failed:', error);
+      setAuthUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  checkAuthentication();
+}, []);
 
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
@@ -219,6 +268,19 @@ export default function App() {
       totalValuePerduOrly,
     };
   }, [shipmentsWithAlerts, allAlerts]);
+
+  async function handleLogout() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (error) {
+    console.error('Logout error:', error);
+  } finally {
+    setAuthUser(null);
+  }
+}
 
   // Handlers
   const handleSaveShipment = async (updated: Shipment) => {
@@ -492,7 +554,7 @@ export default function App() {
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
-    supply_chain: ['dashboard', 'air', 'sea', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables'],
+    supply_chain: ['dashboard', 'air', 'sea', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables','settings'],
     sourcing: ['dashboard', 'air', 'sea', 'assistant'],
     direction: ['dashboard', 'assistant'],
   }), []);
@@ -505,12 +567,34 @@ export default function App() {
     }
   }, [currentRole, activeTab, allowedTabsByRole]);
 
+if (authLoading) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <p className="text-sm text-slate-500">
+        Chargement...
+      </p>
+    </div>
+  );
+}
+
+if (!authUser) {
+  return (
+    <LoginView
+      onLoginSuccess={(user) => {
+        setAuthUser(user);
+      }}
+    />
+  );
+}
+
   return (
     <div className="h-screen w-full overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100 flex flex-col">
       {/* Top Navigation Bar */}
       <Navbar
         currentRole={currentRole}
-        onRoleChange={setCurrentRole}
+        authUser={authUser}
+        onLogout={handleLogout}
+        onRoleChange={() => {}}
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         globalSearch={globalSearch}
@@ -599,7 +683,8 @@ export default function App() {
               onUnresolveAlert={handleUnresolveAlert}
             />
           )}
-
+          {activeTab === 'settings' && currentRole === 'supply_chain' && (<SettingsUsersView />
+          )}
           {activeTab === 'analytics' && <AnalyticsView shipments={shipmentsWithAlerts} />}
 
           {activeTab === 'assistant' && (

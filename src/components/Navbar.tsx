@@ -14,12 +14,21 @@ import {
   RefreshCw,
   Database,
   Layers,
+  LogOut,
 } from 'lucide-react';
 import { UserRole } from '../types';
 
 interface NavbarProps {
   currentRole: UserRole;
   onRoleChange: (role: UserRole) => void;
+  authUser: {
+  id: string;
+  email: string;
+  display_name: string;
+  role: string;
+};
+  onLogout: () => void;
+
   darkMode: boolean;
   onToggleDarkMode: () => void;
   globalSearch: string;
@@ -37,6 +46,8 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   currentRole,
   onRoleChange,
+  authUser,
+  onLogout,
   darkMode,
   onToggleDarkMode,
   globalSearch,
@@ -200,43 +211,12 @@ export const Navbar: React.FC<NavbarProps> = ({
         )}
 
         {/* Role Switcher */}
-        <div className="hidden items-center rounded-xl border border-slate-200 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-800 xl:flex">
-          <button
-            id="role-btn-supply-chain"
-            onClick={() => onRoleChange('supply_chain')}
-            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-              currentRole === 'supply_chain'
-                ? 'bg-[#643288] text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            }`}
-            title="Accès complet édition pour l'équipe Supply Chain"
-          >
-            Supply Chain
-          </button>
-          <button
-            id="role-btn-sourcing"
-            onClick={() => onRoleChange('sourcing')}
-            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-              currentRole === 'sourcing'
-                ? 'bg-[#643288] text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            }`}
-            title="Accès consultation pour le Sourcing"
-          >
-            Sourcing
-          </button>
-          <button
-            id="role-btn-direction"
-            onClick={() => onRoleChange('direction')}
-            className={`rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-              currentRole === 'direction'
-                ? 'bg-[#A91869] text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            }`}
-            title="Tableau de bord synthétique pour la Direction"
-          >
-            Direction
-          </button>
+        <div className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+          {currentRole === 'supply_chain'
+              ? 'Supply Chain'
+              : currentRole === 'sourcing'
+              ? 'Sourcing'
+              : 'Direction'}
         </div>
 
         {/* AI Assistant Quick Trigger */}
@@ -273,6 +253,36 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
         </button>
+
+          <div className="hidden items-center gap-2 border-l border-slate-200 pl-3 dark:border-slate-700 lg:flex">
+  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#643288]/10 text-[#643288] dark:bg-[#643288]/30 dark:text-purple-200">
+    <User className="h-4 w-4" />
+  </div>
+
+  <div className="max-w-[160px]">
+    <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">
+      {authUser.display_name}
+    </p>
+
+    <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">
+      {currentRole === 'supply_chain'
+        ? 'Supply Chain'
+        : currentRole === 'sourcing'
+          ? 'Sourcing'
+          : 'Direction'}
+    </p>
+  </div>
+
+  <button
+    type="button"
+    onClick={onLogout}
+    title="Se déconnecter"
+    className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:bg-red-50 hover:text-red-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-red-950 dark:hover:text-red-300"
+  >
+    <LogOut className="h-4 w-4" />
+  </button>
+</div>
+
       </div>
     </header>
   );

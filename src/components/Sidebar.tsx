@@ -22,7 +22,8 @@ export type NavTab =
   | 'analytics'
   | 'assistant'
   | 'admin'
-  | 'deliverables';
+  | 'deliverables'
+  | 'settings';
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -101,7 +102,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badgeColor: 'bg-[#643288] text-white',
       allowedRoles: ['supply_chain'] as UserRole[],
     },
-  ];
+  
+      {
+      id: 'settings' as NavTab,
+      label: 'Paramètres',
+      icon: Settings,
+      badge: null,
+      allowedRoles: ['supply_chain'] as UserRole[],
+    },
+    ];
 
   const visibleNavItems = navItems.filter((item) =>
     item.allowedRoles.includes(currentRole)
