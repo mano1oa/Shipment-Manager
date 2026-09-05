@@ -95,7 +95,27 @@ async function requireAuth(req: any, res: any, next: any) {
   }
 }
 
+function requireRole(...allowedRoles: string[]) {
+  return (req: any, res: any, next: any) => {
+    const userRole = req.user?.role;
 
+    if (!userRole) {
+      return res.status(401).json({
+        success: false,
+        error: 'Authentication required',
+      });
+    }
+
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+      });
+    }
+
+    next();
+  };
+}
 
 export function createServerApp(): Express {
   const app = express();
@@ -250,6 +270,7 @@ export function createServerApp(): Express {
   });
 
     app.use('/api', requireAuth);
+    
 
   // Proactive schema & seeding check when Neon is connected
   if (isNeonConfigured()) {
@@ -304,7 +325,10 @@ export function createServerApp(): Express {
   const DEFAULT_GCHAT_WEBHOOK_URL =
     process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
 
-  app.post('/api/google-chat-webhook', async (req, res) => {
+    app.post(
+      '/api/google-chat-webhook',
+      requireRole('SUPPLY_CHAIN', 'SOURCING'),
+      async (req, res) => {
     const { message, webhookUrl, recipientSpace } = req.body;
 
     const targetUrl = webhookUrl || DEFAULT_GCHAT_WEBHOOK_URL;
@@ -685,7 +709,11 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   });
 
   // Créer ou mettre à jour une expédition (UPSERT SQL direct)
-  app.post('/api/shipments', async (req, res) => {
+    app.post(
+      '/api/shipments',
+       requireRole('SUPPLY_CHAIN', 'SOURCING'),
+      async (req, res) => {
+  
     try {
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
@@ -700,8 +728,12 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   });
 
   // Mettre à jour une expédition
-  app.put('/api/shipments/:id', async (req, res) => {
-    try {
+    app.put(
+      '/api/shipments/:id',
+        requireRole('SUPPLY_CHAIN', 'SOURCING'),
+        async (req, res) => {
+
+  try {
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }
@@ -715,8 +747,12 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   });
 
   // Supprimer une expédition
-  app.delete('/api/shipments/:id', async (req, res) => {
-    try {
+    app.delete(
+        '/api/shipments/:id',
+        requireRole('SUPPLY_CHAIN'),
+        async (req, res) => {
+
+  try {
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }
@@ -729,6 +765,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
   // Purge complète de toutes les données dans Neon (0 mock data)
   app.post('/api/shipments/clear-all', async (req, res) => {
+    requireRole('SUPPLY_CHAIN')
     try {
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
