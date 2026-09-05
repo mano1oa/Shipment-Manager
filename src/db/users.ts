@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { getDb } from './neon';
+import { getDb } from './neon.js';
 
 export type UserRole = 'ADMIN' | 'SUPPLY_CHAIN' | 'VIEWER';
 
