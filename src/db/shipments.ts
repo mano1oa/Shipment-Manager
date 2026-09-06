@@ -25,8 +25,17 @@ export async function ensureNeonSchema(): Promise<void> {
           await initNeonSchema();
         }
       } catch (err: any) {
-        console.error('Erreur lors de ensureNeonSchema:', err?.message || err);
         schemaEnsuredPromise = null; // Permet de réessayer lors de l'appel suivant
+        if (
+          err?.message?.includes('password authentication failed') ||
+          err?.message?.includes('authentication') ||
+          err?.code === '28P01' ||
+          err?.code === 'ECONNREFUSED'
+        ) {
+          console.warn('[Neon DB] Authentification ou connexion échouée (vérifier DATABASE_URL):', err?.message || err);
+        } else {
+          console.warn('[Neon DB] Schéma non initialisé:', err?.message || err);
+        }
         throw err;
       }
     })();

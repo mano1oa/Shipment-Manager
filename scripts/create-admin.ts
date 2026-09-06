@@ -23,7 +23,7 @@ async function main() {
     email,
     password,
     displayName,
-    role: 'ADMIN',
+    role: 'SUPPLY_CHAIN',
   });
 
   console.log('Admin created successfully:', {

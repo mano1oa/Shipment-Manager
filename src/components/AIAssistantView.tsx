@@ -74,6 +74,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           prompt: text,
           shipmentContext: {
@@ -127,6 +128,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
       const res = await fetch('/api/analyze-shipments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ shipments }),
       });
 

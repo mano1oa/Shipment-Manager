@@ -46,7 +46,9 @@ export const AdminView: React.FC = () => {
   const fetchDbStatus = async () => {
     setIsCheckingDb(true);
     try {
-      const res = await fetch('/api/db/status');
+      const res = await fetch('/api/db/status', {
+        credentials: 'include',
+      });
       const data = await res.json();
       setDbStatus(data);
     } catch (err: any) {
@@ -68,7 +70,10 @@ export const AdminView: React.FC = () => {
     setIsExecutingDbAction(true);
     setDbActionMessage(null);
     try {
-      const res = await fetch('/api/db/init', { method: 'POST' });
+      const res = await fetch('/api/db/init', {
+        method: 'POST',
+        credentials: 'include',
+      });
       const data = await res.json();
       if (res.ok) {
         setDbActionMessage('✅ ' + (data.message || 'Schéma Neon initialisé avec succès.'));
@@ -96,6 +101,7 @@ export const AdminView: React.FC = () => {
     try {
       const res = await fetch('/api/shipments/clear-all', {
         method: 'POST',
+        credentials: 'include',
       });
       const data = await res.json();
       if (res.ok) {
@@ -137,6 +143,7 @@ export const AdminView: React.FC = () => {
       const res = await fetch('/api/google-chat-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           message: '🧪 Test d\'intégration N8N -> Google Chat Webhook depuis Shipment Manager Admin',
           recipientSpace: 'SupplyChain-Alerts',
@@ -258,9 +265,20 @@ export const AdminView: React.FC = () => {
         {!dbStatus?.connected && (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
             <p className="font-bold flex items-center gap-1.5">
-              <AlertCircle className="h-4 w-4" /> Comment activer la persistance Neon :
+              <AlertCircle className="h-4 w-4" /> Statut de la connexion Neon :
             </p>
-            <ol className="mt-2 list-decimal list-inside space-y-1 pl-1">
+            {dbStatus?.error && (
+              <div className="mt-2 rounded-lg bg-white/70 p-2.5 font-mono text-[11px] text-rose-700 dark:bg-slate-900/80 dark:text-rose-300 border border-rose-200 dark:border-rose-900">
+                <strong>Diagnostic Neon :</strong> {dbStatus.error}
+                {dbStatus.error.includes('password authentication failed') && (
+                  <p className="mt-1 font-sans text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    💡 Le mot de passe de l'utilisateur <code className="font-mono text-[11px]">neondb_owner</code> a été réinitialisé sur Neon ou ne correspond pas à votre URL actuelle.
+                    Copiez la chaîne de connexion récente depuis votre console <strong>Neon.tech</strong> et mettez à jour <code className="font-mono text-[11px]">DATABASE_URL</code>. En attendant, l'application sauvegarde vos données localement.
+                  </p>
+                )}
+              </div>
+            )}
+            <ol className="mt-2.5 list-decimal list-inside space-y-1 pl-1">
               <li>Copiez votre URL de connexion depuis votre projet <strong>Neon.tech</strong> (<code className="font-mono text-[11px]">postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require</code>).</li>
               <li>Renseignez-la dans les variables d’environnement sous la clé <strong className="font-mono">DATABASE_URL</strong>.</li>
               <li>Cliquez sur <strong>Initialiser Schéma SQL</strong> pour créer automatiquement la table <code className="font-mono">shipments</code> et ses index.</li>

@@ -34,7 +34,9 @@ export const SeaTrackingSearch: React.FC<SeaTrackingSearchProps> = () => {
     setError(null);
 
     try {
-      const res = await fetch(`/api/sea-tracking/${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/sea-tracking/${encodeURIComponent(q)}`, {
+        credentials: 'include',
+      });
       const data = await res.json();
       if (data.success) {
         setResult(data);

@@ -198,7 +198,37 @@ export async function initNeonSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_shipments_container_no ON shipments (container_no);`;
   await sql`CREATE INDEX IF NOT EXISTS idx_shipments_swb_no ON shipments (swb_no);`;
 
-  // 3. Table de suivi des modifications / audit log
+  // 3. Table des utilisateurs & Rôles
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      display_name VARCHAR(100) NOT NULL,
+      role VARCHAR(20) NOT NULL CHECK (role IN ('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION')),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      last_login_at TIMESTAMPTZ
+    );
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);`;
+
+  // 4. Table des sessions utilisateurs (Tokens sécurisés)
+  await sql`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash VARCHAR(64) UNIQUE NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      last_used_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_sessions_token_hash ON user_sessions (token_hash);`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions (expires_at);`;
+
+  // 5. Table de suivi des modifications / audit log
   await sql`
     CREATE TABLE IF NOT EXISTS system_audit_logs (
       id BIGSERIAL PRIMARY KEY,

@@ -211,7 +211,10 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   type="button"
                   onClick={async () => {
                     try {
-                      const res = await fetch(`/api/carrier-track/${encodeURIComponent(shipment.carrier)}/${encodeURIComponent(shipment.tracking_no)}`);
+                      const res = await fetch(
+                        `/api/carrier-track/${encodeURIComponent(shipment.carrier)}/${encodeURIComponent(shipment.tracking_no)}`,
+                        { credentials: 'include' }
+                      );
                       const data = await res.json();
                       if (data.success && onSave) {
                         onSave({

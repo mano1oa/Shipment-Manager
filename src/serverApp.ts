@@ -194,9 +194,22 @@ export function createServerApp(): Express {
     } catch (error: any) {
       console.error('Login error:', error);
 
+      const errorMessage = error?.message || '';
+      if (
+        errorMessage.includes('password authentication failed') ||
+        errorMessage.includes('authentication failed') ||
+        errorMessage.includes('NeonDbError')
+      ) {
+        return res.status(503).json({
+          success: false,
+          error:
+            'Impossible de se connecter à la base de données Neon : identifiants PostgreSQL incorrects ou expirés. Veuillez vérifier DATABASE_URL dans les paramètres.',
+        });
+      }
+
       return res.status(500).json({
         success: false,
-        error: 'Erreur lors de la connexion',
+        error: error?.message || 'Erreur lors de la connexion',
       });
     }
   });
@@ -228,12 +241,12 @@ export function createServerApp(): Express {
           role: sessionUser.role,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Auth me error:', error);
 
       return res.status(500).json({
         authenticated: false,
-        error: 'Erreur de session',
+        error: error?.message || 'Erreur de session',
       });
     }
   });
@@ -271,6 +284,11 @@ export function createServerApp(): Express {
         error: 'Erreur lors de la déconnexion',
       });
     }
+  });
+
+  // Healthcheck public
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', app: 'Shipment Manager', timestamp: new Date().toISOString() });
   });
 
     app.use('/api', requireAuth);
@@ -482,11 +500,6 @@ app.put(
     : null;
 
   // --- API ENDPOINTS ---
-
-  // 1. Healthcheck
-  app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', app: 'Shipment Manager', timestamp: new Date().toISOString() });
-  });
 
   // 2. Carrier Tracking API Mock / Simulator
   app.get('/api/carrier-track/:carrier/:tracking', (req, res) => {
@@ -953,9 +966,11 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   });
 
   // Purge complète de toutes les données dans Neon (0 mock data)
-  app.post('/api/shipments/clear-all', async (req, res) => {
-    requireRole('SUPPLY_CHAIN')
-    try {
+  app.post(
+    '/api/shipments/clear-all',
+    requireRole('SUPPLY_CHAIN'),
+    async (req, res) => {
+      try {
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }

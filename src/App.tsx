@@ -125,13 +125,17 @@ useEffect(() => {
   const loadShipmentsFromNeon = async () => {
     setIsLoadingDb(true);
     try {
-      const statusRes = await fetch('/api/db/status');
+      const statusRes = await fetch('/api/db/status', {
+        credentials: 'include',
+      });
       if (statusRes.ok) {
         const statusData = await statusRes.json();
         setDbConnected(Boolean(statusData.connected));
 
         if (statusData.connected) {
-          const res = await fetch('/api/shipments');
+          const res = await fetch('/api/shipments', {
+            credentials: 'include',
+          });
           if (res.ok) {
             const data = await res.json();
             if (data.success && Array.isArray(data.shipments)) {
@@ -169,6 +173,7 @@ useEffect(() => {
     try {
       await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
     } catch (err) {
       console.warn('Erreur lors de la suppression distante Neon:', err);
@@ -292,6 +297,7 @@ useEffect(() => {
       await fetch(`/api/shipments/${encodeURIComponent(updated.id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(updated),
       });
     } catch (err) {
@@ -314,6 +320,7 @@ useEffect(() => {
       const res = await fetch('/api/google-chat-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ message, recipientSpace: space }),
       });
       if (res.ok) {
@@ -332,7 +339,8 @@ useEffect(() => {
           if (!shp.tracking_no || !shp.carrier) return shp;
           try {
             const res = await fetch(
-              `/api/carrier-track/${encodeURIComponent(shp.carrier)}/${encodeURIComponent(shp.tracking_no)}`
+              `/api/carrier-track/${encodeURIComponent(shp.carrier)}/${encodeURIComponent(shp.tracking_no)}`,
+              { credentials: 'include' }
             );
             const data = await res.json();
             if (data.success) {
@@ -378,6 +386,7 @@ useEffect(() => {
       const res = await fetch('/api/sync-sheets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           airSheetId: '15L895NUzVJK49xcv9XRkX2YbfAK9GILQK73gc4s8k2E',
           seaSheetId: '1pdFr2cLmR0dlxTRV4MONxjcdsFgjyZ-4plfQadt6EUE',
@@ -405,7 +414,10 @@ useEffect(() => {
     if (!target) return;
 
     try {
-      const res = await fetch(`/api/carrier-track/${encodeURIComponent(target.carrier)}/${encodeURIComponent(target.tracking_no)}`);
+      const res = await fetch(
+        `/api/carrier-track/${encodeURIComponent(target.carrier)}/${encodeURIComponent(target.tracking_no)}`,
+        { credentials: 'include' }
+      );
       const data = await res.json();
 
       if (data.success) {
@@ -502,6 +514,7 @@ useEffect(() => {
         const res = await fetch('/api/shipments', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(created),
         });
 
