@@ -30,21 +30,9 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const [shipments, setShipments] = useState<Shipment[]>(() => {
-    
-    const saved = localStorage.getItem('shipment_manager_data_v1');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-      } catch (e) {
-        return [];
-      }
-    }
-    return [];
-  });
+  // Shipments state: strictly sourced from Neon PostgreSQL via GET /api/shipments
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [shipmentsError, setShipmentsError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const currentRole: UserRole =
@@ -83,11 +71,6 @@ export default function App() {
   const [isCreatingShipment, setIsCreatingShipment] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Sync dataset to localStorage
-  useEffect(() => {
-    localStorage.setItem('shipment_manager_data_v1', JSON.stringify(shipments));
-  }, [shipments]);
-
 useEffect(() => {
   async function checkAuthentication() {
     try {
@@ -121,39 +104,37 @@ useEffect(() => {
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
   const [isLoadingDb, setIsLoadingDb] = useState(false);
 
-  // Load live data from Neon PostgreSQL on startup
+  // Load live data from Neon PostgreSQL on startup - Neon is the sole source of truth
   const loadShipmentsFromNeon = async () => {
     setIsLoadingDb(true);
+    setShipmentsError(null);
     try {
-      const statusRes = await fetch('/api/db/status', {
+      const res = await fetch('/api/shipments', {
         credentials: 'include',
       });
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        setDbConnected(Boolean(statusData.connected));
+      const data = await res.json().catch(() => ({}));
 
-        if (statusData.connected) {
-          const res = await fetch('/api/shipments', {
-            credentials: 'include',
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.success && Array.isArray(data.shipments)) {
-              setShipments(data.shipments);
-              console.log(`[Neon DB] ${data.shipments.length} expéditions réelles chargées en direct depuis Neon.`);
-              if (data.shipments.length > 0) {
-                showToast(`${data.shipments.length} expéditions chargées depuis Neon PostgreSQL`);
-              }
-              return;
-            }
-          }
-        }
+      if (res.ok && data.success && Array.isArray(data.shipments)) {
+        setShipments(data.shipments);
+        setDbConnected(true);
+        console.log(`[Neon DB] ${data.shipments.length} expédition(s) chargée(s) depuis Neon.`);
       } else {
+        const errorMsg =
+          data?.message ||
+          data?.error ||
+          'Impossible de charger les expéditions depuis la base Neon PostgreSQL.';
+        setShipments([]);
         setDbConnected(false);
+        setShipmentsError(errorMsg);
+        showToast(`❌ Erreur Neon: ${errorMsg}`);
       }
-    } catch (err) {
-      console.warn('Neon DB non accessible au démarrage, utilisation des données locales.');
+    } catch (err: any) {
+      const networkMsg =
+        err?.message || 'Erreur réseau lors de la communication avec l\'API Neon.';
+      setShipments([]);
       setDbConnected(false);
+      setShipmentsError(networkMsg);
+      showToast(`❌ Erreur de connexion Neon: ${networkMsg}`);
     } finally {
       setIsLoadingDb(false);
     }
@@ -164,19 +145,27 @@ useEffect(() => {
   }, []);
 
   const handleDeleteShipment = async (shipmentId: string) => {
-    setShipments((prev) => prev.filter((s) => s.id !== shipmentId));
-    if (selectedShipment?.id === shipmentId) {
-      setSelectedShipment(null);
-    }
-    showToast(`Expédition ${shipmentId} supprimée.`);
-
     try {
-      await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}`, {
+      const res = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}`, {
         method: 'DELETE',
         credentials: 'include',
       });
-    } catch (err) {
-      console.warn('Erreur lors de la suppression distante Neon:', err);
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        const errMsg = data?.error || 'Échec de la suppression dans Neon PostgreSQL.';
+        showToast(`❌ Erreur suppression Neon: ${errMsg}`);
+        return;
+      }
+
+      // Persisted successfully in Neon -> commit to UI state
+      setShipments((prev) => prev.filter((s) => s.id !== shipmentId));
+      if (selectedShipment?.id === shipmentId) {
+        setSelectedShipment(null);
+      }
+      showToast(`✅ Expédition ${shipmentId} supprimée de Neon PostgreSQL.`);
+    } catch (err: any) {
+      showToast(`❌ Erreur réseau lors de la suppression de ${shipmentId}: ${err?.message || 'Erreur inconnue'}`);
     }
   };
 
@@ -289,19 +278,27 @@ useEffect(() => {
 
   // Handlers
   const handleSaveShipment = async (updated: Shipment) => {
-    setShipments((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-    setSelectedShipment(updated);
-    showToast(`Expédition ${updated.id} mise à jour avec succès.`);
-
     try {
-      await fetch(`/api/shipments/${encodeURIComponent(updated.id)}`, {
+      const res = await fetch(`/api/shipments/${encodeURIComponent(updated.id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(updated),
       });
-    } catch (err) {
-      console.warn('Persistance Neon asynchrone non disponible:', err);
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.success) {
+        const errMsg = data?.error || 'Échec de l\'enregistrement dans Neon PostgreSQL.';
+        showToast(`❌ Erreur mise à jour Neon: ${errMsg}`);
+        return;
+      }
+
+      const savedShipment: Shipment = data.shipment || updated;
+      setShipments((prev) => prev.map((s) => (s.id === savedShipment.id ? savedShipment : s)));
+      setSelectedShipment(savedShipment);
+      showToast(`✅ Expédition ${savedShipment.id} mise à jour dans Neon PostgreSQL.`);
+    } catch (err: any) {
+      showToast(`❌ Erreur réseau lors de la mise à jour: ${err?.message || 'Erreur inconnue'}`);
     }
   };
 
@@ -509,34 +506,33 @@ useEffect(() => {
 
       let finalShipment = created;
 
-      // Direct persistence attempt to Neon PostgreSQL
-      try {
-        const res = await fetch('/api/shipments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(created),
-        });
+      // Direct persistence attempt to Neon PostgreSQL - Single source of truth
+      const res = await fetch('/api/shipments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(created),
+      });
 
-        if (res.ok) {
-          const resData = await res.json().catch(() => ({}));
-          if (resData.shipment) finalShipment = resData.shipment;
-          showToast(`✅ Expédition ${finalShipment.id} enregistrée avec succès dans Neon PostgreSQL !`);
-        } else {
-          const errJson = await res.json().catch(() => ({}));
-          console.warn('Neon save warning:', errJson);
-          if (errJson?.details?.includes('password authentication failed')) {
-            showToast(`⚠️ Expédition ${created.id} enregistrée localement (Note: mot de passe Neon expiré dans les paramètres).`);
-          } else {
-            showToast(`Expédition ${created.id} enregistrée localement.`);
-          }
-        }
-      } catch (err: any) {
-        console.warn('Network error saving to Neon:', err);
-        showToast(`Expédition ${created.id} enregistrée localement.`);
+      const resData = await res.json().catch(() => ({}));
+
+      if (!res.ok || !resData.success) {
+        const errMsg =
+          resData?.message ||
+          resData?.error ||
+          'Erreur lors de l\'enregistrement dans la base Neon PostgreSQL.';
+        setCreateError(errMsg);
+        showToast(`❌ Erreur création Neon: ${errMsg}`);
+        return;
       }
 
-      // Always commit to React state and close modal
+      if (resData.shipment) {
+        finalShipment = resData.shipment;
+      }
+
+      showToast(`✅ Expédition ${finalShipment.id} enregistrée avec succès dans Neon PostgreSQL !`);
+
+      // Commit to React state and close modal only after successful Neon persistence
       setShipments((prev) => [finalShipment, ...prev]);
       setShowNewModal(false);
 
@@ -552,7 +548,9 @@ useEffect(() => {
       setNewWeight(50);
     } catch (err: any) {
       console.error('Erreur enregistrement:', err);
-      setCreateError(err?.message || 'Erreur lors de la création.');
+      const networkMsg = err?.message || 'Erreur réseau lors de la création.';
+      setCreateError(networkMsg);
+      showToast(`❌ ${networkMsg}`);
     } finally {
       setIsCreatingShipment(false);
     }
@@ -640,6 +638,26 @@ if (!authUser) {
 
         {/* Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          {shipmentsError && (
+            <div className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
+                <div>
+                  <p className="font-semibold">Erreur de chargement de la base Neon PostgreSQL</p>
+                  <p className="text-xs text-red-600 dark:text-red-300">{shipmentsError}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={loadShipmentsFromNeon}
+                disabled={isLoadingDb}
+                className="ml-4 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+              >
+                {isLoadingDb ? 'Tentative en cours...' : 'Réessayer'}
+              </button>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
             <DashboardView
               shipments={shipmentsWithAlerts}

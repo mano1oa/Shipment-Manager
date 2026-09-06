@@ -107,8 +107,6 @@ export const AdminView: React.FC = () => {
       if (res.ok) {
         setDbActionMessage(`✅ Base Neon purgée avec succès (${data.deleted_count || 0} expédition(s) supprimée(s)). Aucune donnée de test restante.`);
         fetchDbStatus();
-        // Clear local storage as well to ensure total consistency
-        localStorage.removeItem('shipment_manager_data_v1');
         setTimeout(() => {
           window.location.reload();
         }, 1200);
