@@ -31,7 +31,6 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingRow, setEditingRow] = useState<SeaDeliveryItem | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState<string | null>(null);
 
   // Helper to re-index item_no sequentially: "01", "02", "03"...
   const formatItemNo = (index: number) => {
@@ -117,43 +116,6 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
     e.stopPropagation();
     setEditingId(null);
     setEditingRow(null);
-  };
-
-  const handleRefreshTrackingItem = (item: SeaDeliveryItem, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setIsRefreshing(item.id);
-
-    setTimeout(() => {
-      const statuses = [
-        'Livré au quai Rouen',
-        'En cours de déchargement Rouen',
-        'En transit vers Hub Rouen',
-        'Prise en charge plateforme',
-      ];
-      const newStatus = statuses[Math.floor(Math.random() * statuses.length)];
-      const autoRouen: RecepRouenStatus =
-        newStatus.includes('Livré') || newStatus.includes('déchargement')
-          ? 'Oui'
-          : 'A confirmer svp';
-
-      const updatedDeliveries = deliveries.map((d) =>
-        d.id === item.id
-          ? {
-              ...d,
-              carrier_delivery_status: newStatus,
-              recep_rouen: autoRouen,
-            }
-          : d
-      );
-
-      onUpdateShipment({
-        ...shipment,
-        sea_deliveries: updatedDeliveries,
-        updated_at: new Date().toISOString().split('T')[0],
-      });
-
-      setIsRefreshing(null);
-    }, 800);
   };
 
   // Quick total calculations
@@ -407,18 +369,6 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
                             <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-200">
                               {item.carrier_delivery_status}
                             </span>
-                            <button
-                              onClick={(e) => handleRefreshTrackingItem(item, e)}
-                              disabled={isRefreshing === item.id}
-                              className="rounded-md p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800"
-                              title="Recherche comme aérienne (Live status)"
-                            >
-                              <RefreshCw
-                                className={`h-3 w-3 ${
-                                  isRefreshing === item.id ? 'animate-spin text-indigo-600' : ''
-                                }`}
-                              />
-                            </button>
                           </>
                         )}
                       </div>

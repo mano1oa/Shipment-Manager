@@ -147,8 +147,12 @@ export const AdminView: React.FC = () => {
           recipientSpace: 'SupplyChain-Alerts',
         }),
       });
-      const data = await res.json();
-      setWebhookStatus(`Succès ! Webhook transmis à N8N (ID Message: ${data.message_id})`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
+        setWebhookStatus('Succès ! Message de test transmis à Google Chat.');
+      } else {
+        setWebhookStatus(`Échec : ${data?.error || `erreur ${res.status}`}`);
+      }
     } catch (err) {
       setWebhookStatus('Erreur lors de la transmission au webhook.');
     } finally {

@@ -47,7 +47,6 @@ export default function App() {
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
 
   // New Shipment Form State
   const [newSupplier, setNewSupplier] = useState('');
@@ -312,131 +311,23 @@ useEffect(() => {
     showToast(`Alerte ${alertId} réactivée.`);
   };
 
-  const handleDispatchGoogleChat = async (message: string, space = 'SupplyChain-Alerts') => {
+  const handleDispatchGoogleChat = async (message: string, _space?: string) => {
     try {
       const res = await fetch('/api/google-chat-webhook', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ message, recipientSpace: space }),
+        body: JSON.stringify({ message }),
       });
-      if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success) {
         showToast('Relance Google Chat transmise avec succès !');
+      } else {
+        showToast(`❌ Échec de l'envoi Google Chat : ${data?.error || `erreur ${res.status}`}`);
       }
     } catch (err) {
       console.error(err);
-      showToast('Transmission webhook envoyée.');
-    }
-  };
-
-  const refreshAllCarrierStatuses = async (silent = false) => {
-    try {
-      const updated = await Promise.all(
-        shipments.map(async (shp) => {
-          if (!shp.tracking_no || !shp.carrier) return shp;
-          try {
-            const res = await fetch(
-              `/api/carrier-track/${encodeURIComponent(shp.carrier)}/${encodeURIComponent(shp.tracking_no)}`,
-              { credentials: 'include' }
-            );
-            const data = await res.json();
-            if (data.success) {
-              return {
-                ...shp,
-                carrier_status: data.carrier_status as any,
-                carrier_delivery_status: data.carrier_delivery_status || data.carrier_status,
-                carrier_status_date: data.carrier_status_date,
-                carrier_last_location: data.last_location,
-                eta: data.eta || shp.eta,
-                updated_at: new Date().toISOString().split('T')[0],
-              };
-            }
-          } catch (err) {
-            console.error('Erreur rafraîchissement tracking pour', shp.id, err);
-          }
-          return shp;
-        })
-      );
-      setShipments(updated);
-      if (!silent) {
-        showToast('🔄 Statuts transporteurs rafraîchis pour l\'ensemble des expéditions !');
-      }
-    } catch (err) {
-      console.error('Erreur lors du rafraîchissement global des statuts transporteurs:', err);
-    }
-  };
-
-  // Automatic refresh of carrier status every 4 hours
-  useEffect(() => {
-    const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
-    const interval = setInterval(() => {
-      console.log('[Auto-Sync] Exécution du rafraîchissement automatique 4H des statuts transporteurs...');
-      refreshAllCarrierStatuses(false);
-    }, FOUR_HOURS_MS);
-
-    return () => clearInterval(interval);
-  }, [shipments]);
-
-  const handleSyncShipments = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await fetch('/api/sync-sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          airSheetId: '15L895NUzVJK49xcv9XRkX2YbfAK9GILQK73gc4s8k2E',
-          seaSheetId: '1pdFr2cLmR0dlxTRV4MONxjcdsFgjyZ-4plfQadt6EUE',
-        }),
-      });
-      const data = await res.json();
-
-      // Refresh all carrier tracking statuses from API as part of SYNC SHIPMENT
-      await refreshAllCarrierStatuses(true);
-
-      if (data.success) {
-        showToast('✅ Synchro globale réussie : Aérien (32) & Maritime (24) + Statuts transporteurs à jour !');
-      } else {
-        showToast('Synchronisation Google Sheets Aérienne & Maritime effectuée.');
-      }
-    } catch (err) {
-      showToast('Synchronisation effectuée (bases Google Sheets Air & Sea à jour).');
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  const handleRefreshTracking = async (shipmentId: string) => {
-    const target = shipments.find((s) => s.id === shipmentId);
-    if (!target) return;
-
-    try {
-      const res = await fetch(
-        `/api/carrier-track/${encodeURIComponent(target.carrier)}/${encodeURIComponent(target.tracking_no)}`,
-        { credentials: 'include' }
-      );
-      const data = await res.json();
-
-      if (data.success) {
-        setShipments((prev) =>
-          prev.map((s) =>
-            s.id === shipmentId
-              ? {
-                  ...s,
-                  carrier_status: data.carrier_status as any,
-                  carrier_delivery_status: data.carrier_delivery_status || data.carrier_status,
-                  carrier_status_date: data.carrier_status_date,
-                  carrier_last_location: data.last_location,
-                  eta: data.eta || s.eta,
-                  updated_at: new Date().toISOString().split('T')[0],
-                }
-              : s
-          )
-        );
-        showToast(`Statut transporteur généré pour ${target.carrier} (${target.tracking_no}) : ${data.carrier_status}`);
-      }
-    } catch (err) {
-      showToast(`Statut transporteur recherché pour ${target.tracking_no}`);
+      showToast('❌ Échec de l\'envoi Google Chat (erreur réseau).');
     }
   };
 
@@ -617,8 +508,6 @@ if (!authUser) {
             setActiveTab('alerts');
           }
         }}
-        onSyncShipments={handleSyncShipments}
-        isSyncing={isSyncing}
         dbConnected={dbConnected}
         isLoadingDb={isLoadingDb}
         onRefreshDb={loadShipmentsFromNeon}
@@ -678,7 +567,6 @@ if (!authUser) {
               modeFilter="Air"
               onSelectShipment={setSelectedShipment}
               canEdit={canEdit}
-              onRefreshTracking={handleRefreshTracking}
               onUpdateShipment={handleSaveShipment}
               onNewShipment={() => {
                 setCreateError(null);
@@ -694,7 +582,6 @@ if (!authUser) {
               modeFilter="Sea"
               onSelectShipment={setSelectedShipment}
               canEdit={canEdit}
-              onRefreshTracking={handleRefreshTracking}
               onUpdateShipment={handleSaveShipment}
               onNewShipment={() => {
                 setCreateError(null);
@@ -735,7 +622,7 @@ if (!authUser) {
           onClose={() => setSelectedShipment(null)}
           canEdit={canEdit}
           onSave={handleSaveShipment}
-          onDelete={handleDeleteShipment}
+          onDelete={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
           onDispatchGoogleChat={handleDispatchGoogleChat}
         />
       )}
