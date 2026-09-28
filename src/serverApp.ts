@@ -30,6 +30,23 @@ import {
   deleteSession,
 } from './db/sessions.js';
 
+import {
+  getActiveCarriers,
+  createCarrier,
+  DuplicateReferenceError,
+  CARRIER_TRANSPORT_MODES,
+  CARRIER_NAME_MAX_LENGTH,
+} from './db/carriers.js';
+
+import {
+  getActiveSuppliers,
+  createSupplier,
+  DuplicateSupplierError,
+  SUPPLIER_NAME_MAX_LENGTH,
+} from './db/suppliers.js';
+
+import { writeAuditLog } from './db/audit.js';
+
 dotenv.config();
 
 function getCookie(req: any, name: string): string | null {
@@ -663,6 +680,121 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  // --- REFERENCE DATA: carriers & suppliers (source of truth: Neon) ---
+  // Reads: any authenticated user. Creation: SUPPLY_CHAIN + SOURCING.
+  // Selected names are still written as text into shipments.carrier / .supplier.
+
+  app.get('/api/reference/carriers', async (_req, res) => {
+    try {
+      const carriers = await getActiveCarriers();
+      return res.json({ success: true, carriers });
+    } catch (err: any) {
+      console.error('[Reference] List carriers error:', err);
+      return res.status(500).json({ success: false, error: 'Unable to load carriers' });
+    }
+  });
+
+  app.post(
+    '/api/reference/carriers',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+      const transportMode = req.body?.transport_mode;
+
+      if (!name) {
+        return res.status(400).json({ success: false, error: 'Le nom du transporteur est obligatoire.' });
+      }
+      if (name.length > CARRIER_NAME_MAX_LENGTH) {
+        return res.status(400).json({
+          success: false,
+          error: `Le nom du transporteur ne doit pas dépasser ${CARRIER_NAME_MAX_LENGTH} caractères.`,
+        });
+      }
+      if (!CARRIER_TRANSPORT_MODES.includes(transportMode)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Le mode du transporteur est obligatoire (Air, Sea ou BOTH).',
+        });
+      }
+
+      try {
+        const carrier = await createCarrier(name, transportMode);
+
+        await writeAuditLog({
+          entityType: 'CARRIER',
+          entityId: carrier.id,
+          action: 'CREATE_CARRIER',
+          actor: req.user,
+          details: { name: carrier.name, transport_mode: carrier.transport_mode },
+        });
+
+        return res.status(201).json({ success: true, carrier });
+      } catch (err: any) {
+        if (err instanceof DuplicateReferenceError) {
+          return res.status(409).json({
+            success: false,
+            error: `Le transporteur « ${err.existing.name} » existe déjà.`,
+            existing: err.existing,
+          });
+        }
+        console.error('[Reference] Create carrier error:', err);
+        return res.status(500).json({ success: false, error: 'Unable to create carrier' });
+      }
+    }
+  );
+
+  app.get('/api/reference/suppliers', async (_req, res) => {
+    try {
+      const suppliers = await getActiveSuppliers();
+      return res.json({ success: true, suppliers });
+    } catch (err: any) {
+      console.error('[Reference] List suppliers error:', err);
+      return res.status(500).json({ success: false, error: 'Unable to load suppliers' });
+    }
+  });
+
+  app.post(
+    '/api/reference/suppliers',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+      if (!name) {
+        return res.status(400).json({ success: false, error: 'Le nom du fournisseur est obligatoire.' });
+      }
+      if (name.length > SUPPLIER_NAME_MAX_LENGTH) {
+        return res.status(400).json({
+          success: false,
+          error: `Le nom du fournisseur ne doit pas dépasser ${SUPPLIER_NAME_MAX_LENGTH} caractères.`,
+        });
+      }
+
+      try {
+        const supplier = await createSupplier(name);
+
+        await writeAuditLog({
+          entityType: 'SUPPLIER',
+          entityId: supplier.id,
+          action: 'CREATE_SUPPLIER',
+          actor: req.user,
+          details: { name: supplier.name },
+        });
+
+        return res.status(201).json({ success: true, supplier });
+      } catch (err: any) {
+        if (err instanceof DuplicateSupplierError) {
+          return res.status(409).json({
+            success: false,
+            error: `Le fournisseur « ${err.existing.name} » existe déjà.`,
+            existing: err.existing,
+          });
+        }
+        console.error('[Reference] Create supplier error:', err);
+        return res.status(500).json({ success: false, error: 'Unable to create supplier' });
+      }
+    }
+  );
+
   // --- NEON POSTGRESQL DIRECT SQL ENDPOINTS ---
 
   // Statut de la connexion Neon
@@ -753,7 +885,38 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }
-      const data = req.body;
+      const data = req.body || {};
+
+      // Creation-time validation: required business fields must be provided
+      // explicitly by the user (no server-side invented defaults).
+      const requiredText = (v: any) => typeof v === 'string' && v.trim() !== '';
+      const missing: string[] = [];
+      if (!['Air', 'Sea'].includes(data.mode)) missing.push('mode');
+      if (!requiredText(data.supplier)) missing.push('supplier');
+      if (!requiredText(data.order_reference)) missing.push('order_reference');
+      if (!requiredText(data.global_status)) missing.push('global_status');
+      if (!['Confirmé', 'En attente Antoine', 'Transmis transitaire', 'A vérifier'].includes(data.antoine_status)) {
+        missing.push('antoine_status');
+      }
+      if (!['Haute', 'Moyenne', 'Basse'].includes(data.priority)) missing.push('priority');
+      if (!['Dédouané', 'En cours', 'Bloqué Douane', 'Non Requis'].includes(data.customs_status)) {
+        missing.push('customs_status');
+      }
+      if (missing.length > 0) {
+        return res.status(400).json({
+          success: false,
+          error: `Champs obligatoires manquants ou invalides : ${missing.join(', ')}`,
+        });
+      }
+
+      // POST is creation only: never silently overwrite an existing shipment.
+      if (data.id && (await getShipmentByIdFromNeon(data.id))) {
+        return res.status(409).json({
+          success: false,
+          error: `Une expédition avec l'identifiant ${data.id} existe déjà. Veuillez réessayer.`,
+        });
+      }
+
       const saved = await upsertShipmentInNeon(data);
       res.json({ success: true, shipment: saved });
     } catch (err: any) {

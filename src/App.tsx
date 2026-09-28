@@ -12,8 +12,14 @@ import { AIAssistantView } from './components/AIAssistantView';
 import { AdminView } from './components/AdminView';
 import { DeliverablesView } from './components/DeliverablesView';
 import { SettingsUsersView } from './components/SettingsUsersView';
+import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
+
+type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTransportMode };
+type ReferenceSupplier = { id: string; name: string };
+type ShipmentPriority = Shipment['priority'];
+type CustomsStatus = Shipment['customs_status'];
 import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 
 type AuthUser = {
@@ -55,20 +61,152 @@ export default function App() {
   const [newRefFa, setNewRefFa] = useState('');
   const [newInvoiceNo, setNewInvoiceNo] = useState('');
   const [newBlAwb, setNewBlAwb] = useState('');
-  const [newCarrier, setNewCarrier] = useState<Shipment['carrier']>('DHL Express');
+  const [newCarrier, setNewCarrier] = useState('');
   const [newMode, setNewMode] = useState<'Air' | 'Sea'>('Air');
-  const [newGlobalStatus, setNewGlobalStatus] = useState<GlobalStatus>('Attente confirmation transitaire');
-  const [newEta, setNewEta] = useState(() => {
-    const d = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-    return d.toISOString().split('T')[0];
-  });
-  const [newWeight, setNewWeight] = useState(50);
-  const [newCost, setNewCost] = useState(650);
+  const [newGlobalStatus, setNewGlobalStatus] = useState<GlobalStatus | ''>('');
+  const [newAntoineStatus, setNewAntoineStatus] = useState<AntoineStatus | ''>('');
+  const [newPriority, setNewPriority] = useState<ShipmentPriority | ''>('');
+  const [newCustomsStatus, setNewCustomsStatus] = useState<CustomsStatus | ''>('');
+  const [newEta, setNewEta] = useState('');
+  // Numeric inputs are kept as strings ('' = unknown) and converted on submit.
+  const [newWeight, setNewWeight] = useState('');
+  const [newCost, setNewCost] = useState('');
   const [newOrigin, setNewOrigin] = useState('');
   const [newDestination, setNewDestination] = useState('');
   const [newRemarks, setNewRemarks] = useState('');
   const [isCreatingShipment, setIsCreatingShipment] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // Reference lists (Neon): carriers & suppliers for the creation form
+  const [refCarriers, setRefCarriers] = useState<ReferenceCarrier[]>([]);
+  const [refSuppliers, setRefSuppliers] = useState<ReferenceSupplier[]>([]);
+  const [refLoading, setRefLoading] = useState(false);
+  const [refCarriersError, setRefCarriersError] = useState<string | null>(null);
+  const [refSuppliersError, setRefSuppliersError] = useState<string | null>(null);
+
+  const sortByName = <T extends { name: string }>(items: T[]) =>
+    [...items].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
+
+  const loadReferenceLists = async () => {
+    setRefLoading(true);
+    setRefCarriersError(null);
+    setRefSuppliersError(null);
+    try {
+      const [carriersRes, suppliersRes] = await Promise.all([
+        fetch('/api/reference/carriers', { credentials: 'include' }),
+        fetch('/api/reference/suppliers', { credentials: 'include' }),
+      ]);
+      const carriersData = await carriersRes.json().catch(() => ({}));
+      const suppliersData = await suppliersRes.json().catch(() => ({}));
+
+      if (carriersRes.ok && carriersData?.success) {
+        setRefCarriers(carriersData.carriers || []);
+      } else {
+        setRefCarriersError('Impossible de charger la liste des transporteurs.');
+      }
+      if (suppliersRes.ok && suppliersData?.success) {
+        setRefSuppliers(suppliersData.suppliers || []);
+      } else {
+        setRefSuppliersError('Impossible de charger la liste des fournisseurs.');
+      }
+    } catch {
+      setRefCarriersError('Impossible de charger la liste des transporteurs (erreur réseau).');
+      setRefSuppliersError('Impossible de charger la liste des fournisseurs (erreur réseau).');
+    } finally {
+      setRefLoading(false);
+    }
+  };
+
+  // Reload lists each time the creation form opens (picks up other users' additions)
+  useEffect(() => {
+    if (showNewModal) {
+      loadReferenceLists();
+    }
+  }, [showNewModal]);
+
+  const carrierAppliesToMode = (carrier: ReferenceCarrier, mode: 'Air' | 'Sea') =>
+    carrier.transport_mode === 'BOTH' || carrier.transport_mode === mode;
+
+  const carriersForMode = useMemo(
+    () => refCarriers.filter((c) => carrierAppliesToMode(c, newMode)),
+    [refCarriers, newMode]
+  );
+
+  const handleCreateCarrier = async (
+    name: string,
+    mode?: ReferenceTransportMode
+  ): Promise<ReferenceCreateResult> => {
+    try {
+      const res = await fetch('/api/reference/carriers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name, transport_mode: mode }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data?.success && data.carrier) {
+        const carrier: ReferenceCarrier = data.carrier;
+        setRefCarriers((prev) => sortByName([...prev.filter((c) => c.id !== carrier.id), carrier]));
+        if (carrierAppliesToMode(carrier, newMode)) {
+          setNewCarrier(carrier.name);
+          return { ok: true };
+        }
+        return {
+          ok: false,
+          error: `« ${carrier.name} » a été ajouté, mais il n'est pas disponible pour le mode ${newMode === 'Air' ? 'aérien' : 'maritime'}.`,
+        };
+      }
+
+      if (res.status === 409 && data?.existing) {
+        const existing: ReferenceCarrier = data.existing;
+        if (carrierAppliesToMode(existing, newMode)) {
+          setRefCarriers((prev) =>
+            prev.some((c) => c.id === existing.id) ? prev : sortByName([...prev, existing])
+          );
+          setNewCarrier(existing.name);
+          return { ok: true };
+        }
+      }
+
+      return { ok: false, error: data?.error || `Erreur ${res.status}` };
+    } catch {
+      return { ok: false, error: 'Erreur réseau lors de l\'ajout du transporteur.' };
+    }
+  };
+
+  const handleCreateSupplier = async (name: string): Promise<ReferenceCreateResult> => {
+    try {
+      const res = await fetch('/api/reference/suppliers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.ok && data?.success && data.supplier) {
+        const supplier: ReferenceSupplier = data.supplier;
+        setRefSuppliers((prev) => sortByName([...prev.filter((s) => s.id !== supplier.id), supplier]));
+        setNewSupplier(supplier.name);
+        return { ok: true };
+      }
+
+      if (res.status === 409 && data?.existing) {
+        // Already exists (maybe with different casing): select the canonical entry
+        const existing: ReferenceSupplier = data.existing;
+        setRefSuppliers((prev) =>
+          prev.some((s) => s.id === existing.id) ? prev : sortByName([...prev, existing])
+        );
+        setNewSupplier(existing.name);
+        return { ok: true };
+      }
+
+      return { ok: false, error: data?.error || `Erreur ${res.status}` };
+    } catch {
+      return { ok: false, error: 'Erreur réseau lors de l\'ajout du fournisseur.' };
+    }
+  };
 
 useEffect(() => {
   async function checkAuthentication() {
@@ -346,6 +484,43 @@ useEffect(() => {
       setCreateError('La Référence de Commande / PO est obligatoire.');
       return;
     }
+    if (!newCarrier) {
+      setCreateError('Le Transporteur est obligatoire.');
+      return;
+    }
+    if (!newGlobalStatus) {
+      setCreateError('Le Statut global initial est obligatoire.');
+      return;
+    }
+    if (!newAntoineStatus) {
+      setCreateError('Le Statut Antoine est obligatoire.');
+      return;
+    }
+    if (!newPriority) {
+      setCreateError('La Priorité est obligatoire.');
+      return;
+    }
+    if (!newCustomsStatus) {
+      setCreateError('Le Statut douane est obligatoire.');
+      return;
+    }
+
+    // Numeric fields: '' = unknown (stored as 0, the column is NOT NULL); never NaN.
+    const parseAmount = (raw: string): number | null => {
+      if (raw.trim() === '') return 0;
+      const n = Number(raw.replace(',', '.'));
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    };
+    const weightValue = parseAmount(newWeight);
+    const costValue = parseAmount(newCost);
+    if (weightValue === null) {
+      setCreateError('Le Poids doit être un nombre positif.');
+      return;
+    }
+    if (costValue === null) {
+      setCreateError('Le Coût Freight doit être un nombre positif.');
+      return;
+    }
 
     setIsCreatingShipment(true);
 
@@ -366,19 +541,19 @@ useEffect(() => {
         bl_awb: blAwbValue,
         tracking_no: trackingValue,
         carrier: newCarrier,
-        carrier_status: trackingValue ? 'In Transit' : 'Information Received',
-        carrier_last_location: newOrigin.trim(),
+        carrier_status: '', // unknown until a real carrier status is recorded
+        carrier_last_location: '',
         eta: newEta || '',
-        antoine_status: 'En attente Antoine',
+        antoine_status: newAntoineStatus,
         global_status: newGlobalStatus,
         remarks: newRemarks.trim(),
-        priority: 'Moyenne',
-        weight_kg: Number(newWeight) || 0,
-        cost_eur: Number(newCost) || 0,
+        priority: newPriority,
+        weight_kg: weightValue,
+        cost_eur: costValue,
         origin: newOrigin.trim(),
         destination: newDestination.trim(),
         vessel_flight: '',
-        customs_status: 'Non Requis',
+        customs_status: newCustomsStatus,
         ref_fa_digi_nxt: newRefFa.trim(),
         created_at: today,
         updated_at: today,
@@ -386,8 +561,8 @@ useEffect(() => {
         history: [
           {
             date: `${today} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
-            location: newOrigin.trim() || 'Origine',
-            status: 'Prise en charge',
+            location: newOrigin.trim(),
+            status: 'Création',
             details: `Création de l'expédition pour ${supplierTrim}`,
           },
         ],
@@ -435,8 +610,16 @@ useEffect(() => {
       setNewInvoiceNo('');
       setNewBlAwb('');
       setNewRemarks('');
-      setNewCost(650);
-      setNewWeight(50);
+      setNewCarrier('');
+      setNewGlobalStatus('');
+      setNewAntoineStatus('');
+      setNewPriority('');
+      setNewCustomsStatus('');
+      setNewEta('');
+      setNewCost('');
+      setNewWeight('');
+      setNewOrigin('');
+      setNewDestination('');
     } catch (err: any) {
       console.error('Erreur enregistrement:', err);
       const networkMsg = err?.message || 'Erreur réseau lors de la création.';
@@ -672,10 +855,10 @@ if (!authUser) {
                     onChange={(e) => {
                       const mode = e.target.value as 'Air' | 'Sea';
                       setNewMode(mode);
-                      if (mode === 'Air' && (newCarrier === 'Maersk (Sea)' || newCarrier === 'MSC (Sea)')) {
-                        setNewCarrier('DHL Express');
-                      } else if (mode === 'Sea' && newCarrier !== 'Maersk (Sea)' && newCarrier !== 'MSC (Sea)') {
-                        setNewCarrier('MSC (Sea)');
+                      // Drop the selected carrier if it does not apply to the new mode
+                      const current = refCarriers.find((c) => c.name === newCarrier);
+                      if (current && !carrierAppliesToMode(current, mode)) {
+                        setNewCarrier('');
                       }
                     }}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-medium dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -685,50 +868,35 @@ if (!authUser) {
                   </select>
                 </div>
 
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Transporteur / Compagnie *
-                  </label>
-                  <select
-                    value={newCarrier}
-                    onChange={(e) => setNewCarrier(e.target.value as any)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-medium dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    {newMode === 'Air' ? (
-                      <>
-                        <option value="DHL Express">DHL Express</option>
-                        <option value="FedEx">FedEx</option>
-                        <option value="UPS">UPS</option>
-                        <option value="TNT">TNT</option>
-                        <option value="Chronopost">Chronopost</option>
-                        <option value="DB Schenker">DB Schenker</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="MSC (Sea)">MSC (Sea)</option>
-                        <option value="Maersk (Sea)">Maersk (Sea)</option>
-                        <option value="DB Schenker">DB Schenker Maritime</option>
-                      </>
-                    )}
-                  </select>
-                </div>
+                <ReferenceSelect
+                  label="Transporteur / Compagnie"
+                  entityLabel="transporteur"
+                  required
+                  withModeChoice
+                  options={carriersForMode}
+                  value={newCarrier}
+                  onChange={setNewCarrier}
+                  onCreate={handleCreateCarrier}
+                  loading={refLoading}
+                  loadError={refCarriersError}
+                  emptyHint={`Aucun transporteur ${newMode === 'Air' ? 'aérien' : 'maritime'} enregistré : utilisez « + Ajouter un transporteur… ».`}
+                />
               </div>
 
               {/* Fournisseur & Ref Commande */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Fournisseur *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="ex: Dell Technologies, Cisco, Schneider..."
-                    value={newSupplier}
-                    onChange={(e) => setNewSupplier(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
+                <ReferenceSelect
+                  label="Fournisseur"
+                  entityLabel="fournisseur"
+                  required
+                  options={refSuppliers}
+                  value={newSupplier}
+                  onChange={setNewSupplier}
+                  onCreate={(name) => handleCreateSupplier(name)}
+                  loading={refLoading}
+                  loadError={refSuppliersError}
+                  emptyHint="Aucun fournisseur enregistré : utilisez « + Ajouter un fournisseur… »."
+                />
 
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
@@ -737,7 +905,6 @@ if (!authUser) {
                   <input
                     type="text"
                     required
-                    placeholder="ex: PO-2026-8812"
                     value={newOrderRef}
                     onChange={(e) => setNewOrderRef(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -753,7 +920,6 @@ if (!authUser) {
                   </label>
                   <input
                     type="text"
-                    placeholder="ex: 1234567890 (optionnel)"
                     value={newTrackingNo}
                     onChange={(e) => setNewTrackingNo(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -766,7 +932,6 @@ if (!authUser) {
                   </label>
                   <input
                     type="text"
-                    placeholder="ex: FA-DIGI-2026-042"
                     value={newRefFa}
                     onChange={(e) => setNewRefFa(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -782,7 +947,6 @@ if (!authUser) {
                   </label>
                   <input
                     type="text"
-                    placeholder={newMode === 'Air' ? 'ex: AWB-020-781290' : 'ex: MSKU-982144'}
                     value={newBlAwb}
                     onChange={(e) => setNewBlAwb(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -795,7 +959,6 @@ if (!authUser) {
                   </label>
                   <input
                     type="text"
-                    placeholder="ex: INV-2026-904"
                     value={newInvoiceNo}
                     onChange={(e) => setNewInvoiceNo(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -803,17 +966,19 @@ if (!authUser) {
                 </div>
               </div>
 
-              {/* Statut & Date ETA */}
+              {/* Statut global & ETA */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Statut Global Initial
+                    Statut Global Initial *
                   </label>
                   <select
+                    required
                     value={newGlobalStatus}
-                    onChange={(e) => setNewGlobalStatus(e.target.value as GlobalStatus)}
+                    onChange={(e) => setNewGlobalStatus(e.target.value as GlobalStatus | '')}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   >
+                    <option value="">— Sélectionner —</option>
                     <option value="Attente confirmation transitaire">Attente confirmation transitaire</option>
                     <option value="Reçu et expédié">Reçu et expédié</option>
                     <option value="En livraison vers Orly">En livraison vers Orly</option>
@@ -836,6 +1001,62 @@ if (!authUser) {
                 </div>
               </div>
 
+              {/* Statut Antoine, Priorité & Douane */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Statut Antoine *
+                  </label>
+                  <select
+                    required
+                    value={newAntoineStatus}
+                    onChange={(e) => setNewAntoineStatus(e.target.value as AntoineStatus | '')}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="">— Sélectionner —</option>
+                    <option value="En attente Antoine">En attente Antoine</option>
+                    <option value="Confirmé">Confirmé</option>
+                    <option value="Transmis transitaire">Transmis transitaire</option>
+                    <option value="A vérifier">A vérifier</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Priorité *
+                  </label>
+                  <select
+                    required
+                    value={newPriority}
+                    onChange={(e) => setNewPriority(e.target.value as ShipmentPriority | '')}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="">— Sélectionner —</option>
+                    <option value="Haute">Haute</option>
+                    <option value="Moyenne">Moyenne</option>
+                    <option value="Basse">Basse</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="font-semibold text-slate-700 dark:text-slate-300">
+                    Statut Douane *
+                  </label>
+                  <select
+                    required
+                    value={newCustomsStatus}
+                    onChange={(e) => setNewCustomsStatus(e.target.value as CustomsStatus | '')}
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="">— Sélectionner —</option>
+                    <option value="Non Requis">Non Requis</option>
+                    <option value="En cours">En cours</option>
+                    <option value="Dédouané">Dédouané</option>
+                    <option value="Bloqué Douane">Bloqué Douane</option>
+                  </select>
+                </div>
+              </div>
+
               {/* Poids & Coût */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -844,9 +1065,11 @@ if (!authUser) {
                   </label>
                   <input
                     type="number"
+                    min="0"
                     step="0.1"
+                    inputMode="decimal"
                     value={newWeight}
-                    onChange={(e) => setNewWeight(Number(e.target.value))}
+                    onChange={(e) => setNewWeight(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
@@ -857,9 +1080,11 @@ if (!authUser) {
                   </label>
                   <input
                     type="number"
+                    min="0"
                     step="0.01"
+                    inputMode="decimal"
                     value={newCost}
-                    onChange={(e) => setNewCost(Number(e.target.value))}
+                    onChange={(e) => setNewCost(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   />
                 </div>
@@ -873,7 +1098,6 @@ if (!authUser) {
                   </label>
                   <input
                     type="text"
-                    placeholder={newMode === 'Air' ? 'ex: Paris (CDG) / Lyon' : 'ex: Shanghai / Le Havre'}
                     value={newOrigin}
                     onChange={(e) => setNewOrigin(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -886,7 +1110,6 @@ if (!authUser) {
                   </label>
                   <input
                     type="text"
-                    placeholder={newMode === 'Air' ? 'ex: Antananarivo (TNR)' : 'ex: Toamasina (TMM)'}
                     value={newDestination}
                     onChange={(e) => setNewDestination(e.target.value)}
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -901,7 +1124,6 @@ if (!authUser) {
                 </label>
                 <textarea
                   rows={2}
-                  placeholder="Instructions spécifiques, contraintes d'enlèvement ou de dédouanement..."
                   value={newRemarks}
                   onChange={(e) => setNewRemarks(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"

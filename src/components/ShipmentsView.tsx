@@ -518,7 +518,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1.5">
                                 <span className="inline-flex rounded-md bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-900">
-                                  {shp.carrier_delivery_status || shp.carrier_status || 'En cours'}
+                                  {shp.carrier_delivery_status || shp.carrier_status || '—'}
                                 </span>
                               </div>
                             </td>

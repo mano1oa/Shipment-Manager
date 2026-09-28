@@ -108,3 +108,36 @@ CREATE TABLE IF NOT EXISTS system_audit_logs (
     details JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- ------------------------------------------------------------------------------
+-- 4. RÉFÉRENTIELS : transporteurs et fournisseurs
+-- Créés automatiquement au premier appel de /api/reference/* (ensureReferenceSchema).
+-- Tables vides au départ : aucune donnée de démonstration.
+-- shipments.carrier / shipments.supplier restent des champs texte (compatibilité).
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS shipment_carriers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL,
+    transport_mode VARCHAR(10) NOT NULL CHECK (transport_mode IN ('Air', 'Sea', 'BOTH')),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_carriers_name_unique_ci
+    ON shipment_carriers (LOWER(TRIM(name)));
+CREATE INDEX IF NOT EXISTS idx_shipment_carriers_active
+    ON shipment_carriers (is_active);
+
+CREATE TABLE IF NOT EXISTS shipment_suppliers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(150) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_suppliers_name_unique_ci
+    ON shipment_suppliers (LOWER(TRIM(name)));
+CREATE INDEX IF NOT EXISTS idx_shipment_suppliers_active
+    ON shipment_suppliers (is_active);

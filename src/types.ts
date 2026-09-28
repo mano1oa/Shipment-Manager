@@ -96,8 +96,8 @@ export interface Shipment {
   invoice_no: string;
   bl_awb: string;
   tracking_no: string;
-  carrier: CarrierName;
-  carrier_status: CarrierStatus;
+  carrier: string; // Free text, chosen from the Neon carriers reference list (historical values kept as-is)
+  carrier_status: CarrierStatus | ''; // Empty until a real carrier status is known
   carrier_last_location: string;
   eta: string;
   actual_delivery?: string;

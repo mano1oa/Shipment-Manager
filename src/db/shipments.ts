@@ -140,30 +140,32 @@ export async function upsertShipmentInNeon(shipment: Shipment, skipEnsure = fals
   }
   const sql = getDb();
 
+  // No invented business values: unknown fields are stored empty.
+  // Required fields are validated by the API on creation.
   const id = shipment.id || `SHP-${Date.now()}`;
   const mode = shipment.mode || 'Air';
-  const supplier = shipment.supplier || 'Fournisseur Inconnu';
+  const supplier = shipment.supplier || '';
   const order_reference = shipment.order_reference || '';
   const invoice_no = shipment.invoice_no || '';
   const bl_awb = shipment.bl_awb || '';
   const tracking_no = shipment.tracking_no || '';
-  const carrier = shipment.carrier || 'DHL Express';
-  const carrier_status = shipment.carrier_status || 'In Transit';
+  const carrier = shipment.carrier || '';
+  const carrier_status = shipment.carrier_status || '';
   const carrier_last_location = shipment.carrier_last_location || '';
   const eta = shipment.eta || '';
   const actual_delivery = shipment.actual_delivery || '';
-  const antoine_status = shipment.antoine_status || 'En attente Antoine';
+  const antoine_status = shipment.antoine_status || '';
   const departure_madagascar = shipment.departure_madagascar || '';
   const arrival_madagascar_eta = shipment.arrival_madagascar_eta || '';
-  const global_status = shipment.global_status || 'Statut non défini';
+  const global_status = shipment.global_status || '';
   const remarks = shipment.remarks || '';
-  const priority = shipment.priority || 'Moyenne';
+  const priority = shipment.priority || '';
   const weight_kg = Number(shipment.weight_kg) || 0;
   const origin = shipment.origin || '';
   const destination = shipment.destination || '';
   const vessel_flight = shipment.vessel_flight || '';
   const cost_eur = Number(shipment.cost_eur) || 0;
-  const customs_status = shipment.customs_status || 'Non Requis';
+  const customs_status = shipment.customs_status || '';
 
   const carrier_status_date = shipment.carrier_status_date || '';
   const carrier_delivery_status = shipment.carrier_delivery_status || '';

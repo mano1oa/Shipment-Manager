@@ -242,4 +242,72 @@ export async function initNeonSchema(): Promise<void> {
   `;
 
   console.log('✅ Schéma SQL Neon initialisé avec succès.');
+
+  await initReferenceSchema();
+}
+
+/**
+ * Reference data tables (carriers, suppliers).
+ *
+ * Kept separate from initNeonSchema() because ensureNeonSchema() only runs the
+ * full init when the "shipments" table is missing: on an existing database the
+ * reference tables are created lazily by ensureReferenceSchema().
+ *
+ * Idempotent (CREATE ... IF NOT EXISTS). Tables start EMPTY: no seed data.
+ */
+export async function initReferenceSchema(): Promise<void> {
+  const sql = getDb();
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS shipment_carriers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(100) NOT NULL,
+      transport_mode VARCHAR(10) NOT NULL
+        CHECK (transport_mode IN ('Air', 'Sea', 'BOTH')),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_carriers_name_unique_ci
+      ON shipment_carriers (LOWER(TRIM(name)));
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_shipment_carriers_active
+      ON shipment_carriers (is_active);
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS shipment_suppliers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name VARCHAR(150) NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_suppliers_name_unique_ci
+      ON shipment_suppliers (LOWER(TRIM(name)));
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_shipment_suppliers_active
+      ON shipment_suppliers (is_active);
+  `;
+}
+
+let referenceSchemaPromise: Promise<void> | null = null;
+
+/**
+ * Ensures the reference tables exist (once per server instance).
+ */
+export function ensureReferenceSchema(): Promise<void> {
+  if (!referenceSchemaPromise) {
+    referenceSchemaPromise = initReferenceSchema().catch((err) => {
+      referenceSchemaPromise = null; // allow retry on next call
+      throw err;
+    });
+  }
+  return referenceSchemaPromise;
 }
