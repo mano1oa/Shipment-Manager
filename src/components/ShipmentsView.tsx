@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
-import { SeaTrackingSearch } from './SeaTrackingSearch';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 
 interface ShipmentsViewProps {
@@ -32,7 +31,6 @@ interface ShipmentsViewProps {
   modeFilter: 'Air' | 'Sea' | 'all';
   onSelectShipment: (shipment: Shipment) => void;
   canEdit: boolean;
-  onRefreshTracking: (shipmentId: string) => void;
   onUpdateShipment?: (updated: Shipment) => void;
   onNewShipment?: () => void;
 }
@@ -42,7 +40,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   modeFilter,
   onSelectShipment,
   canEdit,
-  onRefreshTracking,
   onUpdateShipment,
   onNewShipment,
 }) => {
@@ -53,7 +50,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   const [onlyDelays, setOnlyDelays] = useState(false);
   const [onlyOrlyOverdue, setOnlyOrlyOverdue] = useState(false);
   const [expandedSeaIds, setExpandedSeaIds] = useState<string[]>([]);
-  const [showSeaTrackingTool, setShowSeaTrackingTool] = useState(false);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [copiedClaim, setCopiedClaim] = useState(false);
 
@@ -273,21 +269,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             )}
           </button>
 
-          {(modeFilter === 'Sea' || modeFilter === 'all') && (
-            <button
-              id="shipments-btn-sea-tracking"
-              onClick={() => setShowSeaTrackingTool(!showSeaTrackingTool)}
-              className={`flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-bold transition shadow-xs ${
-                showSeaTrackingTool
-                  ? 'border-indigo-600 bg-indigo-600 text-white'
-                  : 'border-indigo-200 bg-indigo-50 text-indigo-900 hover:bg-indigo-100 dark:border-indigo-800 dark:bg-slate-800 dark:text-indigo-300'
-              }`}
-            >
-              <Ship className="h-4 w-4" />
-              {showSeaTrackingTool ? 'Masquer Recherche Conteneur' : 'Tracking Conteneur / SWB'}
-            </button>
-          )}
-
           <button
             id="shipments-btn-export-csv"
             onClick={handleExportCSV}
@@ -297,13 +278,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
           </button>
         </div>
       </div>
-
-      {/* Embedded Sea Tracking Search Module */}
-      {(showSeaTrackingTool || modeFilter === 'Sea') && (
-        <div className="mb-4">
-          <SeaTrackingSearch />
-        </div>
-      )}
 
       {/* Filter Toolbar */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-800 dark:bg-slate-800/90">
@@ -546,15 +520,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                 <span className="inline-flex rounded-md bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-900">
                                   {shp.carrier_delivery_status || shp.carrier_status || 'En cours'}
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => onRefreshTracking(shp.id)}
-                                  className="inline-flex items-center gap-1 rounded-md bg-sky-100 hover:bg-sky-200 px-1.5 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-900 dark:text-sky-200 transition shadow-2xs"
-                                  title={`Générer le statut transporteur en recherchant (${shp.carrier} - ${shp.tracking_no})`}
-                                >
-                                  <Search className="h-3 w-3" />
-                                  <span className="hidden xl:inline">Générer</span>
-                                </button>
                               </div>
                             </td>
 
@@ -752,16 +717,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                 )}
                               </button>
                             )}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onRefreshTracking(shp.id);
-                              }}
-                              className="rounded-lg p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-800 dark:hover:bg-slate-700"
-                              title="Rafraîchir le suivi transporteur"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                            </button>
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();

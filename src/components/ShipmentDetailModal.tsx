@@ -207,32 +207,6 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50">
               <div className="flex items-center justify-between">
                 <span className="text-[10px] font-bold uppercase text-slate-400">Transporteur</span>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      const res = await fetch(
-                        `/api/carrier-track/${encodeURIComponent(shipment.carrier)}/${encodeURIComponent(shipment.tracking_no)}`,
-                        { credentials: 'include' }
-                      );
-                      const data = await res.json();
-                      if (data.success && onSave) {
-                        onSave({
-                          ...shipment,
-                          carrier_status: data.carrier_status as any,
-                          carrier_delivery_status: data.carrier_delivery_status || data.carrier_status,
-                          carrier_status_date: data.carrier_status_date,
-                          carrier_last_location: data.last_location,
-                          updated_at: new Date().toISOString().split('T')[0],
-                        });
-                      }
-                    } catch (e) {}
-                  }}
-                  className="rounded-md bg-sky-100 hover:bg-sky-200 text-sky-800 dark:bg-sky-900 dark:text-sky-200 px-2 py-0.5 text-[10px] font-bold flex items-center gap-1 transition shadow-2xs"
-                  title="Rechercher et générer le statut à partir du N° Suivi et du Transporteur"
-                >
-                  <Search className="h-3 w-3" /> Générer Statut
-                </button>
               </div>
               <div className="text-sm font-bold text-slate-900 dark:text-white mt-1">
                 {shipment.carrier}
