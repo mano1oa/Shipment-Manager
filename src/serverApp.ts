@@ -48,6 +48,27 @@ import {
 import { writeAuditLog } from './db/audit.js';
 
 import {
+  listTrackingForShipment,
+  getTrackingNumber,
+  addTrackingNumber,
+  addTrackingNumbersFromText,
+  updateTrackingNumber,
+  deleteTrackingNumber,
+  recordTrackingEvents,
+  isCarrierCode,
+  isTrackingStatus,
+  DuplicateTrackingNumberError,
+} from './db/tracking.js';
+
+import { detectTrackingNumber } from './lib/carrierDetection.js';
+import { syncShipmentTracking, syncDueTracking } from './services/tracking/syncService.js';
+import { getAutomatedCarriers } from './services/tracking/registry.js';
+
+// Daily cron (Vercel Hobby: max 300 s per function). Keep a safety margin.
+const CRON_SYNC_LIMIT = 300;
+const CRON_TIME_BUDGET_MS = 240_000;
+
+import {
   listResolvedAlerts,
   resolveAlert,
   unresolveAlert,
@@ -381,6 +402,38 @@ export function createServerApp(): Express {
   // Healthcheck public
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', app: 'Shipment Manager', timestamp: new Date().toISOString() });
+  });
+
+  // =========================================================
+  // VERCEL CRON — daily tracking refresh
+  // Declared BEFORE requireAuth: Vercel Cron authenticates with
+  // "Authorization: Bearer <CRON_SECRET>", not with a user session.
+  // Fail-closed: never runs when CRON_SECRET is missing.
+  // =========================================================
+  app.get('/api/cron/update-tracking', async (req, res) => {
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (!cronSecret) {
+      console.error('[Tracking Cron] CRON_SECRET is not configured: job not run.');
+      return res.status(500).json({ success: false, error: 'Cron configuration error' });
+    }
+
+    if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    try {
+      const startedAt = Date.now();
+      const result = await syncDueTracking({
+        limit: CRON_SYNC_LIMIT,
+        timeBudgetMs: CRON_TIME_BUDGET_MS,
+      });
+      console.log('[Tracking Cron]', JSON.stringify(result));
+      return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result });
+    } catch (err: any) {
+      console.error('[Tracking Cron] Failed:', err);
+      return res.status(500).json({ success: false, error: 'Tracking cron failed' });
+    }
   });
 
     app.use('/api', requireAuth);
@@ -839,6 +892,261 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  // --- TRACKING NUMBERS & EVENTS (source of truth: Neon) ---
+  // Reads: any authenticated user. Changes: SUPPLY_CHAIN + SOURCING.
+  // Sync all: SUPPLY_CHAIN only. Nothing is ever simulated.
+
+  app.get('/api/tracking/config', (_req, res) => {
+    res.json({ success: true, automated_carriers: getAutomatedCarriers() });
+  });
+
+  app.get('/api/shipments/:id/tracking', async (req, res) => {
+    try {
+      const shipment = await getShipmentByIdFromNeon(req.params.id);
+      if (!shipment) {
+        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+      }
+      const data = await listTrackingForShipment(req.params.id);
+      return res.json({ success: true, ...data, automated_carriers: getAutomatedCarriers() });
+    } catch (err: any) {
+      console.error('[Tracking] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger le suivi' });
+    }
+  });
+
+  app.post(
+    '/api/shipments/:id/tracking-numbers',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      const rawInput = typeof req.body?.tracking_number === 'string' ? req.body.tracking_number : '';
+      const detected = detectTrackingNumber(rawInput);
+
+      if (!detected.number || detected.warnings.includes('NOT_A_TRACKING_NUMBER')) {
+        return res.status(400).json({ success: false, error: 'Numéro de suivi invalide.' });
+      }
+      if (detected.number.length > 100) {
+        return res.status(400).json({ success: false, error: 'Numéro de suivi trop long.' });
+      }
+
+      const requestedCarrier = req.body?.carrier;
+      if (requestedCarrier !== undefined && requestedCarrier !== null && !isCarrierCode(requestedCarrier)) {
+        return res.status(400).json({ success: false, error: 'Transporteur invalide.' });
+      }
+
+      try {
+        const shipment = await getShipmentByIdFromNeon(req.params.id);
+        if (!shipment) {
+          return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+        }
+
+        const record = await addTrackingNumber({
+          shipmentId: req.params.id,
+          number: detected.number,
+          rawInput: detected.raw,
+          carrier: requestedCarrier || detected.carrier,
+        });
+
+        await writeAuditLog({
+          entityType: 'SHIPMENT',
+          entityId: req.params.id,
+          action: 'ADD_TRACKING_NUMBER',
+          actor: req.user,
+          details: { tracking_number: record.tracking_number, carrier: record.carrier },
+        });
+
+        return res.status(201).json({ success: true, tracking_number: record, warnings: detected.warnings });
+      } catch (err: any) {
+        if (err instanceof DuplicateTrackingNumberError) {
+          return res.status(409).json({
+            success: false,
+            error: 'Ce numéro de suivi est déjà rattaché à cette expédition.',
+          });
+        }
+        console.error('[Tracking] Add number error:', err);
+        return res.status(500).json({ success: false, error: 'Impossible d\'ajouter le numéro de suivi' });
+      }
+    }
+  );
+
+  app.patch(
+    '/api/tracking-numbers/:id',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      if (!UUID_RE.test(req.params.id)) {
+        return res.status(404).json({ success: false, error: 'Numéro de suivi introuvable' });
+      }
+      const { carrier, is_active } = req.body || {};
+      if (carrier !== undefined && !isCarrierCode(carrier)) {
+        return res.status(400).json({ success: false, error: 'Transporteur invalide.' });
+      }
+      if (is_active !== undefined && typeof is_active !== 'boolean') {
+        return res.status(400).json({ success: false, error: 'is_active doit être un booléen.' });
+      }
+
+      try {
+        const before = await getTrackingNumber(req.params.id);
+        if (!before) {
+          return res.status(404).json({ success: false, error: 'Numéro de suivi introuvable' });
+        }
+        const updated = await updateTrackingNumber(req.params.id, { carrier, is_active });
+
+        await writeAuditLog({
+          entityType: 'SHIPMENT',
+          entityId: before.shipment_id,
+          action: 'UPDATE_TRACKING_NUMBER',
+          actor: req.user,
+          details: {
+            tracking_number: before.tracking_number,
+            carrier: carrier !== undefined ? { from: before.carrier, to: carrier } : undefined,
+            is_active: is_active !== undefined ? { from: before.is_active, to: is_active } : undefined,
+          },
+        });
+
+        return res.json({ success: true, tracking_number: updated });
+      } catch (err: any) {
+        console.error('[Tracking] Update number error:', err);
+        return res.status(500).json({ success: false, error: 'Impossible de modifier le numéro de suivi' });
+      }
+    }
+  );
+
+  app.delete(
+    '/api/tracking-numbers/:id',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      if (!UUID_RE.test(req.params.id)) {
+        return res.status(404).json({ success: false, error: 'Numéro de suivi introuvable' });
+      }
+      try {
+        const removed = await deleteTrackingNumber(req.params.id);
+        if (!removed) {
+          return res.status(404).json({ success: false, error: 'Numéro de suivi introuvable' });
+        }
+
+        await writeAuditLog({
+          entityType: 'SHIPMENT',
+          entityId: removed.shipment_id,
+          action: 'REMOVE_TRACKING_NUMBER',
+          actor: req.user,
+          details: { tracking_number: removed.tracking_number, carrier: removed.carrier },
+        });
+
+        return res.json({ success: true });
+      } catch (err: any) {
+        console.error('[Tracking] Delete number error:', err);
+        return res.status(500).json({ success: false, error: 'Impossible de supprimer le numéro de suivi' });
+      }
+    }
+  );
+
+  // Manual event (e.g. "Livré Orly" confirmed by Antoine, carrier website check)
+  app.post(
+    '/api/tracking-numbers/:id/events',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      if (!UUID_RE.test(req.params.id)) {
+        return res.status(404).json({ success: false, error: 'Numéro de suivi introuvable' });
+      }
+
+      const { event_at, status, description, location } = req.body || {};
+      const eventDate = typeof event_at === 'string' ? new Date(event_at) : null;
+
+      if (!eventDate || Number.isNaN(eventDate.getTime())) {
+        return res.status(400).json({ success: false, error: 'Date de l\'événement invalide.' });
+      }
+      if (eventDate.getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+        return res.status(400).json({ success: false, error: 'La date de l\'événement ne peut pas être dans le futur.' });
+      }
+      if (!isTrackingStatus(status) || status === 'UNKNOWN') {
+        return res.status(400).json({ success: false, error: 'Statut invalide.' });
+      }
+      if (typeof description !== 'string' || !description.trim()) {
+        return res.status(400).json({ success: false, error: 'La description est obligatoire.' });
+      }
+
+      try {
+        const number = await getTrackingNumber(req.params.id);
+        if (!number) {
+          return res.status(404).json({ success: false, error: 'Numéro de suivi introuvable' });
+        }
+
+        const inserted = await recordTrackingEvents(number.id, [
+          {
+            eventAt: eventDate.toISOString(),
+            status,
+            description: description.trim(),
+            location: typeof location === 'string' && location.trim() ? location.trim() : null,
+            source: 'manual',
+            createdByEmail: req.user.email,
+          },
+        ]);
+
+        if (inserted > 0) {
+          await writeAuditLog({
+            entityType: 'SHIPMENT',
+            entityId: number.shipment_id,
+            action: 'ADD_TRACKING_EVENT',
+            actor: req.user,
+            details: {
+              tracking_number: number.tracking_number,
+              status,
+              event_at: eventDate.toISOString(),
+            },
+          });
+        }
+
+        return res.status(inserted > 0 ? 201 : 200).json({ success: true, created: inserted > 0 });
+      } catch (err: any) {
+        console.error('[Tracking] Add event error:', err);
+        return res.status(500).json({ success: false, error: 'Impossible d\'ajouter l\'événement' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/tracking/sync/:shipmentId',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      try {
+        const shipment = await getShipmentByIdFromNeon(req.params.shipmentId);
+        if (!shipment) {
+          return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+        }
+        const results = await syncShipmentTracking(req.params.shipmentId);
+        return res.json({ success: true, results });
+      } catch (err: any) {
+        console.error('[Tracking] Sync shipment error:', err);
+        return res.status(500).json({ success: false, error: 'Échec de la synchronisation du suivi' });
+      }
+    }
+  );
+
+  app.post(
+    '/api/tracking/sync-all',
+    requireRole('SUPPLY_CHAIN'),
+    async (req: any, res) => {
+      try {
+        const result = await syncDueTracking({
+          limit: CRON_SYNC_LIMIT,
+          timeBudgetMs: CRON_TIME_BUDGET_MS,
+        });
+
+        await writeAuditLog({
+          entityType: 'SHIPMENT',
+          entityId: '*',
+          action: 'SYNC_ALL_TRACKING',
+          actor: req.user,
+          details: result,
+        });
+
+        return res.json({ success: true, ...result });
+      } catch (err: any) {
+        console.error('[Tracking] Sync all error:', err);
+        return res.status(500).json({ success: false, error: 'Échec de la synchronisation globale' });
+      }
+    }
+  );
+
   // --- RESOLVED ALERTS (shared, persisted in Neon) ---
   // Reads: any authenticated user. Resolve/reopen: SUPPLY_CHAIN + SOURCING.
 
@@ -1177,6 +1485,16 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
 
       const saved = await upsertShipmentInNeon(data);
+
+      // Attach the tracking number(s) typed in the creation form
+      if (typeof data.tracking_no === 'string' && data.tracking_no.trim()) {
+        try {
+          await addTrackingNumbersFromText(saved.id, data.tracking_no);
+        } catch (trackingErr) {
+          // The shipment is saved; numbers can still be added from its detail view.
+          console.error('[Tracking] Could not attach tracking numbers at creation:', trackingErr);
+        }
+      }
 
       await writeAuditLog({
         entityType: 'SHIPMENT',

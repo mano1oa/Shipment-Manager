@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Shipment, GlobalStatus, AntoineStatus, ShipmentDocument } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
+import { TrackingPanel } from './TrackingPanel';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 
 interface ShipmentDetailModalProps {
@@ -543,10 +544,13 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             </div>
           )}
 
-          {/* Tracking History Timeline */}
+          {/* Carrier tracking numbers & events (Neon) */}
+          <TrackingPanel shipmentId={shipment.id} canEdit={canEdit} />
+
+          {/* Shipment history (manual workflow steps) */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-800">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white pb-3 border-b border-slate-100 dark:border-slate-700 flex items-center gap-2">
-              <Clock className="h-4 w-4 text-[#643288]" /> Historique des Événements Transporteur
+              <Clock className="h-4 w-4 text-[#643288]" /> Historique de l'expédition
             </h3>
 
             <div className="mt-4 space-y-4 relative pl-4 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-700">
