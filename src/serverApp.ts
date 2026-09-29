@@ -47,6 +47,15 @@ import {
 
 import { writeAuditLog } from './db/audit.js';
 
+import {
+  listResolvedAlerts,
+  resolveAlert,
+  unresolveAlert,
+} from './db/alerts.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ALERT_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
+
 dotenv.config();
 
 function getCookie(req: any, name: string): string | null {
@@ -182,6 +191,13 @@ export function createServerApp(): Express {
       const session = await createSession(user.id);
 
       await updateLastLogin(user.id);
+
+      await writeAuditLog({
+        entityType: 'USER',
+        entityId: user.id,
+        action: 'LOGIN',
+        actor: { id: user.id, email: user.email, role: user.role },
+      });
 
       const isProduction = process.env.NODE_ENV === 'production';
 
@@ -389,6 +405,14 @@ app.post(
         role,
       });
 
+      await writeAuditLog({
+        entityType: 'USER',
+        entityId: user.id,
+        action: 'CREATE_USER',
+        actor: (req as any).user,
+        details: { email: user.email, role: user.role },
+      });
+
       return res.status(201).json({
         success: true,
         user,
@@ -426,21 +450,57 @@ app.put(
         });
       }
 
-      const user = await updateUserRole(
-        req.params.id,
-        role
-      );
+      const actor = (req as any).user;
 
-      if (!user) {
+      if (!UUID_RE.test(req.params.id)) {
         return res.status(404).json({
           success: false,
           error: 'User not found',
         });
       }
 
+      if (req.params.id === actor.id && role !== 'SUPPLY_CHAIN') {
+        return res.status(400).json({
+          success: false,
+          error: 'Vous ne pouvez pas retirer votre propre rôle Supply Chain.',
+        });
+      }
+
+      const result = await updateUserRole(
+        req.params.id,
+        role
+      );
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') {
+          return res.status(404).json({
+            success: false,
+            error: 'User not found',
+          });
+        }
+        return res.status(409).json({
+          success: false,
+          error: 'Impossible : il doit rester au moins un compte Supply Chain actif.',
+        });
+      }
+
+      if (result.previous.role !== result.user.role) {
+        await writeAuditLog({
+          entityType: 'USER',
+          entityId: result.user.id,
+          action: 'UPDATE_ROLE',
+          actor,
+          details: {
+            email: result.user.email,
+            from: result.previous.role,
+            to: result.user.role,
+          },
+        });
+      }
+
       return res.json({
         success: true,
-        user,
+        user: result.user,
       });
     } catch (error) {
       console.error('Update user role error:', error);
@@ -469,21 +529,53 @@ app.put(
         });
       }
 
-      const user = await updateUserStatus(
-        req.params.id,
-        isActive
-      );
+      const actor = (req as any).user;
 
-      if (!user) {
+      if (!UUID_RE.test(req.params.id)) {
         return res.status(404).json({
           success: false,
           error: 'User not found',
         });
       }
 
+      if (req.params.id === actor.id && !isActive) {
+        return res.status(400).json({
+          success: false,
+          error: 'Vous ne pouvez pas désactiver votre propre compte.',
+        });
+      }
+
+      const result = await updateUserStatus(
+        req.params.id,
+        isActive
+      );
+
+      if (!result.ok) {
+        if (result.reason === 'NOT_FOUND') {
+          return res.status(404).json({
+            success: false,
+            error: 'User not found',
+          });
+        }
+        return res.status(409).json({
+          success: false,
+          error: 'Impossible : il doit rester au moins un compte Supply Chain actif.',
+        });
+      }
+
+      if (result.previous.is_active !== result.user.is_active) {
+        await writeAuditLog({
+          entityType: 'USER',
+          entityId: result.user.id,
+          action: isActive ? 'ENABLE_USER' : 'DISABLE_USER',
+          actor,
+          details: { email: result.user.email },
+        });
+      }
+
       return res.json({
         success: true,
-        user,
+        user: result.user,
       });
     } catch (error) {
       console.error('Update user status error:', error);
@@ -679,6 +771,104 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       res.status(500).json({ error: 'Erreur lors de l\'analyse automatique.', details: err.message });
     }
   });
+
+  // --- RESOLVED ALERTS (shared, persisted in Neon) ---
+  // Reads: any authenticated user. Resolve/reopen: SUPPLY_CHAIN + SOURCING.
+
+  app.get('/api/alerts/resolved', async (_req, res) => {
+    try {
+      const resolved = await listResolvedAlerts();
+      return res.json({ success: true, resolved });
+    } catch (err: any) {
+      console.error('[Alerts] List resolved error:', err);
+      return res.status(500).json({ success: false, error: 'Unable to load resolved alerts' });
+    }
+  });
+
+  app.post(
+    '/api/alerts/:alertId/resolve',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      const { alertId } = req.params;
+      if (!ALERT_ID_RE.test(alertId)) {
+        return res.status(400).json({ success: false, error: 'Invalid alert id' });
+      }
+
+      const body = req.body || {};
+      const shipmentId =
+        typeof body.shipment_id === 'string' && body.shipment_id.trim()
+          ? body.shipment_id.trim().slice(0, 50)
+          : null;
+      const ruleCode =
+        typeof body.rule_code === 'string' && body.rule_code.trim()
+          ? body.rule_code.trim().slice(0, 50)
+          : null;
+      const note =
+        typeof body.note === 'string' && body.note.trim()
+          ? body.note.trim().slice(0, 2000)
+          : null;
+
+      try {
+        const { record, created } = await resolveAlert({
+          alertId,
+          shipmentId,
+          ruleCode,
+          user: req.user,
+          note,
+        });
+
+        if (created) {
+          await writeAuditLog({
+            entityType: 'ALERT',
+            entityId: alertId,
+            action: 'RESOLVE_ALERT',
+            actor: req.user,
+            details: { shipment_id: shipmentId, rule_code: ruleCode, note },
+          });
+        }
+
+        return res.json({ success: true, resolved: record, already_resolved: !created });
+      } catch (err: any) {
+        console.error('[Alerts] Resolve error:', err);
+        return res.status(500).json({ success: false, error: 'Unable to resolve alert' });
+      }
+    }
+  );
+
+  app.delete(
+    '/api/alerts/:alertId/resolve',
+    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    async (req: any, res) => {
+      const { alertId } = req.params;
+      if (!ALERT_ID_RE.test(alertId)) {
+        return res.status(400).json({ success: false, error: 'Invalid alert id' });
+      }
+
+      try {
+        const removed = await unresolveAlert(alertId);
+
+        if (removed) {
+          await writeAuditLog({
+            entityType: 'ALERT',
+            entityId: alertId,
+            action: 'UNRESOLVE_ALERT',
+            actor: req.user,
+            details: {
+              shipment_id: removed.shipment_id,
+              rule_code: removed.rule_code,
+              previously_resolved_by: removed.resolved_by_email,
+              previously_resolved_at: removed.resolved_at,
+            },
+          });
+        }
+
+        return res.json({ success: true, reopened: Boolean(removed) });
+      } catch (err: any) {
+        console.error('[Alerts] Unresolve error:', err);
+        return res.status(500).json({ success: false, error: 'Unable to reopen alert' });
+      }
+    }
+  );
 
   // --- REFERENCE DATA: carriers & suppliers (source of truth: Neon) ---
   // Reads: any authenticated user. Creation: SUPPLY_CHAIN + SOURCING.
@@ -918,6 +1108,20 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
 
       const saved = await upsertShipmentInNeon(data);
+
+      await writeAuditLog({
+        entityType: 'SHIPMENT',
+        entityId: saved.id,
+        action: 'CREATE_SHIPMENT',
+        actor: (req as any).user,
+        details: {
+          mode: saved.mode,
+          supplier: saved.supplier,
+          carrier: saved.carrier,
+          order_reference: saved.order_reference,
+        },
+      });
+
       res.json({ success: true, shipment: saved });
     } catch (err: any) {
       console.error('Error upserting shipment in Neon:', err);
@@ -935,8 +1139,33 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }
+      const previous = await getShipmentByIdFromNeon(req.params.id);
+      if (!previous) {
+        // PUT only updates: creation goes through POST (validated).
+        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+      }
+
       const data = { ...req.body, id: req.params.id };
       const saved = await upsertShipmentInNeon(data);
+
+      // Record which fields changed (names only: values may be large JSON)
+      const changedFields = Object.keys(req.body || {}).filter(
+        (key) =>
+          !['id', 'updated_at', 'created_at', 'alerts'].includes(key) &&
+          JSON.stringify((req.body as any)[key] ?? null) !==
+            JSON.stringify((previous as any)[key] ?? null)
+      );
+
+      if (changedFields.length > 0) {
+        await writeAuditLog({
+          entityType: 'SHIPMENT',
+          entityId: saved.id,
+          action: 'UPDATE_SHIPMENT',
+          actor: (req as any).user,
+          details: { changed_fields: changedFields },
+        });
+      }
+
       res.json({ success: true, shipment: saved });
     } catch (err: any) {
       console.error('Error updating shipment in Neon:', err);
@@ -954,7 +1183,25 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!isNeonConfigured()) {
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }
+      const previous = await getShipmentByIdFromNeon(req.params.id);
+      if (!previous) {
+        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+      }
+
       await deleteShipmentInNeon(req.params.id);
+
+      await writeAuditLog({
+        entityType: 'SHIPMENT',
+        entityId: req.params.id,
+        action: 'DELETE_SHIPMENT',
+        actor: (req as any).user,
+        details: {
+          mode: previous.mode,
+          supplier: previous.supplier,
+          order_reference: previous.order_reference,
+        },
+      });
+
       res.json({ success: true, deleted_id: req.params.id });
     } catch (err: any) {
       res.status(500).json({ error: 'Erreur SQL lors de la suppression', details: err?.message });
@@ -971,6 +1218,15 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         return res.status(503).json({ error: 'DATABASE_NOT_CONFIGURED' });
       }
       const count = await clearAllShipmentsInNeon();
+
+      await writeAuditLog({
+        entityType: 'SHIPMENT',
+        entityId: '*',
+        action: 'CLEAR_ALL_SHIPMENTS',
+        actor: (req as any).user,
+        details: { deleted_count: count },
+      });
+
       res.json({ success: true, deleted_count: count });
     } catch (err: any) {
       console.error('Erreur lors de la purge Neon:', err);

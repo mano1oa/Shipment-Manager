@@ -21,6 +21,7 @@ interface AlertsCenterViewProps {
   onDispatchGoogleChat: (message: string, space?: string) => Promise<void>;
   onResolveAlert: (alertId: string) => void;
   onUnresolveAlert?: (alertId: string) => void;
+  canResolve?: boolean;
 }
 
 export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
@@ -30,6 +31,7 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
   onDispatchGoogleChat,
   onResolveAlert,
   onUnresolveAlert,
+  canResolve = false,
 }) => {
   const [severityFilter, setSeverityFilter] = useState<'all' | 'critical' | 'warning'>('all');
   const [showResolvedOnly, setShowResolvedOnly] = useState(false);
@@ -245,7 +247,7 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
                       </button>
                     )}
 
-                    {alt.resolved ? (
+                    {!canResolve ? null : alt.resolved ? (
                       onUnresolveAlert && (
                         <button
                           onClick={() => onUnresolveAlert(alt.id)}
