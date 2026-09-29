@@ -53,6 +53,45 @@ import {
   unresolveAlert,
 } from './db/alerts.js';
 
+import {
+  consumeRateLimit,
+  peekRateLimit,
+  resetRateLimit,
+  getClientIp,
+} from './db/rateLimit.js';
+
+// Rate limits (fixed windows, persisted in Neon)
+const LOGIN_IP_LIMIT = 30; // login attempts per IP
+const LOGIN_EMAIL_FAILURE_LIMIT = 8; // failed logins per email address
+const LOGIN_WINDOW_SECONDS = 15 * 60;
+const AI_USER_LIMIT = 40; // Gemini calls per user (chat + analysis)
+const AI_WINDOW_SECONDS = 60 * 60;
+const AI_PROMPT_MAX_LENGTH = 4000;
+
+function sendTooManyRequests(res: any, retryAfterSeconds: number, message: string) {
+  const retryAfter = Math.max(1, Math.ceil(retryAfterSeconds || 60));
+  res.setHeader('Retry-After', String(retryAfter));
+  return res.status(429).json({
+    success: false,
+    error: message,
+    retry_after_seconds: retryAfter,
+  });
+}
+
+async function checkAiRateLimit(req: any, res: any): Promise<boolean> {
+  const limit = await consumeRateLimit(`ai:user:${req.user.id}`, AI_USER_LIMIT, AI_WINDOW_SECONDS);
+  if (!limit.allowed) {
+    const minutes = Math.ceil(limit.retryAfterSeconds / 60);
+    sendTooManyRequests(
+      res,
+      limit.retryAfterSeconds,
+      `Limite d'utilisation de l'assistant IA atteinte (${AI_USER_LIMIT} requêtes par heure). Réessayez dans ${minutes} min.`
+    );
+    return false;
+  }
+  return true;
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ALERT_ID_RE = /^[A-Za-z0-9_-]{1,100}$/;
 
@@ -160,16 +199,45 @@ export function createServerApp(): Express {
     try {
       const { email, password } = req.body || {};
 
-      if (!email || !password) {
+      if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
         return res.status(400).json({
           success: false,
           error: 'Email et mot de passe requis',
         });
       }
 
+      // Brute-force protection: per-IP attempts and per-email failures
+      const ipLimit = await consumeRateLimit(
+        `login:ip:${getClientIp(req)}`,
+        LOGIN_IP_LIMIT,
+        LOGIN_WINDOW_SECONDS
+      );
+      if (!ipLimit.allowed) {
+        return sendTooManyRequests(
+          res,
+          ipLimit.retryAfterSeconds,
+          'Trop de tentatives de connexion. Veuillez réessayer plus tard.'
+        );
+      }
+
+      const emailBucket = `login:email:${email.trim().toLowerCase().slice(0, 200)}`;
+      const emailLimit = await peekRateLimit(
+        emailBucket,
+        LOGIN_EMAIL_FAILURE_LIMIT,
+        LOGIN_WINDOW_SECONDS
+      );
+      if (!emailLimit.allowed) {
+        return sendTooManyRequests(
+          res,
+          emailLimit.retryAfterSeconds,
+          'Trop de tentatives échouées pour ce compte. Veuillez réessayer plus tard.'
+        );
+      }
+
       const user = await findUserByEmail(email);
 
       if (!user || !user.is_active) {
+        await consumeRateLimit(emailBucket, LOGIN_EMAIL_FAILURE_LIMIT, LOGIN_WINDOW_SECONDS);
         return res.status(401).json({
           success: false,
           error: 'Email ou mot de passe incorrect',
@@ -182,11 +250,14 @@ export function createServerApp(): Express {
       );
 
       if (!passwordValid) {
+        await consumeRateLimit(emailBucket, LOGIN_EMAIL_FAILURE_LIMIT, LOGIN_WINDOW_SECONDS);
         return res.status(401).json({
           success: false,
           error: 'Email ou mot de passe incorrect',
         });
       }
+
+      await resetRateLimit(emailBucket);
 
       const session = await createSession(user.id);
 
@@ -227,22 +298,10 @@ export function createServerApp(): Express {
     } catch (error: any) {
       console.error('Login error:', error);
 
-      const errorMessage = error?.message || '';
-      if (
-        errorMessage.includes('password authentication failed') ||
-        errorMessage.includes('authentication failed') ||
-        errorMessage.includes('NeonDbError')
-      ) {
-        return res.status(503).json({
-          success: false,
-          error:
-            'Impossible de se connecter à la base de données Neon : identifiants PostgreSQL incorrects ou expirés. Veuillez vérifier DATABASE_URL dans les paramètres.',
-        });
-      }
-
-      return res.status(500).json({
+      // Public endpoint: never expose database/internal details to the caller.
+      return res.status(503).json({
         success: false,
-        error: error?.message || 'Erreur lors de la connexion',
+        error: 'Service temporairement indisponible. Veuillez réessayer plus tard.',
       });
     }
   });
@@ -279,7 +338,7 @@ export function createServerApp(): Express {
 
       return res.status(500).json({
         authenticated: false,
-        error: error?.message || 'Erreur de session',
+        error: 'Erreur de session',
       });
     }
   });
@@ -694,11 +753,18 @@ app.put(
         });
       }
 
-      const { prompt, shipmentContext } = req.body;
+      const { prompt, shipmentContext } = req.body || {};
 
-      if (!prompt) {
+      if (typeof prompt !== 'string' || !prompt.trim()) {
         return res.status(400).json({ error: 'Prompt requis' });
       }
+      if (prompt.length > AI_PROMPT_MAX_LENGTH) {
+        return res.status(400).json({
+          error: `La question ne doit pas dépasser ${AI_PROMPT_MAX_LENGTH} caractères.`,
+        });
+      }
+
+      if (!(await checkAiRateLimit(req, res))) return;
 
       const systemInstruction = `Tu es "Shipment AI", l'expert senior en Supply Chain, automatisation et transport international de l'application Shipment Manager.
 Ton rôle est d'analyser les expéditions aériennes et maritimes, de détecter les anomalies (retards, blocages douane, colis bloqués à Orly > 10j, retards transitaire), d'expliquer les statuts métier et de générer des messages de relance clairs et percutants pour Google Chat.
@@ -729,7 +795,6 @@ ${shipmentContext ? JSON.stringify(shipmentContext, null, 2) : 'Aucun contexte f
       console.error('Error calling Gemini API:', err);
       res.status(500).json({
         error: 'Erreur lors de la communication avec l\'assistant IA Shipment AI.',
-        details: err.message,
       });
     }
   });
@@ -741,7 +806,9 @@ ${shipmentContext ? JSON.stringify(shipmentContext, null, 2) : 'Aucun contexte f
         return res.status(500).json({ error: 'GEMINI_API_KEY non configurée' });
       }
 
-      const { shipments } = req.body;
+      const { shipments } = req.body || {};
+
+      if (!(await checkAiRateLimit(req, res))) return;
 
       const systemInstruction = `Tu es le Directeur Supply Chain IA de Shipment Manager.
 Analyse le lot d'expéditions transmis et produit une synthèse stratégique opérationnelle en Markdown comprenant:
@@ -768,7 +835,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       });
     } catch (err: any) {
       console.error('Error analyzing shipments:', err);
-      res.status(500).json({ error: 'Erreur lors de l\'analyse automatique.', details: err.message });
+      res.status(500).json({ error: 'Erreur lors de l\'analyse automatique.' });
     }
   });
 
@@ -1004,10 +1071,11 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         ...testResult,
       });
     } catch (err: any) {
+      console.error('[Neon Status]', err);
       res.status(500).json({
         configured: isNeonConfigured(),
         connected: false,
-        error: err?.message || 'Erreur de test Neon',
+        error: 'Erreur de test Neon (voir les logs serveur)',
       });
     }
   });
@@ -1024,7 +1092,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       res.json({ success: true, message: 'Schéma SQL Neon initialisé avec succès.' });
     } catch (err: any) {
       console.error('Failed to init Neon schema:', err);
-      res.status(500).json({ error: 'Erreur d\'initialisation du schéma Neon', details: err?.message });
+      res.status(500).json({ error: 'Erreur d\'initialisation du schéma Neon' });
     }
   });
 
@@ -1045,7 +1113,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       });
     } catch (err: any) {
       console.error('Error fetching shipments from Neon:', err);
-      res.status(500).json({ error: 'Erreur SQL lors de la récupération des expéditions', details: err?.message });
+      res.status(500).json({ error: 'Erreur lors de la récupération des expéditions' });
     }
   });
 
@@ -1061,7 +1129,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       res.json({ success: true, shipment });
     } catch (err: any) {
-      res.status(500).json({ error: 'Erreur SQL', details: err?.message });
+      console.error('Error fetching shipment from Neon:', err);
+      res.status(500).json({ error: 'Erreur lors de la récupération de l\'expédition' });
     }
   });
 
@@ -1125,7 +1194,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       res.json({ success: true, shipment: saved });
     } catch (err: any) {
       console.error('Error upserting shipment in Neon:', err);
-      res.status(500).json({ error: 'Erreur SQL lors de l\'enregistrement', details: err?.message });
+      res.status(500).json({ error: 'Erreur lors de l\'enregistrement' });
     }
   });
 
@@ -1169,7 +1238,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       res.json({ success: true, shipment: saved });
     } catch (err: any) {
       console.error('Error updating shipment in Neon:', err);
-      res.status(500).json({ error: 'Erreur SQL lors de la mise à jour', details: err?.message });
+      res.status(500).json({ error: 'Erreur lors de la mise à jour' });
     }
   });
 
@@ -1204,7 +1273,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
       res.json({ success: true, deleted_id: req.params.id });
     } catch (err: any) {
-      res.status(500).json({ error: 'Erreur SQL lors de la suppression', details: err?.message });
+      console.error('Error deleting shipment in Neon:', err);
+      res.status(500).json({ error: 'Erreur lors de la suppression' });
     }
   });
 
@@ -1230,7 +1300,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       res.json({ success: true, deleted_count: count });
     } catch (err: any) {
       console.error('Erreur lors de la purge Neon:', err);
-      res.status(500).json({ error: 'Erreur lors de la suppression des données Neon', details: err?.message });
+      res.status(500).json({ error: 'Erreur lors de la suppression des données Neon' });
     }
   });
 
