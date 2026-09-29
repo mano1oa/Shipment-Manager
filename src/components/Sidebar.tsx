@@ -70,7 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: AlertTriangle,
       badge: criticalAlertsCount > 0 ? `${criticalAlertsCount}` : null,
       badgeColor: 'bg-rose-500 text-white',
-      allowedRoles: ['supply_chain'] as UserRole[],
+      allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
     },
     {
       id: 'analytics' as NavTab,

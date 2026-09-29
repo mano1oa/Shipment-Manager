@@ -701,7 +701,7 @@ useEffect(() => {
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
     supply_chain: ['dashboard', 'air', 'sea', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables','settings'],
-    sourcing: ['dashboard', 'air', 'sea', 'assistant'],
+    sourcing: ['dashboard', 'air', 'sea', 'alerts', 'assistant'],
     direction: ['dashboard', 'assistant'],
   }), []);
 
