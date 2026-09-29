@@ -69,9 +69,9 @@ export async function executeQuery<T = any>(
     const result = await (sql as any)(queryText, params);
     return (result || []) as T[];
   } catch (error: any) {
+    // Params are not logged: they may contain personal or sensitive values.
     console.error('Erreur lors de l’exécution SQL directe sur Neon:', {
       query: queryText,
-      params,
       error: error?.message || error,
     });
     throw error;
@@ -124,9 +124,10 @@ export async function testNeonConnection(): Promise<{
       shipmentsCount,
     };
   } catch (err: any) {
+    console.error('[Neon] Connection test failed:', err);
     return {
       connected: false,
-      error: err?.message || 'Échec de connexion à Neon',
+      error: 'Échec de connexion à Neon (voir les logs serveur)',
     };
   }
 }

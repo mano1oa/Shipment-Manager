@@ -139,7 +139,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
         {
           id: `ai-audit-${Date.now()}`,
           sender: 'assistant',
-          text: data.analysis || 'Erreur lors de la génération de l\'analyse exécutive.',
+          text: data.analysis || data.error || 'Erreur lors de la génération de l\'analyse exécutive.',
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
