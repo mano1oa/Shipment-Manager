@@ -141,3 +141,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_suppliers_name_unique_ci
     ON shipment_suppliers (LOWER(TRIM(name)));
 CREATE INDEX IF NOT EXISTS idx_shipment_suppliers_active
     ON shipment_suppliers (is_active);
+
+-- ------------------------------------------------------------------------------
+-- 5. ALERTES RÉSOLUES (état partagé entre utilisateurs)
+-- Créée automatiquement au premier appel de /api/alerts/* (ensureAlertsSchema).
+-- alert_id = identifiant déterministe produit par le moteur de règles.
+-- L'historique résolution/réouverture est dans system_audit_logs.
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS resolved_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    alert_id VARCHAR(100) NOT NULL UNIQUE,
+    shipment_id VARCHAR(50),
+    rule_code VARCHAR(50),
+    resolved_by_user_id UUID NOT NULL,
+    resolved_by_email VARCHAR(255) NOT NULL,
+    resolved_by_name VARCHAR(100),
+    resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolution_note TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_resolved_alerts_shipment_id
+    ON resolved_alerts (shipment_id);

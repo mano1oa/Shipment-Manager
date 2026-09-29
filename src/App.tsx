@@ -317,19 +317,44 @@ useEffect(() => {
     }
   }, [darkMode]);
 
-  // Track resolved alerts in localStorage
-  const [resolvedAlertIds, setResolvedAlertIds] = useState<string[]>(() => {
+  // Resolved alerts: shared state persisted in Neon (GET /api/alerts/resolved).
+  // Other users' changes appear on reload or when the Alerts tab is opened.
+  const [resolvedAlertIds, setResolvedAlertIds] = useState<string[]>([]);
+
+  const loadResolvedAlerts = async () => {
     try {
-      const saved = localStorage.getItem('shipment_manager_resolved_alerts');
-      return saved ? JSON.parse(saved) : [];
+      const res = await fetch('/api/alerts/resolved', { credentials: 'include' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.success && Array.isArray(data.resolved)) {
+        setResolvedAlertIds(data.resolved.map((r: { alert_id: string }) => r.alert_id));
+      } else if (res.status !== 401) {
+        showToast('❌ Impossible de charger les alertes résolues.');
+      }
     } catch {
-      return [];
+      showToast('❌ Impossible de charger les alertes résolues (erreur réseau).');
     }
-  });
+  };
 
   useEffect(() => {
-    localStorage.setItem('shipment_manager_resolved_alerts', JSON.stringify(resolvedAlertIds));
-  }, [resolvedAlertIds]);
+    // Remove the legacy per-browser copy (business state now lives in Neon)
+    try {
+      localStorage.removeItem('shipment_manager_resolved_alerts');
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authUser) {
+      loadResolvedAlerts();
+    }
+  }, [authUser?.id]);
+
+  useEffect(() => {
+    if (authUser && activeTab === 'alerts') {
+      loadResolvedAlerts();
+    }
+  }, [activeTab]);
 
   // Evaluate rules against current shipments
   const { shipmentsWithAlerts, allAlerts } = useMemo(() => {
@@ -439,14 +464,50 @@ useEffect(() => {
     }
   };
 
-  const handleResolveAlert = (alertId: string) => {
-    setResolvedAlertIds((prev) => (prev.includes(alertId) ? prev : [...prev, alertId]));
-    showToast(`Alerte ${alertId} marquée comme résolue.`);
+  const handleResolveAlert = async (alertId: string) => {
+    const alert = allAlerts.find((a) => a.id === alertId);
+    try {
+      const res = await fetch(`/api/alerts/${encodeURIComponent(alertId)}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          shipment_id: alert?.shipment_id,
+          rule_code: alert?.rule_code,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        showToast(`❌ Échec de la résolution : ${data?.error || `erreur ${res.status}`}`);
+        return;
+      }
+      setResolvedAlertIds((prev) => (prev.includes(alertId) ? prev : [...prev, alertId]));
+      showToast(
+        data.already_resolved
+          ? `Alerte ${alertId} déjà résolue par ${data.resolved?.resolved_by_email || 'un autre utilisateur'}.`
+          : `Alerte ${alertId} marquée comme résolue.`
+      );
+    } catch {
+      showToast('❌ Échec de la résolution (erreur réseau).');
+    }
   };
 
-  const handleUnresolveAlert = (alertId: string) => {
-    setResolvedAlertIds((prev) => prev.filter((id) => id !== alertId));
-    showToast(`Alerte ${alertId} réactivée.`);
+  const handleUnresolveAlert = async (alertId: string) => {
+    try {
+      const res = await fetch(`/api/alerts/${encodeURIComponent(alertId)}/resolve`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        showToast(`❌ Échec de la réactivation : ${data?.error || `erreur ${res.status}`}`);
+        return;
+      }
+      setResolvedAlertIds((prev) => prev.filter((id) => id !== alertId));
+      showToast(`Alerte ${alertId} réactivée.`);
+    } catch {
+      showToast('❌ Échec de la réactivation (erreur réseau).');
+    }
   };
 
   const handleDispatchGoogleChat = async (message: string, _space?: string) => {
@@ -782,6 +843,7 @@ if (!authUser) {
               onDispatchGoogleChat={handleDispatchGoogleChat}
               onResolveAlert={handleResolveAlert}
               onUnresolveAlert={handleUnresolveAlert}
+              canResolve={canEdit}
             />
           )}
           {activeTab === 'settings' && currentRole === 'supply_chain' && (<SettingsUsersView />

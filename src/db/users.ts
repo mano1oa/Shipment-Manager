@@ -123,11 +123,30 @@ export async function listUsers() {
   `;
 }
 
+export type GuardedUpdateResult =
+  | { ok: true; user: UserRecord; previous: { role: UserRole; is_active: boolean } }
+  | { ok: false; reason: 'NOT_FOUND' | 'LAST_ACTIVE_SUPPLY_CHAIN' };
+
+async function getUserState(userId: string) {
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id, role, is_active FROM users WHERE id = ${userId} LIMIT 1
+  `;
+  return (rows[0] as { id: string; role: UserRole; is_active: boolean }) ?? null;
+}
+
+/**
+ * Changes a user's role. Refuses to remove the SUPPLY_CHAIN role from the last
+ * active SUPPLY_CHAIN account (the check and the update run in one statement).
+ */
 export async function updateUserRole(
   userId: string,
   role: UserRole
-) {
+): Promise<GuardedUpdateResult> {
   const sql = getDb();
+
+  const before = await getUserState(userId);
+  if (!before) return { ok: false, reason: 'NOT_FOUND' };
 
   const rows = await sql`
     UPDATE users
@@ -135,6 +154,16 @@ export async function updateUserRole(
       role = ${role},
       updated_at = NOW()
     WHERE id = ${userId}
+      AND (
+        ${role} = 'SUPPLY_CHAIN'
+        OR NOT (role = 'SUPPLY_CHAIN' AND is_active = TRUE)
+        OR EXISTS (
+          SELECT 1 FROM users other
+          WHERE other.role = 'SUPPLY_CHAIN'
+            AND other.is_active = TRUE
+            AND other.id <> ${userId}
+        )
+      )
     RETURNING
       id,
       email,
@@ -146,14 +175,26 @@ export async function updateUserRole(
       last_login_at
   `;
 
-  return rows[0] ?? null;
+  if (!rows[0]) return { ok: false, reason: 'LAST_ACTIVE_SUPPLY_CHAIN' };
+  return {
+    ok: true,
+    user: rows[0] as UserRecord,
+    previous: { role: before.role, is_active: before.is_active },
+  };
 }
 
+/**
+ * Activates/deactivates a user. Refuses to deactivate the last active
+ * SUPPLY_CHAIN account. Deactivation also deletes the user's sessions.
+ */
 export async function updateUserStatus(
   userId: string,
   isActive: boolean
-) {
+): Promise<GuardedUpdateResult> {
   const sql = getDb();
+
+  const before = await getUserState(userId);
+  if (!before) return { ok: false, reason: 'NOT_FOUND' };
 
   const rows = await sql`
     UPDATE users
@@ -161,6 +202,16 @@ export async function updateUserStatus(
       is_active = ${isActive},
       updated_at = NOW()
     WHERE id = ${userId}
+      AND (
+        ${isActive} = TRUE
+        OR NOT (role = 'SUPPLY_CHAIN' AND is_active = TRUE)
+        OR EXISTS (
+          SELECT 1 FROM users other
+          WHERE other.role = 'SUPPLY_CHAIN'
+            AND other.is_active = TRUE
+            AND other.id <> ${userId}
+        )
+      )
     RETURNING
       id,
       email,
@@ -172,5 +223,15 @@ export async function updateUserStatus(
       last_login_at
   `;
 
-  return rows[0] ?? null;
+  if (!rows[0]) return { ok: false, reason: 'LAST_ACTIVE_SUPPLY_CHAIN' };
+
+  if (!isActive) {
+    await sql`DELETE FROM user_sessions WHERE user_id = ${userId}`;
+  }
+
+  return {
+    ok: true,
+    user: rows[0] as UserRecord,
+    previous: { role: before.role, is_active: before.is_active },
+  };
 }
