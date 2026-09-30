@@ -66,7 +66,7 @@ export async function executeQuery<T = any>(
   
   // Neon supporte l'appel direct sql(query, params) ou les requêtes préparées
   try {
-    const result = await (sql as any)(queryText, params);
+    const result = await sql.query(queryText, params);
     return (result || []) as T[];
   } catch (error: any) {
     // Params are not logged: they may contain personal or sensitive values.
