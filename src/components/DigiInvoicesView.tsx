@@ -13,6 +13,8 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Wrench,
+  PackageCheck,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -27,6 +29,9 @@ import {
   formatDate,
   formatQuantity,
   syncDigiOdoo,
+  createShipmentFromInvoice,
+  setInvoiceServices,
+  isServicesInvoice,
 } from './digiApi';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DigiImportModal } from './DigiImportModal';
@@ -34,7 +39,13 @@ import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
 
 interface Props {
   canDelete: boolean;
+  /** Opens a shipment's detail (shipment created from an invoice). */
+  onOpenShipment: (shipmentId: string) => void;
+  /** Shipments were created: the app reloads its shipment lists. */
+  onShipmentsChanged: () => void;
 }
+
+type Section = 'to_ship' | 'services';
 
 const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   odoo: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
@@ -42,7 +53,7 @@ const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   manual: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
-export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
+export const DigiInvoicesView: React.FC<Props> = ({ canDelete, onOpenShipment, onShipmentsChanged }) => {
   const [config, setConfig] = useState<DigiConfig | null>(null);
   const [invoices, setInvoices] = useState<DigiInvoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +63,8 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
 
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | DigiInvoiceSource>('all');
+  const [section, setSection] = useState<Section>('to_ship');
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [editing, setEditing] = useState<DigiInvoice | 'new' | null>(null);
@@ -91,6 +104,8 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
       if (r.failed > 0) parts.push(`${r.failed} en échec`);
       if (r.missing > 0) parts.push(`${r.missing} absente(s) d'Odoo`);
       if (r.cancelled_removed > 0) parts.push(`${r.cancelled_removed} annulée(s) retirée(s)`);
+      if (r.shipments_created) parts.push(`${r.shipments_created} expédition(s) créée(s)`);
+      if (r.shipments_created) onShipmentsChanged();
       setMessage(
         `Synchronisation Odoo : ${parts.join(', ')}.` +
           (r.complete ? '' : ` ${r.remaining} restante(s) : relancez la synchronisation.`)
@@ -116,6 +131,54 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
     }
   };
 
+  const replaceInvoice = (updated: DigiInvoice) =>
+    setInvoices((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+
+  const handleCreateShipment = async (inv: DigiInvoice) => {
+    setBusyId(inv.id);
+    setError(null);
+    try {
+      const { invoice, shipment } = await createShipmentFromInvoice(inv.id);
+      replaceInvoice(invoice);
+      onShipmentsChanged();
+      setMessage(`Expédition ${shipment.id} créée.`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleToggleServices = async (inv: DigiInvoice) => {
+    const toServices = !inv.no_shipment;
+    if (
+      toServices &&
+      inv.shipment_id &&
+      inv.shipment_exists &&
+      !window.confirm(
+        `Classer la facture ${inv.ref ?? ''} en services ? Elle sera détachée de l'expédition ${inv.shipment_id}, qui reste à supprimer si elle n'a plus lieu d'être.`
+      )
+    ) {
+      return;
+    }
+    setBusyId(inv.id);
+    setError(null);
+    try {
+      const { invoice, detached_shipment_id } = await setInvoiceServices(inv.id, toServices);
+      replaceInvoice(invoice);
+      if (detached_shipment_id) onShipmentsChanged();
+      setMessage(
+        toServices
+          ? `Facture ${inv.ref ?? ''} classée en services (pas d'expédition).`
+          : `Facture ${inv.ref ?? ''} remise dans les factures à expédier.`
+      );
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggle = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -127,6 +190,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return invoices.filter((inv) => {
+      if ((section === 'services') !== isServicesInvoice(inv)) return false;
       if (sourceFilter !== 'all' && inv.source !== sourceFilter) return false;
       if (!q) return true;
       return [
@@ -138,9 +202,40 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
         ...inv.lines.map((l) => l.name),
       ].some((v) => v && v.toLowerCase().includes(q));
     });
-  }, [invoices, search, sourceFilter]);
+  }, [invoices, search, sourceFilter, section]);
+
+  const servicesCount = useMemo(() => invoices.filter(isServicesInvoice).length, [invoices]);
 
   const lastSync = config?.last_sync ?? null;
+
+  const renderShipmentCell = (inv: DigiInvoice) => {
+    if (inv.shipment_id && inv.shipment_exists) {
+      return (
+        <button
+          onClick={() => onOpenShipment(inv.shipment_id!)}
+          className="font-mono font-semibold text-[#643288] hover:underline dark:text-purple-300"
+          title={inv.shipment_global_status || undefined}
+        >
+          {inv.shipment_id}
+          <span className="ml-1 font-sans text-[10px] font-normal text-slate-400">{inv.shipment_mode}</span>
+        </button>
+      );
+    }
+    if (isServicesInvoice(inv)) return <span className="text-slate-400">Service</span>;
+    if (!inv.has_items) return <span className="text-slate-400">—</span>;
+    if (inv.odoo_state && inv.odoo_state !== 'posted' && !inv.shipment_id) {
+      return <span className="text-slate-400" title="Créée automatiquement quand la facture est validée dans Odoo">À la validation</span>;
+    }
+    return (
+      <button
+        onClick={() => handleCreateShipment(inv)}
+        disabled={busyId === inv.id}
+        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#643288] hover:text-[#643288] disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+      >
+        {inv.shipment_id ? 'Supprimée — recréer' : 'Créer l\'expédition'}
+      </button>
+    );
+  };
 
   const button =
     'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold shadow-sm transition disabled:opacity-50';
@@ -226,6 +321,34 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
         </div>
       )}
 
+      {/* Sections */}
+      <div className="flex gap-1 rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
+        {(
+          [
+            ['to_ship', 'À expédier', invoices.length - servicesCount],
+            ['services', 'Services (non expédiés)', servicesCount],
+          ] as [Section, string, number][]
+        ).map(([key, label, count]) => (
+          <button
+            key={key}
+            onClick={() => setSection(key)}
+            className={`rounded-lg px-3 py-1.5 transition ${
+              section === key
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+            }`}
+          >
+            {label} <span className="ml-1 text-slate-400">{count}</span>
+          </button>
+        ))}
+      </div>
+      {section === 'services' && (
+        <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Factures sans article à expédier (frais DEEE, RCP, port… ou classées à la main) : traitement manuel, aucune
+          expédition n'est créée.
+        </p>
+      )}
+
       {/* Filters */}
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:flex-row sm:items-center dark:border-slate-800 dark:bg-slate-800">
         <div className="relative flex-1">
@@ -266,7 +389,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
                 <th className="px-3 py-3 font-semibold">Date de facturation</th>
                 <th className="px-3 py-3 font-semibold">Commande Amazon</th>
                 <th className="px-3 py-3 font-semibold">Facture vente</th>
-                <th className="px-3 py-3 font-semibold">Destination</th>
+                <th className="px-3 py-3 font-semibold">Expédition</th>
                 <th className="px-3 py-3 text-right font-semibold">Lignes</th>
                 <th className="px-3 py-3 text-right font-semibold">Total</th>
                 <th className="px-3 py-3 font-semibold">Source</th>
@@ -314,7 +437,9 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
                         <td className="px-3 py-3">{formatDate(inv.invoice_date)}</td>
                         <td className="px-3 py-3 font-mono">{inv.amazon_order_ref || '—'}</td>
                         <td className="px-3 py-3">{inv.sale_move_ref || '—'}</td>
-                        <td className="px-3 py-3">{inv.dest_partner_name || '—'}</td>
+                        <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                          {renderShipmentCell(inv)}
+                        </td>
                         <td className="px-3 py-3 text-right">{inv.lines.length}</td>
                         <td className="px-3 py-3 text-right font-semibold">{formatAmount(inv.amount_total)}</td>
                         <td className="px-3 py-3">
@@ -339,6 +464,14 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
                         </td>
                         <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => handleToggleServices(inv)}
+                              disabled={busyId === inv.id}
+                              title={inv.no_shipment ? 'Remettre dans les factures à expédier' : 'Classer en services (pas d\'expédition)'}
+                              className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                            >
+                              {inv.no_shipment ? <PackageCheck className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
+                            </button>
                             {editable && (
                               <button
                                 onClick={() => setEditing(inv)}
@@ -378,8 +511,15 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                                   {inv.lines.map((line) => (
-                                    <tr key={line.id}>
-                                      <td className="px-3 py-2 whitespace-pre-line">{line.name}</td>
+                                    <tr key={line.id} className={line.is_service ? 'text-slate-400' : ''}>
+                                      <td className="px-3 py-2 whitespace-pre-line">
+                                        {line.is_service && (
+                                          <span className="mr-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                                            Service
+                                          </span>
+                                        )}
+                                        {line.name}
+                                      </td>
                                       <td className="px-3 py-2 text-right">{formatQuantity(line.quantity)}</td>
                                       <td className="px-3 py-2 text-right">{formatAmount(line.price_unit)}</td>
                                       <td className="px-3 py-2 text-right font-semibold">
@@ -430,8 +570,9 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
           destination={destination}
           maxInvoices={config?.import_max_invoices ?? 2000}
           onClose={() => setShowImport(false)}
-          onImported={() => {
+          onImported={(result) => {
             fetchDigiInvoices().then(setInvoices).catch((err) => setError(err.message));
+            if (result.shipments_created) onShipmentsChanged();
           }}
         />
       )}

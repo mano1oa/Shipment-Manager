@@ -1,4 +1,4 @@
-import { Shipment, ShipmentAlert } from '../types';
+import { Shipment, ShipmentAlert, shipmentValue } from '../types';
 
 /**
  * Calculates Departure Madagascar ("DEPART MADA"):
@@ -160,7 +160,7 @@ export function evaluateShipmentRules(shipments: Shipment[]): {
 - Réf FA: ${faValue} / Commande : ${shipment.order_reference || 'N/A'}
 - Fournisseur: ${shipment.supplier || 'N/A'} / Transporteur: ${shipment.carrier || 'N/A'}
 - N° Suivi: ${shipment.tracking_no || 'N/A'}
-- Valeur: ${shipment.cost_eur ? shipment.cost_eur + ' €' : 'N/A'}`;
+- Valeur: ${shipmentValue(shipment) ? shipmentValue(shipment) + ' €' : 'N/A'}`;
 
       alerts.push({
         id: alertId,

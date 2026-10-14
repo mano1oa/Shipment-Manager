@@ -22,7 +22,7 @@ import {
   Printer,
   PlusCircle,
 } from 'lucide-react';
-import { Shipment, TransportMode, FilterState } from '../types';
+import { Shipment, TransportMode, FilterState, shipmentValue } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 
@@ -133,7 +133,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   }, [shipments]);
 
   const totalPerduValue = useMemo(() => {
-    return perduOrlyShipments.reduce((acc, s) => acc + (s.cost_eur || 0), 0);
+    return perduOrlyShipments.reduce((acc, s) => acc + shipmentValue(s), 0);
   }, [perduOrlyShipments]);
 
   // Copy Claim Table text
@@ -145,7 +145,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transporteur | N° Suivi / LTA | Valeur (€) | Remarques\n`;
     text += `----------------------------------------------------------------------------------------------------\n`;
     perduOrlyShipments.forEach((s) => {
-      text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${s.cost_eur} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
+      text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${shipmentValue(s)} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
     });
 
     navigator.clipboard.writeText(text);
@@ -183,7 +183,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       `"${s.supplier}"`,
       s.order_reference,
       s.invoice_no,
-      s.cost_eur,
+      shipmentValue(s),
       s.tracking_no,
       s.bl_awb || '',
       s.carrier,
@@ -493,7 +493,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                         {/* Valeur (€) */}
                         <td className="px-3 py-3 font-mono font-bold text-slate-900 dark:text-slate-100">
-                          {shp.cost_eur ? `${shp.cost_eur.toLocaleString()} €` : '—'}
+                          {shipmentValue(shp) ? `${shipmentValue(shp).toLocaleString('fr-FR')} €` : '—'}
                         </td>
 
                         {/* Tracking & BL */}
@@ -866,7 +866,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                               {s.tracking_no}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono font-black text-rose-700 dark:text-rose-400">
-                              {s.cost_eur ? `${s.cost_eur.toLocaleString()} €` : '0 €'}
+                              {`${shipmentValue(s).toLocaleString('fr-FR')} €`}
                             </td>
                             <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">
                               {s.remarks || 'Colis non réceptionné au Hub Orly'}

@@ -15,7 +15,7 @@ import { SettingsUsersView } from './components/SettingsUsersView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
-import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
+import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus, shipmentValue } from './types';
 
 type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTransportMode };
 type ReferenceSupplier = { id: string; name: string };
@@ -404,11 +404,11 @@ useEffect(() => {
 
     const totalValueInTransit = shipmentsWithAlerts
       .filter((s) => s.global_status === 'Reçu et expédié')
-      .reduce((sum, s) => sum + (s.cost_eur || 0), 0);
+      .reduce((sum, s) => sum + shipmentValue(s), 0);
 
     const totalValuePerduOrly = shipmentsWithAlerts
       .filter((s) => s.global_status === 'Perdu Orly')
-      .reduce((sum, s) => sum + (s.cost_eur || 0), 0);
+      .reduce((sum, s) => sum + shipmentValue(s), 0);
 
     return {
       totalShipments: total,
@@ -456,7 +456,12 @@ useEffect(() => {
         return;
       }
 
-      const savedShipment: Shipment = data.shipment || updated;
+      // The value from the DIGI invoices is computed by the list endpoint only
+      const savedShipment: Shipment = {
+        ...(data.shipment || updated),
+        digi_invoice_count: updated.digi_invoice_count,
+        digi_invoice_total: updated.digi_invoice_total,
+      };
       setShipments((prev) => prev.map((s) => (s.id === savedShipment.id ? savedShipment : s)));
       setSelectedShipment(savedShipment);
       showToast(`✅ Expédition ${savedShipment.id} mise à jour dans Neon PostgreSQL.`);
@@ -836,7 +841,17 @@ if (!authUser) {
             />
           )}
 
-          {activeTab === 'digi' && <DigiInvoicesView canDelete={currentRole === 'supply_chain'} />}
+          {activeTab === 'digi' && (
+            <DigiInvoicesView
+              canDelete={currentRole === 'supply_chain'}
+              onOpenShipment={(id) => {
+                const linked = shipmentsWithAlerts.find((s) => s.id === id);
+                if (linked) setSelectedShipment(linked);
+                else showToast('Expédition introuvable : rechargez la liste des expéditions.');
+              }}
+              onShipmentsChanged={loadShipmentsFromNeon}
+            />
+          )}
 
           {activeTab === 'alerts' && (
             <AlertsCenterView

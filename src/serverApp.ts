@@ -55,11 +55,16 @@ import {
   deleteDigiInvoice,
   importDigiInvoices,
   getLastOdooSyncRun,
+  getInvoiceForShipment,
+  getInvoiceTotalsByShipment,
+  listDigiInvoicesForShipment,
+  setInvoiceNoShipment,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
 } from './db/digiInvoices.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
+import { createPendingShipments, createShipmentForInvoice } from './services/digiShipments.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
@@ -477,7 +482,7 @@ export function createServerApp(): Express {
       const startedAt = Date.now();
       const result = await runDigiOdooSync({
         trigger: 'cron',
-        actorEmail: null,
+        actor: null,
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
       console.log('[DIGI Cron]', JSON.stringify(result));
@@ -1461,6 +1466,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         actor: req.user,
         details: { supplier: value.supplier_name, ref: value.ref, lines: value.lines.length },
       });
+      await createPendingShipments(req.user);
       return res.status(201).json({ success: true, invoice: await getDigiInvoice(id) });
     } catch (err: any) {
       if (err instanceof DuplicateDigiInvoiceError) {
@@ -1496,6 +1502,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
     try {
       const { created, duplicates } = await importDigiInvoices(valid, req.user.email);
+      const shipmentsCreated = await createPendingShipments(req.user);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: '*',
@@ -1509,10 +1516,76 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           rejected: rejected.length,
         },
       });
-      return res.json({ success: true, created, duplicates, rejected });
+      return res.json({ success: true, created, duplicates, rejected, shipments_created: shipmentsCreated });
     } catch (err: any) {
       console.error('[DIGI] Import error:', err);
       return res.status(500).json({ success: false, error: 'Échec de l\'import des factures' });
+    }
+  });
+
+  // Shipment by hand: old invoice, deleted shipment, Odoo draft…
+  app.post('/api/digi-invoices/:id/create-shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    try {
+      const invoice = await getInvoiceForShipment(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      const shipment = await createShipmentForInvoice(invoice, req.user);
+      if (!shipment) {
+        return res.status(409).json({
+          success: false,
+          error: 'Cette facture a déjà une expédition, ou elle est classée en services.',
+        });
+      }
+      return res.status(201).json({ success: true, shipment, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[DIGI] Create shipment error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de créer l\'expédition' });
+    }
+  });
+
+  // Services only (nothing to ship, manual work) ↔ to ship
+  app.patch('/api/digi-invoices/:id/services', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    const noShipment = req.body?.no_shipment;
+    if (typeof noShipment !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'no_shipment doit être un booléen.' });
+    }
+    try {
+      const outcome = await setInvoiceNoShipment(req.params.id, noShipment);
+      if (!outcome) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: noShipment ? 'MARK_DIGI_INVOICE_SERVICES' : 'UNMARK_DIGI_INVOICE_SERVICES',
+        actor: req.user,
+        details: { detached_shipment_id: outcome.previous_shipment_id },
+      });
+      return res.json({
+        success: true,
+        detached_shipment_id: outcome.previous_shipment_id,
+        invoice: await getDigiInvoice(req.params.id),
+      });
+    } catch (err: any) {
+      console.error('[DIGI] Services flag error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  app.get('/api/shipments/:id/digi-invoices', async (req, res) => {
+    try {
+      const invoices = await listDigiInvoicesForShipment(req.params.id);
+      return res.json({ success: true, invoices });
+    } catch (err: any) {
+      console.error('[DIGI] Shipment invoices error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les factures de l\'expédition' });
     }
   });
 
@@ -1537,6 +1610,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         actor: req.user,
         details: { supplier: value.supplier_name, ref: value.ref, lines: value.lines.length },
       });
+      await createPendingShipments(req.user);
       return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
     } catch (err: any) {
       if (err instanceof ReadOnlyDigiInvoiceError) {
@@ -1609,7 +1683,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       const startedAt = Date.now();
       const result = await runDigiOdooSync({
         trigger: 'manual',
-        actorEmail: req.user.email,
+        actor: req.user,
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
       await writeAuditLog({
@@ -1681,6 +1755,17 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         });
       }
       const shipments = await getShipmentsFromNeon();
+      // Value of each shipment = total of its DIGI invoices
+      try {
+        const totals = await getInvoiceTotalsByShipment();
+        for (const shipment of shipments as any[]) {
+          const t = totals.get(shipment.id);
+          shipment.digi_invoice_count = t?.count ?? 0;
+          shipment.digi_invoice_total = t?.total ?? null;
+        }
+      } catch (totalsErr) {
+        console.error('[DIGI] Could not compute shipment values:', totalsErr);
+      }
       res.json({
         success: true,
         count: shipments.length,
@@ -1805,7 +1890,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       // Record which fields changed (names only: values may be large JSON)
       const changedFields = Object.keys(req.body || {}).filter(
         (key) =>
-          !['id', 'updated_at', 'created_at', 'alerts'].includes(key) &&
+          !['id', 'updated_at', 'created_at', 'alerts', 'digi_invoice_count', 'digi_invoice_total'].includes(key) &&
           JSON.stringify((req.body as any)[key] ?? null) !==
             JSON.stringify((previous as any)[key] ?? null)
       );

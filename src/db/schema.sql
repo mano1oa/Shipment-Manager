@@ -227,3 +227,10 @@ CREATE TABLE IF NOT EXISTS digi_odoo_sync_runs (
 
 CREATE INDEX IF NOT EXISTS idx_digi_odoo_sync_runs_started
     ON digi_odoo_sync_runs (started_at DESC);
+
+-- v2 : lien facture → expédition, factures « services », lignes de frais
+ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS shipment_id VARCHAR(50);          -- expédition créée pour la facture
+ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS shipment_created_at TIMESTAMPTZ;  -- jamais recréée automatiquement ensuite
+ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS no_shipment BOOLEAN NOT NULL DEFAULT FALSE; -- services, pas d'expédition
+CREATE INDEX IF NOT EXISTS idx_digi_invoices_shipment ON digi_invoices (shipment_id);
+ALTER TABLE digi_invoice_lines ADD COLUMN IF NOT EXISTS is_service BOOLEAN NOT NULL DEFAULT FALSE; -- ligne [SERVICES] (DEEE, RCP, FRDP)
