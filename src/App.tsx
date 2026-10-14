@@ -15,7 +15,7 @@ import { SettingsUsersView } from './components/SettingsUsersView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
-import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus, shipmentValue } from './types';
+import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from './types';
 
 type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTransportMode };
 type ReferenceSupplier = { id: string; name: string };
@@ -850,6 +850,8 @@ if (!authUser) {
                 else showToast('Expédition introuvable : rechargez la liste des expéditions.');
               }}
               onShipmentsChanged={loadShipmentsFromNeon}
+              shipments={shipmentsWithAlerts}
+              onDeleteShipment={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
             />
           )}
 
@@ -1085,7 +1087,7 @@ if (!authUser) {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Statut Antoine *
+                    Statut du colis à Orly (Antoine) *
                   </label>
                   <select
                     required
@@ -1094,10 +1096,11 @@ if (!authUser) {
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   >
                     <option value="">— Sélectionner —</option>
-                    <option value="En attente Antoine">En attente Antoine</option>
-                    <option value="Confirmé">Confirmé</option>
-                    <option value="Transmis transitaire">Transmis transitaire</option>
-                    <option value="A vérifier">A vérifier</option>
+                    {ANTOINE_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {ANTOINE_STATUS_LABELS[s]}
+                      </option>
+                    ))}
                   </select>
                 </div>
 

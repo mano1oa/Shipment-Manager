@@ -121,6 +121,12 @@ export const setInvoiceServices = (id: string, noShipment: boolean) =>
     body: JSON.stringify({ no_shipment: noShipment }),
   });
 
+export const assignInvoiceShipment = (id: string, shipmentId: string | null) =>
+  apiJson<{ invoice: DigiInvoice; previous_shipment_id: string | null; previous_shipment_empty: boolean }>(
+    `/api/digi-invoices/${id}/shipment`,
+    { method: 'PATCH', body: JSON.stringify({ shipment_id: shipmentId }) }
+  );
+
 export const fetchShipmentInvoices = (shipmentId: string) =>
   apiJson<{ invoices: DigiInvoice[] }>(`/api/shipments/${encodeURIComponent(shipmentId)}/digi-invoices`).then(
     (d) => d.invoices

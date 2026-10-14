@@ -19,7 +19,7 @@ import {
   Warehouse,
   Loader2,
 } from 'lucide-react';
-import { Shipment, GlobalStatus, AntoineStatus, shipmentValue } from '../types';
+import { Shipment, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { TrackingPanel } from './TrackingPanel';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
@@ -42,7 +42,6 @@ const GLOBAL_STATUSES: GlobalStatus[] = [
   'Perdu Orly',
   'Livré entrepôt',
 ];
-const ANTOINE_STATUSES: AntoineStatus[] = ['En attente Antoine', 'Confirmé', 'Transmis transitaire', 'A vérifier'];
 const CUSTOMS_STATUSES: Shipment['customs_status'][] = ['Non Requis', 'En cours', 'Dédouané', 'Bloqué Douane'];
 
 const inputClass =
@@ -483,11 +482,13 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                     className={inputClass}
                   >
                     {ANTOINE_STATUSES.map((s) => (
-                      <option key={s}>{s}</option>
+                      <option key={s} value={s}>
+                        {ANTOINE_STATUS_LABELS[s]}
+                      </option>
                     ))}
                   </select>
                 ) : (
-                  view.antoine_status || empty
+                  (view.antoine_status && (ANTOINE_STATUS_LABELS[view.antoine_status] || view.antoine_status)) || empty
                 )}
               </Field>
 

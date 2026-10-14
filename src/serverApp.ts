@@ -46,6 +46,7 @@ import {
 } from './db/suppliers.js';
 
 import { writeAuditLog } from './db/audit.js';
+import { ANTOINE_STATUSES } from './types.js';
 
 import {
   listDigiInvoices,
@@ -59,6 +60,7 @@ import {
   getInvoiceTotalsByShipment,
   listDigiInvoicesForShipment,
   setInvoiceNoShipment,
+  assignInvoiceToShipment,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
 } from './db/digiInvoices.js';
@@ -1579,6 +1581,37 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  // Group invoices: attach to an existing shipment, or detach (shipment_id null)
+  app.patch('/api/digi-invoices/:id/shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    const target = req.body?.shipment_id;
+    if (target !== null && (typeof target !== 'string' || !target.trim() || target.length > 50)) {
+      return res.status(400).json({ success: false, error: 'Expédition invalide.' });
+    }
+    try {
+      if (target !== null && !(await getShipmentByIdFromNeon(target))) {
+        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+      }
+      const outcome = await assignInvoiceToShipment(req.params.id, target);
+      if (!outcome) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: target ? 'ATTACH_DIGI_INVOICE_TO_SHIPMENT' : 'DETACH_DIGI_INVOICE_FROM_SHIPMENT',
+        actor: req.user,
+        details: { from: outcome.previous_shipment_id, to: target },
+      });
+      return res.json({ success: true, ...outcome, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[DIGI] Assign shipment error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de rattacher la facture' });
+    }
+  });
+
   app.get('/api/shipments/:id/digi-invoices', async (req, res) => {
     try {
       const invoices = await listDigiInvoicesForShipment(req.params.id);
@@ -1814,7 +1847,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!requiredText(data.supplier)) missing.push('supplier');
       if (!requiredText(data.order_reference)) missing.push('order_reference');
       if (!requiredText(data.global_status)) missing.push('global_status');
-      if (!['Confirmé', 'En attente Antoine', 'Transmis transitaire', 'A vérifier'].includes(data.antoine_status)) {
+      if (!ANTOINE_STATUSES.includes(data.antoine_status)) {
         missing.push('antoine_status');
       }
       if (!['Haute', 'Moyenne', 'Basse'].includes(data.priority)) missing.push('priority');

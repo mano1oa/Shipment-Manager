@@ -15,6 +15,7 @@ import {
   Trash2,
   Wrench,
   PackageCheck,
+  Link2,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -32,7 +33,10 @@ import {
   createShipmentFromInvoice,
   setInvoiceServices,
   isServicesInvoice,
+  assignInvoiceShipment,
 } from './digiApi';
+import { AttachShipmentModal } from './AttachShipmentModal';
+import { Shipment } from '../types';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DigiImportModal } from './DigiImportModal';
 import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
@@ -43,6 +47,10 @@ interface Props {
   onOpenShipment: (shipmentId: string) => void;
   /** Shipments were created: the app reloads its shipment lists. */
   onShipmentsChanged: () => void;
+  /** Existing shipments, to attach an invoice to one of them. */
+  shipments: Shipment[];
+  /** Deletes a shipment left without invoices (SUPPLY_CHAIN only). */
+  onDeleteShipment?: (shipmentId: string) => Promise<void> | void;
 }
 
 type Section = 'to_ship' | 'services';
@@ -53,7 +61,13 @@ const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   manual: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
-export const DigiInvoicesView: React.FC<Props> = ({ canDelete, onOpenShipment, onShipmentsChanged }) => {
+export const DigiInvoicesView: React.FC<Props> = ({
+  canDelete,
+  onOpenShipment,
+  onShipmentsChanged,
+  shipments,
+  onDeleteShipment,
+}) => {
   const [config, setConfig] = useState<DigiConfig | null>(null);
   const [invoices, setInvoices] = useState<DigiInvoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +79,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete, onOpenShipment, o
   const [sourceFilter, setSourceFilter] = useState<'all' | DigiInvoiceSource>('all');
   const [section, setSection] = useState<Section>('to_ship');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState<DigiInvoice | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const [editing, setEditing] = useState<DigiInvoice | 'new' | null>(null);
@@ -146,6 +161,29 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete, onOpenShipment, o
       setError(err.message);
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const handleAssign = async (inv: DigiInvoice, shipmentId: string | null) => {
+    const r = await assignInvoiceShipment(inv.id, shipmentId);
+    replaceInvoice(r.invoice);
+    setAttaching(null);
+    onShipmentsChanged();
+    setMessage(
+      shipmentId
+        ? `Facture ${inv.ref ?? ''} rattachée à l'expédition ${shipmentId}.`
+        : `Facture ${inv.ref ?? ''} détachée de ${r.previous_shipment_id}.`
+    );
+    const emptied = r.previous_shipment_empty ? r.previous_shipment_id : null;
+    if (emptied) {
+      if (
+        onDeleteShipment &&
+        window.confirm(`L'expédition ${emptied} n'a plus aucune facture. La supprimer ?`)
+      ) {
+        await onDeleteShipment(emptied);
+      } else if (!onDeleteShipment) {
+        setMessage(`Facture rattachée. L'expédition ${emptied} n'a plus de facture : demandez à Supply Chain de la supprimer si besoin.`);
+      }
     }
   };
 
@@ -464,6 +502,15 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete, onOpenShipment, o
                         </td>
                         <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex justify-end gap-1">
+                            {inv.has_items && !inv.no_shipment && (
+                              <button
+                                onClick={() => setAttaching(inv)}
+                                title="Rattacher à une expédition existante (envoi groupé)"
+                                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
+                              >
+                                <Link2 className="h-4 w-4" />
+                              </button>
+                            )}
                             <button
                               onClick={() => handleToggleServices(inv)}
                               disabled={busyId === inv.id}
@@ -562,6 +609,15 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete, onOpenShipment, o
             setMessage(editing === 'new' ? 'Facture enregistrée.' : 'Facture modifiée.');
             setEditing(null);
           }}
+        />
+      )}
+
+      {attaching && (
+        <AttachShipmentModal
+          invoice={attaching}
+          shipments={shipments}
+          onClose={() => setAttaching(null)}
+          onConfirm={(shipmentId) => handleAssign(attaching, shipmentId)}
         />
       )}
 

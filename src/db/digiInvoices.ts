@@ -808,3 +808,40 @@ export async function getInvoiceTotalsByShipment(): Promise<Map<string, { count:
     ])
   );
 }
+
+/**
+ * Moves an invoice to an existing shipment (several invoices can travel in
+ * the same shipment), or detaches it (shipmentId = null). Detached invoices
+ * are never given a new shipment automatically.
+ * Returns null when the invoice does not exist.
+ */
+export async function assignInvoiceToShipment(
+  invoiceId: string,
+  shipmentId: string | null
+): Promise<{ previous_shipment_id: string | null; previous_shipment_empty: boolean } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const before = await sql`SELECT shipment_id FROM digi_invoices WHERE id = ${invoiceId}`;
+  if (!before[0]) return null;
+  const previous = (before[0].shipment_id as string | null) ?? null;
+
+  await sql`
+    UPDATE digi_invoices SET
+      shipment_id = ${shipmentId},
+      shipment_created_at = COALESCE(shipment_created_at, NOW()),
+      no_shipment = CASE WHEN ${shipmentId}::text IS NULL THEN no_shipment ELSE FALSE END,
+      updated_at = NOW()
+    WHERE id = ${invoiceId}
+  `;
+
+  let previousEmpty = false;
+  if (previous && previous !== shipmentId) {
+    const rest = await sql`
+      SELECT
+        EXISTS (SELECT 1 FROM shipments WHERE id = ${previous}) AS still_exists,
+        EXISTS (SELECT 1 FROM digi_invoices WHERE shipment_id = ${previous}) AS has_invoices
+    `;
+    previousEmpty = Boolean(rest[0]?.still_exists) && !rest[0]?.has_invoices;
+  }
+  return { previous_shipment_id: previous, previous_shipment_empty: previousEmpty };
+}

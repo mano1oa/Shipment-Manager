@@ -158,7 +158,7 @@ Une expédition porte plusieurs statuts, chacun avec son rôle.
 | Champ | Valeurs | Quand / par qui | Manuel / auto |
 |---|---|---|---|
 | **Statut global** (statut Orly → Mada) | Attente confirmation transitaire · En livraison vers Orly · Reçu et expédié · Bloqué douane · Perdu Orly · Livré entrepôt | Choisi à la création, puis modifié au fil de l'eau par Supply Chain (liste ou fiche) | **Manuel**, sauf « Perdu Orly » qui peut être **déduit automatiquement** (voir §6 et §9) |
-| **Statut Antoine** | En attente Antoine · Confirmé · Transmis transitaire · A vérifier | Après chaque point avec Antoine | **Manuel** (fiche) |
+| **Statut du colis à Orly** (Antoine) | En attente Antoine (= à recevoir : réception à Orly pas encore confirmée) · Confirmé · Reçu et expédié vers Mada · Transmis transitaire · A vérifier | Après chaque point avec Antoine | **Manuel** (fiche) |
 | **Statut douane** | Non Requis · En cours · Dédouané · Bloqué Douane | Choisi à la création | **Manuel**, et seulement à la création aujourd'hui (§9) |
 | **Priorité** | Haute · Moyenne · Basse | Choisie à la création | **Manuel**, seulement à la création (§9) |
 | **Date de scan Orly** | date | Quand Antoine confirme la réception | **Manuel** |
@@ -298,6 +298,13 @@ ou une saisie) :
   — bouton « Créer l'expédition » dans ces cas, ou si l'expédition a été
   supprimée.
 
+**Envoi groupé.** Plusieurs factures peuvent voyager dans la même expédition :
+bouton « Rattacher à une expédition existante » sur la facture (recherche par
+n° d'expédition, fournisseur, commande, LTA). La valeur de l'expédition est la
+somme de toutes ses factures. Si l'expédition quittée n'a plus aucune facture,
+l'application propose de la supprimer (Supply Chain). Une facture peut aussi
+être détachée ; elle ne reçoit alors plus d'expédition automatiquement.
+
 **Services (non expédiés).** Onglet à part pour les factures sans article à
 expédier : factures ne contenant que des frais, ou classées à la main en
 services (travail manuel). Une facture classée en services est détachée de son
@@ -355,16 +362,14 @@ validation.
 3. **L'alerte « colis en attente » (10 jours) vise large.** Elle se déclenche
    aussi pour des expéditions « Livré entrepôt » et pour le maritime, dès que
    la fiche n'a pas été modifiée depuis 10 jours.
-4. **Statut douane et priorité** ne sont modifiables qu'à la création.
+4. **La priorité** n'est modifiable qu'à la création (le statut douane se
+   modifie dans la fiche).
 5. **« Livré Orly »** est proposé à la création mais absent des listes de
    modification.
 6. **Direction** ne voit que le tableau de bord et l'assistant, alors que la
    matrice des droits prévoit la consultation des expéditions et des analyses.
 7. **« Script Démo & Livrables »** contient du contenu de démonstration avec
    des chiffres fictifs : à retirer.
-8. Les **statuts Antoine** de l'application ne correspondent pas encore à ceux
-   du fichier Excel (« A recevoir », « OK (Reçu et expédié) », « Déjà reçu
-   Mada, à refacturer (REGUL) », « Avis de recherche »).
 
 ---
 
@@ -404,7 +409,7 @@ documente le schéma.
 | `POST /api/tracking/sync/:shipmentId` | SC, Sourcing |
 | `POST /api/tracking/sync-all` | SC |
 | `GET /api/cron/update-tracking`, `GET /api/cron/sync-digi-invoices` | Vercel Cron (`Authorization: Bearer CRON_SECRET`) |
-| `GET /api/digi-invoices`, `GET /api/digi-invoices/config`, `POST /api/digi-invoices`, `PUT /api/digi-invoices/:id`, `POST /api/digi-invoices/import`, `POST /api/digi-invoices/sync-odoo`, `POST /api/digi-invoices/:id/create-shipment`, `PATCH /api/digi-invoices/:id/services` | SC, Sourcing |
+| `GET /api/digi-invoices`, `GET /api/digi-invoices/config`, `POST /api/digi-invoices`, `PUT /api/digi-invoices/:id`, `POST /api/digi-invoices/import`, `POST /api/digi-invoices/sync-odoo`, `POST /api/digi-invoices/:id/create-shipment`, `PATCH /api/digi-invoices/:id/services`, `PATCH /api/digi-invoices/:id/shipment` | SC, Sourcing |
 | `GET /api/shipments/:id/digi-invoices` | connecté |
 | `DELETE /api/digi-invoices/:id` | SC (factures Excel / manuelles, ou Odoo « Absente d'Odoo ») |
 | `GET /api/alerts/resolved`, `POST` / `DELETE /api/alerts/:alertId/resolve` | lecture : connecté ; action : SC, Sourcing |
@@ -492,8 +497,7 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
    (vol groupé ORYA) ou en conteneur.
 7. Module Incidents (colis à retracer), historique des ETA maritimes, coûts par
    envoi groupé.
-8. Stockage réel des documents ; intégration MIDEX ; regroupement de
-   plusieurs factures dans une même expédition.
+8. Stockage réel des documents ; intégration MIDEX.
 
 ---
 
