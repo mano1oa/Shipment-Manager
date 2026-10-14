@@ -48,6 +48,24 @@ import {
 import { writeAuditLog } from './db/audit.js';
 
 import {
+  listDigiInvoices,
+  getDigiInvoice,
+  createDigiInvoice,
+  updateDigiInvoice,
+  deleteDigiInvoice,
+  importDigiInvoices,
+  DuplicateDigiInvoiceError,
+  ReadOnlyDigiInvoiceError,
+} from './db/digiInvoices.js';
+import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
+import { isOdooConfigured, OdooError } from './services/odoo/client.js';
+import { syncDigiInvoicesFromOdoo, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
+
+// Odoo DIGI sync: on demand, within the serverless time limit (300 s).
+const ODOO_SYNC_TIME_BUDGET_MS = 240_000;
+const ODOO_SYNC_MIN_INTERVAL_SECONDS = 30;
+
+import {
   listTrackingForShipment,
   getTrackingNumber,
   addTrackingNumber,
@@ -1359,6 +1377,210 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
     }
   );
+
+  // =========================================================
+  // DIGI LOGISTIC INVOICES → NextHope ("colis à suivre")
+  // Sources: Odoo DIGI LOGISTIC (read only), Excel import, manual entry.
+  // Reads and changes: SUPPLY_CHAIN + SOURCING. Delete: SUPPLY_CHAIN.
+  // =========================================================
+
+  app.get('/api/digi-invoices/config', requireRole('SUPPLY_CHAIN', 'SOURCING'), (_req, res) => {
+    const dest = getDestinationFilter();
+    res.json({
+      success: true,
+      odoo_configured: isOdooConfigured(),
+      dest_partner_name: dest.name,
+      dest_partner_id: dest.id,
+      import_max_invoices: DIGI_IMPORT_MAX_INVOICES,
+    });
+  });
+
+  app.get('/api/digi-invoices', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (_req, res) => {
+    try {
+      const invoices = await listDigiInvoices();
+      return res.json({ success: true, invoices });
+    } catch (err: any) {
+      console.error('[DIGI] List invoices error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les factures DIGI' });
+    }
+  });
+
+  app.post('/api/digi-invoices', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const { value, errors } = validateDigiInvoiceInput(req.body);
+    if (!value) {
+      return res.status(400).json({ success: false, error: errors.join(' ') });
+    }
+
+    try {
+      const id = await createDigiInvoice(value, 'manual', req.user.email);
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: id,
+        action: 'CREATE_DIGI_INVOICE',
+        actor: req.user,
+        details: { supplier: value.supplier_name, ref: value.ref, lines: value.lines.length },
+      });
+      return res.status(201).json({ success: true, invoice: await getDigiInvoice(id) });
+    } catch (err: any) {
+      if (err instanceof DuplicateDigiInvoiceError) {
+        return res.status(409).json({
+          success: false,
+          error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.`,
+        });
+      }
+      console.error('[DIGI] Create invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la facture' });
+    }
+  });
+
+  app.post('/api/digi-invoices/import', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const items = req.body?.invoices;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'Aucune facture à importer.' });
+    }
+    if (items.length > DIGI_IMPORT_MAX_INVOICES) {
+      return res.status(400).json({
+        success: false,
+        error: `${DIGI_IMPORT_MAX_INVOICES} factures maximum par import.`,
+      });
+    }
+
+    const valid = [];
+    const rejected: { ref: string | null; errors: string[] }[] = [];
+    for (const item of items) {
+      const { value, errors } = validateDigiInvoiceInput(item);
+      if (value) valid.push(value);
+      else rejected.push({ ref: typeof item?.ref === 'string' ? item.ref : null, errors });
+    }
+
+    try {
+      const { created, duplicates } = await importDigiInvoices(valid, req.user.email);
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: '*',
+        action: 'IMPORT_DIGI_INVOICES',
+        actor: req.user,
+        details: {
+          file_name: typeof req.body?.file_name === 'string' ? req.body.file_name.slice(0, 255) : null,
+          received: items.length,
+          created,
+          duplicates: duplicates.length,
+          rejected: rejected.length,
+        },
+      });
+      return res.json({ success: true, created, duplicates, rejected });
+    } catch (err: any) {
+      console.error('[DIGI] Import error:', err);
+      return res.status(500).json({ success: false, error: 'Échec de l\'import des factures' });
+    }
+  });
+
+  app.put('/api/digi-invoices/:id', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    const { value, errors } = validateDigiInvoiceInput(req.body);
+    if (!value) {
+      return res.status(400).json({ success: false, error: errors.join(' ') });
+    }
+
+    try {
+      const found = await updateDigiInvoice(req.params.id, value, req.user.email);
+      if (!found) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: 'UPDATE_DIGI_INVOICE',
+        actor: req.user,
+        details: { supplier: value.supplier_name, ref: value.ref, lines: value.lines.length },
+      });
+      return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      if (err instanceof ReadOnlyDigiInvoiceError) {
+        return res.status(409).json({
+          success: false,
+          error: 'Cette facture vient d\'Odoo : elle se modifie dans Odoo, puis se resynchronise.',
+        });
+      }
+      if (err instanceof DuplicateDigiInvoiceError) {
+        return res.status(409).json({
+          success: false,
+          error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.`,
+        });
+      }
+      console.error('[DIGI] Update invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  app.delete('/api/digi-invoices/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    try {
+      const current = await getDigiInvoice(req.params.id);
+      if (!current) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      // An Odoo invoice still in Odoo would come back at the next sync
+      if (current.source === 'odoo' && !current.odoo_missing) {
+        return res.status(409).json({
+          success: false,
+          error: 'Cette facture est toujours présente dans Odoo : elle ne peut pas être supprimée ici.',
+        });
+      }
+      const removed = await deleteDigiInvoice(req.params.id);
+      if (!removed) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: 'DELETE_DIGI_INVOICE',
+        actor: req.user,
+        details: { supplier: removed.supplier_name, ref: removed.ref, source: removed.source },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[DIGI] Delete invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer la facture' });
+    }
+  });
+
+  app.post('/api/digi-invoices/sync-odoo', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!isOdooConfigured()) {
+      return res.status(503).json({ success: false, error: 'La connexion Odoo DIGI LOGISTIC n\'est pas configurée.' });
+    }
+
+    // Throttle Odoo syncs across all users
+    const limit = await consumeRateLimit('digi:odoo-sync', 1, ODOO_SYNC_MIN_INTERVAL_SECONDS);
+    if (!limit.allowed) {
+      return sendTooManyRequests(
+        res,
+        limit.retryAfterSeconds,
+        `Une synchronisation Odoo vient d'être lancée. Réessayez dans ${limit.retryAfterSeconds} s.`
+      );
+    }
+
+    try {
+      const startedAt = Date.now();
+      const result = await syncDigiInvoicesFromOdoo({ timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS });
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: '*',
+        action: 'SYNC_DIGI_INVOICES_ODOO',
+        actor: req.user,
+        details: { ...result, duration_ms: Date.now() - startedAt },
+      });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('[DIGI] Odoo sync error:', err);
+      const message = err instanceof OdooError ? err.publicMessage : 'Échec de la synchronisation Odoo';
+      return res.status(502).json({ success: false, error: message });
+    }
+  });
 
   // --- NEON POSTGRESQL DIRECT SQL ENDPOINTS ---
 
