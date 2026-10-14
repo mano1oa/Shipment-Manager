@@ -12,27 +12,24 @@ export type GlobalStatus =
 /** Status of the parcel at the Orly hub, as confirmed by Antoine (MIDEX). */
 export type AntoineStatus =
   | 'En attente Antoine'
-  | 'Confirmé'
   | 'Reçu et expédié vers Mada'
+  | 'Avis de recherche'
+  // Former values, still displayed on older shipments but no longer offered
+  | 'Confirmé'
   | 'Transmis transitaire'
   | 'A vérifier';
 
-/** In workflow order. */
-export const ANTOINE_STATUSES: AntoineStatus[] = [
-  'En attente Antoine',
-  'Confirmé',
-  'Reçu et expédié vers Mada',
-  'Transmis transitaire',
-  'A vérifier',
-];
+/** Statuses offered, in workflow order. */
+export const ANTOINE_STATUSES: AntoineStatus[] = ['En attente Antoine', 'Reçu et expédié vers Mada', 'Avis de recherche'];
 
-/** Displayed labels: "En attente Antoine" = not yet confirmed as received at Orly. */
+/** Displayed labels. */
 export const ANTOINE_STATUS_LABELS: Record<AntoineStatus, string> = {
   'En attente Antoine': 'En attente Antoine (à recevoir)',
-  Confirmé: 'Confirmé',
   'Reçu et expédié vers Mada': 'Reçu et expédié vers Mada',
-  'Transmis transitaire': 'Transmis transitaire',
-  'A vérifier': 'A vérifier',
+  'Avis de recherche': 'Avis de recherche (reçu par Antoine, pas arrivé à Mada)',
+  Confirmé: 'Confirmé (ancien statut)',
+  'Transmis transitaire': 'Transmis transitaire (ancien statut)',
+  'A vérifier': 'A vérifier (ancien statut)',
 };
 
 export type CarrierStatus =

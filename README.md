@@ -158,7 +158,7 @@ Une expédition porte plusieurs statuts, chacun avec son rôle.
 | Champ | Valeurs | Quand / par qui | Manuel / auto |
 |---|---|---|---|
 | **Statut global** (statut Orly → Mada) | Attente confirmation transitaire · En livraison vers Orly · Reçu et expédié · Bloqué douane · Perdu Orly · Livré entrepôt | Choisi à la création, puis modifié au fil de l'eau par Supply Chain (liste ou fiche) | **Manuel**, sauf « Perdu Orly » qui peut être **déduit automatiquement** (voir §6 et §9) |
-| **Statut du colis à Orly** (Antoine) | En attente Antoine (= à recevoir : réception à Orly pas encore confirmée) · Confirmé · Reçu et expédié vers Mada · Transmis transitaire · A vérifier | Après chaque point avec Antoine | **Manuel** (fiche) |
+| **Statut du colis à Orly** (Antoine) | En attente Antoine (= à recevoir : réception à Orly pas encore confirmée) · Reçu et expédié vers Mada · Avis de recherche (reçu par Antoine mais pas arrivé à Madagascar). Les anciennes valeurs (Confirmé, Transmis transitaire, A vérifier) restent affichées sur les expéditions qui les portent | Après chaque point avec Antoine | **Manuel** (fiche) |
 | **Statut douane** | Non Requis · En cours · Dédouané · Bloqué Douane | Choisi à la création | **Manuel**, et seulement à la création aujourd'hui (§9) |
 | **Priorité** | Haute · Moyenne · Basse | Choisie à la création | **Manuel**, seulement à la création (§9) |
 | **Date de scan Orly** | date | Quand Antoine confirme la réception | **Manuel** |

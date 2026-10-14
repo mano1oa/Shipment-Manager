@@ -481,9 +481,15 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                     onChange={(e) => set('antoine_status', e.target.value as AntoineStatus)}
                     className={inputClass}
                   >
-                    {ANTOINE_STATUSES.map((s) => (
+                    {/* A former status stays selectable on the shipment that has it */}
+                    {[
+                      ...(shipment.antoine_status && !ANTOINE_STATUSES.includes(shipment.antoine_status)
+                        ? [shipment.antoine_status]
+                        : []),
+                      ...ANTOINE_STATUSES,
+                    ].map((s) => (
                       <option key={s} value={s}>
-                        {ANTOINE_STATUS_LABELS[s]}
+                        {ANTOINE_STATUS_LABELS[s] || s}
                       </option>
                     ))}
                   </select>
