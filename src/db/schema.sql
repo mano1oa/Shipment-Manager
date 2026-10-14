@@ -162,3 +162,68 @@ CREATE TABLE IF NOT EXISTS resolved_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_resolved_alerts_shipment_id
     ON resolved_alerts (shipment_id);
+
+-- ------------------------------------------------------------------------------
+-- 6. FACTURES DIGI LOGISTIC → NEXTHOPE ("colis à suivre")
+-- Créées automatiquement au premier appel de /api/digi-invoices (ensureDigiInvoicesSchema).
+-- source = 'odoo' (lecture seule, identifiée par odoo_move_id), 'excel' ou 'manual'
+-- (identifiées par fournisseur + référence, sans tenir compte de la casse).
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS digi_invoices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    source VARCHAR(10) NOT NULL CHECK (source IN ('odoo', 'excel', 'manual')),
+    supplier_name VARCHAR(255),          -- partner_id
+    supplier_odoo_id INTEGER,
+    dest_partner_name VARCHAR(255),      -- dest_partner_id
+    dest_partner_odoo_id INTEGER,
+    ref VARCHAR(255),                    -- ref
+    invoice_date DATE,                   -- invoice_date
+    amazon_order_ref VARCHAR(255),       -- num_cmd_amz
+    sale_move_ref VARCHAR(255),          -- sale_move_id
+    sale_move_odoo_id INTEGER,
+    odoo_move_id INTEGER UNIQUE,
+    odoo_move_name VARCHAR(255),
+    odoo_state VARCHAR(30),
+    odoo_write_date VARCHAR(30),
+    odoo_missing BOOLEAN NOT NULL DEFAULT FALSE,
+    odoo_synced_at TIMESTAMPTZ,
+    created_by_email VARCHAR(255),
+    updated_by_email VARCHAR(255),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_digi_invoices_supplier_ref_ci
+    ON digi_invoices (LOWER(TRIM(supplier_name)), LOWER(TRIM(ref)))
+    WHERE odoo_move_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_digi_invoices_date ON digi_invoices (invoice_date DESC);
+CREATE INDEX IF NOT EXISTS idx_digi_invoices_amazon ON digi_invoices (amazon_order_ref);
+
+CREATE TABLE IF NOT EXISTS digi_invoice_lines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    invoice_id UUID NOT NULL REFERENCES digi_invoices(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL,                  -- name
+    quantity NUMERIC(14, 4),             -- quantity
+    price_unit NUMERIC(14, 4),           -- price_unit
+    price_subtotal NUMERIC(14, 2),       -- price_subtotal
+    odoo_line_id INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_digi_invoice_lines_invoice
+    ON digi_invoice_lines (invoice_id, position);
+
+-- Historique des synchronisations Odoo (bouton « Synchroniser Odoo » ou cron quotidien)
+CREATE TABLE IF NOT EXISTS digi_odoo_sync_runs (
+    id BIGSERIAL PRIMARY KEY,
+    trigger VARCHAR(10) NOT NULL CHECK (trigger IN ('manual', 'cron')),
+    actor_email VARCHAR(255),
+    started_at TIMESTAMPTZ NOT NULL,
+    finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    success BOOLEAN NOT NULL,
+    result JSONB,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_digi_odoo_sync_runs_started
+    ON digi_odoo_sync_runs (started_at DESC);

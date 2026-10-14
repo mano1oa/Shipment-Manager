@@ -12,6 +12,7 @@ import { AIAssistantView } from './components/AIAssistantView';
 import { AdminView } from './components/AdminView';
 import { DeliverablesView } from './components/DeliverablesView';
 import { SettingsUsersView } from './components/SettingsUsersView';
+import { DigiInvoicesView } from './components/DigiInvoicesView';
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
@@ -700,8 +701,8 @@ useEffect(() => {
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
-    supply_chain: ['dashboard', 'air', 'sea', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables','settings'],
-    sourcing: ['dashboard', 'air', 'sea', 'alerts', 'assistant'],
+    supply_chain: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables','settings'],
+    sourcing: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'assistant'],
     direction: ['dashboard', 'assistant'],
   }), []);
 
@@ -834,6 +835,8 @@ if (!authUser) {
               }}
             />
           )}
+
+          {activeTab === 'digi' && <DigiInvoicesView canDelete={currentRole === 'supply_chain'} />}
 
           {activeTab === 'alerts' && (
             <AlertsCenterView

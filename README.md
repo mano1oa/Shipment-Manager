@@ -20,6 +20,7 @@ relances.
 5. [Statuts : qui les change et quand](#5-statuts--qui-les-change-et-quand)
 6. [Alertes](#6-alertes)
 7. [Suivi transporteur](#7-suivi-transporteur)
+   - [Colis à suivre : factures DIGI LOGISTIC](#7-bis-colis-à-suivre--factures-digi-logistic)
 8. [Ce qui est automatique et ce qui est manuel](#8-ce-qui-est-automatique-et-ce-qui-est-manuel)
 9. [Points d'attention connus](#9-points-dattention-connus)
 10. [Données, API et sécurité](#10-données-api-et-sécurité)
@@ -65,6 +66,8 @@ contrôle côté API.
 |---|:---:|:---:|:---:|
 | Consulter le tableau de bord, utiliser l'assistant IA | ✅ | ✅ | ✅ |
 | Voir les listes Aérien / Maritime | ✅ | ✅ | ❌ (voir §9) |
+| Colis à suivre (DIGI) : consulter, synchroniser Odoo, importer Excel, saisir / modifier | ✅ | ✅ | ❌ |
+| Colis à suivre (DIGI) : supprimer une facture | ✅ | ❌ | ❌ |
 | Créer / modifier une expédition | ✅ | ✅ | ❌ |
 | Supprimer une expédition | ✅ | ❌ | ❌ |
 | Ajouter un transporteur / fournisseur à la liste | ✅ | ✅ | ❌ |
@@ -91,6 +94,7 @@ Protections sur les comptes :
 | Tableau de bord | tous | Indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides |
 | Suivi Aérien | SC, Sourcing | Liste des expéditions `Air`, filtres, **édition directe** du statut, de la date de scan Orly, de la Réf FA, de la réception Mada et des remarques ; export CSV ; « Générer réclamation » (colis Perdu Orly) |
 | Suivi Maritime | SC, Sourcing | Liste des expéditions `Sea` et, pour chacune, le tableau des livraisons au quai de Rouen |
+| Colis à suivre (DIGI) | SC, Sourcing | Factures DIGI LOGISTIC à destination de NextHope avec leurs lignes de produits ; synchronisation Odoo, import Excel, saisie manuelle (voir §7 bis) |
 | Centre d'Alertes | SC, Sourcing | Alertes calculées, message de relance pré-rédigé, envoi Google Chat, résolution partagée |
 | Analyses & SLAs | SC | Respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
 | Assistant IA | tous | Questions sur les expéditions, synthèse automatique (limité à 40 requêtes par heure et par utilisateur) |
@@ -214,6 +218,63 @@ UPS, DHL et FedEx. Une fois un fournisseur branché :
 
 ---
 
+## 7 bis. Colis à suivre : factures DIGI LOGISTIC
+
+La liste des colis à suivre vient des factures de la base Odoo **DIGI
+LOGISTIC** dont l'**entité de destination est NextHope**, pour disposer des
+lignes de produits de chaque facture.
+
+| Donnée | Champ Odoo (`account.move`) |
+|---|---|
+| Fournisseur | `partner_id` |
+| Entité de destination | `dest_partner_id` |
+| Référence de la facture | `ref` |
+| Date de facturation | `invoice_date` |
+| Commande AMAZON | `num_cmd_amz` |
+| Facture vente | `sale_move_id` |
+| Lignes : libellé, quantité, prix, sous-total | `invoice_line_ids` → `name`, `quantity`, `price_unit`, `price_subtotal` |
+
+Trois façons d'alimenter la liste :
+
+1. **Synchronisation Odoo**, automatique **chaque jour** (cron Vercel
+   `/api/cron/sync-digi-invoices`, vers 5 h UTC soit 8 h à Madagascar, à ±59 min
+   près sur le plan Hobby) et **à la demande** avec le bouton « Synchroniser
+   Odoo ». Conditions :
+   - `dest_partner_id` = `ODOO_DEST_PARTNER_ID` si renseigné, sinon nom de
+     l'entité contenant `ODOO_DEST_PARTNER_NAME` (« NextHope » par défaut) ;
+   - factures **brouillon incluses** (badge « Brouillon ») ;
+   - factures **annulées exclues** : une facture annulée dans Odoo après avoir
+     été synchronisée est retirée de la liste.
+
+   L'écran affiche la date, l'origine (automatique ou utilisateur) et le
+   résultat de la dernière synchronisation, y compris en cas d'échec.
+   - Seules les factures modifiées dans Odoo depuis la dernière
+     synchronisation sont relues (`write_date`) ; une synchronisation trop
+     longue s'arrête proprement et indique combien de factures restent.
+   - Les lignes de section et de note sont ignorées ; un libellé vide prend le
+     nom du produit.
+   - Une facture Odoo est **en lecture seule** dans l'application : elle se
+     corrige dans Odoo puis se resynchronise.
+   - Une facture qui n'est plus renvoyée par Odoo est marquée « Absente
+     d'Odoo », jamais supprimée automatiquement.
+   - Si une facture saisie à la main ou importée existe déjà (même fournisseur
+     et même référence), elle est **rattachée** à la facture Odoo au lieu
+     d'être dupliquée : Odoo devient sa source.
+2. **Import Excel** (`.xlsx` ou `.csv`, première feuille) : en-têtes reconnus
+   en libellés Odoo (« Fournisseur », « Référence », « Lignes de
+   facture/Libellé »…) ou en noms techniques (`partner_id`, `ref`,
+   `invoice_line_ids/name`…). Format export Odoo (champs de la facture sur sa
+   première ligne seulement) ou tableau à plat. Aperçu avant import ; une
+   facture dont une ligne est illisible n'est pas importée ; si la colonne
+   « Entité de destination » est présente, seules les factures NextHope sont
+   retenues ; si la colonne « État » est présente, les factures annulées sont
+   ignorées ; une facture déjà connue n'est jamais écrasée.
+3. **Saisie manuelle**, avec ses lignes ; modifiable ensuite.
+
+Toutes ces actions sont tracées dans le journal d'audit.
+
+---
+
 ## 8. Ce qui est automatique et ce qui est manuel
 
 **Automatique aujourd'hui**
@@ -225,6 +286,7 @@ UPS, DHL et FedEx. Une fois un fournisseur branché :
 - Rattachement des numéros de suivi saisis à la création, avec détection du transporteur.
 - Statut d'un numéro de suivi recalculé à chaque nouvel événement.
 - Journal d'audit de toutes les actions sensibles.
+- Récupération quotidienne des factures DIGI → NextHope depuis Odoo (cron), et à la demande avec « Synchroniser Odoo ».
 
 **Manuel aujourd'hui**
 
@@ -238,7 +300,8 @@ UPS, DHL et FedEx. Une fois un fournisseur branché :
 
 - Synchronisation Google Sheets (bouton retiré : elle n'existait qu'en simulation).
 - Stockage réel des documents (les documents ne sont que des métadonnées).
-- Intégrations Odoo / DIGI, Amazon Business, MIDEX.
+- Intégrations Amazon Business, MIDEX.
+- Lien automatique entre une facture DIGI et une expédition.
 
 ---
 
@@ -281,6 +344,8 @@ validation.
 | `shipment_carriers`, `shipment_suppliers` | Listes de référence (unicité sans tenir compte de la casse ; transporteur avec mode Air / Sea / les deux) |
 | `shipment_tracking_numbers`, `shipment_tracking_events` | Numéros de suivi et historique d'événements |
 | `resolved_alerts` | Alertes résolues (état partagé) |
+| `digi_invoices`, `digi_invoice_lines` | Factures DIGI LOGISTIC → NextHope et leurs lignes (source : Odoo, Excel ou saisie) |
+| `digi_odoo_sync_runs` | Historique des synchronisations Odoo (cron ou bouton, résultat ou erreur) |
 | `users`, `user_sessions` | Comptes et sessions (jeton haché en SHA-256) |
 | `system_audit_logs` | Journal d'audit (l'auteur est dans `details`) |
 | `api_rate_limits` | Compteurs de limitation (connexion, IA) |
@@ -304,7 +369,9 @@ documente le schéma.
 | `POST /api/shipments/:id/tracking-numbers`, `PATCH` / `DELETE /api/tracking-numbers/:id`, `POST /api/tracking-numbers/:id/events` | SC, Sourcing |
 | `POST /api/tracking/sync/:shipmentId` | SC, Sourcing |
 | `POST /api/tracking/sync-all` | SC |
-| `GET /api/cron/update-tracking` | Vercel Cron (`Authorization: Bearer CRON_SECRET`) |
+| `GET /api/cron/update-tracking`, `GET /api/cron/sync-digi-invoices` | Vercel Cron (`Authorization: Bearer CRON_SECRET`) |
+| `GET /api/digi-invoices`, `GET /api/digi-invoices/config`, `POST /api/digi-invoices`, `PUT /api/digi-invoices/:id`, `POST /api/digi-invoices/import`, `POST /api/digi-invoices/sync-odoo` | SC, Sourcing |
+| `DELETE /api/digi-invoices/:id` | SC (factures Excel / manuelles, ou Odoo « Absente d'Odoo ») |
 | `GET /api/alerts/resolved`, `POST` / `DELETE /api/alerts/:alertId/resolve` | lecture : connecté ; action : SC, Sourcing |
 | `POST /api/google-chat-webhook` | SC, Sourcing |
 | `POST /api/chat`, `POST /api/analyze-shipments` | connecté (40 requêtes par heure) |
@@ -338,7 +405,9 @@ Node.js 20+ et une base Neon PostgreSQL.
 | `DATABASE_URL` (ou `POSTGRES_URL`) | Connexion Neon |
 | `GEMINI_API_KEY` | Assistant IA |
 | `GOOGLE_CHAT_WEBHOOK_URL` | Relances Google Chat |
-| `CRON_SECRET` | Obligatoire pour le cron quotidien de suivi |
+| `CRON_SECRET` | Obligatoire pour les crons quotidiens (suivi transporteur, factures DIGI) |
+| `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY` | Connexion en lecture à Odoo DIGI LOGISTIC (API JSON-RPC ; clé API de l'utilisateur) |
+| `ODOO_DEST_PARTNER_ID` / `ODOO_DEST_PARTNER_NAME` | Entité de destination filtrée : identifiant du partenaire, sinon nom (« NextHope » par défaut) |
 | `NODE_ENV` | `production` en production (cookie `Secure`) |
 
 Ne jamais exposer ces valeurs via une variable `VITE_*`. Le fichier `.env` est
@@ -363,8 +432,9 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
 ### Déploiement
 
 - GitHub → Vercel. Les routes `/api/*` sont servies par `api/index.ts`.
-- Cron déclaré dans `vercel.json` : `/api/cron/update-tracking`, une fois par
-  jour (plan Hobby : l'heure exacte peut varier de ±59 minutes).
+- Crons déclarés dans `vercel.json`, une fois par jour chacun (plan Hobby :
+  l'heure exacte peut varier de ±59 minutes) : `/api/cron/sync-digi-invoices`
+  (5 h UTC) et `/api/cron/update-tracking` (7 h UTC).
 
 ### Façon de travailler sur le code
 
@@ -386,7 +456,8 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
    (vol groupé ORYA) ou en conteneur.
 7. Module Incidents (colis à retracer), historique des ETA maritimes, coûts par
    envoi groupé.
-8. Stockage réel des documents ; intégrations Odoo / DIGI et MIDEX.
+8. Stockage réel des documents ; intégration MIDEX ; rattachement des
+   factures DIGI aux expéditions.
 
 ---
 
@@ -399,3 +470,4 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
 | 3 | Alertes résolues partagées dans Neon ; protections sur la gestion des utilisateurs ; journal d'audit complet |
 | 4 | Plus aucun détail technique dans les réponses d'erreur ; limitation des connexions et de l'IA ; onglet Alertes ouvert à SOURCING |
 | 5 | Base du suivi transporteur : plusieurs numéros par expédition, historique d'événements, détection du transporteur, cron quotidien sécurisé |
+| 6 | Colis à suivre : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main |

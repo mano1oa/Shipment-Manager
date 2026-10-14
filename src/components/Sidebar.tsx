@@ -11,6 +11,7 @@ import {
   PlusCircle,
   Database,
   ShieldAlert,
+  ReceiptText,
 } from 'lucide-react';
 import { UserRole } from '../types';
 
@@ -18,6 +19,7 @@ export type NavTab =
   | 'dashboard'
   | 'air'
   | 'sea'
+  | 'digi'
   | 'alerts'
   | 'analytics'
   | 'assistant'
@@ -62,6 +64,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Suivi Maritime',
       icon: Ship,
       badge: 'Sea',
+      allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
+    },
+    {
+      id: 'digi' as NavTab,
+      label: 'Colis à suivre (DIGI)',
+      icon: ReceiptText,
+      badge: null,
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
     },
     {
