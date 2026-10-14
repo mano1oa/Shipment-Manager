@@ -212,3 +212,18 @@ CREATE TABLE IF NOT EXISTS digi_invoice_lines (
 
 CREATE INDEX IF NOT EXISTS idx_digi_invoice_lines_invoice
     ON digi_invoice_lines (invoice_id, position);
+
+-- Historique des synchronisations Odoo (bouton « Synchroniser Odoo » ou cron quotidien)
+CREATE TABLE IF NOT EXISTS digi_odoo_sync_runs (
+    id BIGSERIAL PRIMARY KEY,
+    trigger VARCHAR(10) NOT NULL CHECK (trigger IN ('manual', 'cron')),
+    actor_email VARCHAR(255),
+    started_at TIMESTAMPTZ NOT NULL,
+    finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    success BOOLEAN NOT NULL,
+    result JSONB,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_digi_odoo_sync_runs_started
+    ON digi_odoo_sync_runs (started_at DESC);

@@ -225,7 +225,8 @@ type InvoiceField =
   | 'ref'
   | 'invoice_date'
   | 'amazon_order_ref'
-  | 'sale_move_ref';
+  | 'sale_move_ref'
+  | 'state';
 type LineField = 'name' | 'quantity' | 'price_unit' | 'price_subtotal';
 
 /** Lowercase, no accents, single spaces, "_" and "-" read as spaces. */
@@ -247,6 +248,7 @@ const INVOICE_ALIASES: Record<InvoiceField, string[]> = {
   invoice_date: ['invoice date', 'date de facturation', 'date facture', 'date de facture'],
   amazon_order_ref: ['num cmd amz', 'commande amazon', 'n commande amazon', 'numero commande amazon', 'cmd amazon'],
   sale_move_ref: ['sale move id', 'facture vente', 'facture de vente'],
+  state: ['state', 'etat', 'statut'],
 };
 
 const LINE_ALIASES: Record<LineField, string[]> = {
@@ -294,6 +296,12 @@ export function mapHeader(header: string): ColumnTarget | null {
   return lineField ? { kind: 'line', field: lineField } : null;
 }
 
+/** "cancel" (Odoo technical value) or "Annulé(e)" (French label). */
+export function isCancelledState(value: unknown): boolean {
+  const state = normalizeHeader(cellText(value));
+  return state === 'cancel' || state === 'cancelled' || state.startsWith('annul');
+}
+
 export interface SheetParseIssue {
   row: number; // 1-based spreadsheet row
   message: string;
@@ -303,6 +311,8 @@ export interface SheetParseResult {
   invoices: DigiInvoiceInput[];
   /** Invoices left out because their destination is not the configured one. */
   skippedOtherDestination: number;
+  /** Invoices left out because they are cancelled (state column). */
+  skippedCancelled: number;
   /** Invoices left out because one of their rows could not be read (see errors). */
   rejectedInvoices: number;
   errors: SheetParseIssue[];
@@ -327,6 +337,7 @@ export function parseDigiSheet(rows: unknown[][], destination: string): SheetPar
   const result: SheetParseResult = {
     invoices: [],
     skippedOtherDestination: 0,
+    skippedCancelled: 0,
     rejectedInvoices: 0,
     errors: [],
     columns: [],
@@ -368,8 +379,9 @@ export function parseDigiSheet(rows: unknown[][], destination: string): SheetPar
   result.hasDestinationColumn = seen.has('invoice.dest_partner_name');
 
   // 2. Rows → invoices
-  const byKey = new Map<string, { invoice: DigiInvoiceInput; firstRow: number; failed: boolean }>();
-  let current: { invoice: DigiInvoiceInput; firstRow: number; failed: boolean } | null = null;
+  type Entry = { invoice: DigiInvoiceInput; firstRow: number; failed: boolean; cancelled: boolean };
+  const byKey = new Map<string, Entry>();
+  let current: Entry | null = null;
 
   for (let i = headerIndex + 1; i < rows.length; i++) {
     const rowNumber = i + 1;
@@ -423,9 +435,11 @@ export function parseDigiSheet(rows: unknown[][], destination: string): SheetPar
           sale_move_ref: cellText(inv.sale_move_ref) || null,
           lines: [],
         };
-        current = { invoice, firstRow: rowNumber, failed: false };
+        current = { invoice, firstRow: rowNumber, failed: false, cancelled: false };
         byKey.set(key, current);
       }
+
+      if (isCancelledState(inv.state)) current.cancelled = true;
 
       if (invoiceDate === undefined) {
         // Any unreadable value rejects the whole invoice: never a partial import
@@ -467,7 +481,12 @@ export function parseDigiSheet(rows: unknown[][], destination: string): SheetPar
   }
 
   // 3. Destination filter (same condition as on Odoo: destination = NextHope)
-  for (const { invoice, firstRow, failed } of byKey.values()) {
+  for (const { invoice, firstRow, failed, cancelled } of byKey.values()) {
+    // Cancelled invoices are not tracked (same rule as the Odoo sync)
+    if (cancelled) {
+      result.skippedCancelled++;
+      continue;
+    }
     if (result.hasDestinationColumn && !matchesDestination(invoice.dest_partner_name, destination)) {
       result.skippedOtherDestination++;
       continue;

@@ -144,12 +144,13 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
             <p className="font-semibold text-slate-800 dark:text-slate-100">Colonnes reconnues (libellés Odoo ou noms techniques)</p>
             <p className="mt-1">
               Fournisseur (partner_id) *, Référence (ref) *, Date de facturation (invoice_date), Commande AMAZON
-              (num_cmd_amz), Facture Vente (sale_move_id), Entité de destination (dest_partner_id), Lignes de
+              (num_cmd_amz), Facture Vente (sale_move_id), Entité de destination (dest_partner_id), État (state), Lignes de
               facture/Libellé, Quantité, Prix, Sous-total.
             </p>
             <p className="mt-1">
               Si la colonne « Entité de destination » est présente, seules les factures {destination} sont importées.
-              Une facture déjà connue (même fournisseur et même référence) n'est jamais écrasée.
+              Les factures annulées (colonne « État ») sont ignorées. Une facture déjà connue (même fournisseur et même
+              référence) n'est jamais écrasée.
             </p>
           </div>
 
@@ -214,6 +215,12 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
                   </div>
                 ))}
               </div>
+
+              {parsed.skippedCancelled > 0 && (
+                <p className="font-semibold text-slate-500">
+                  {parsed.skippedCancelled} facture(s) annulée(s) ignorée(s).
+                </p>
+              )}
 
               {!parsed.hasDestinationColumn && parsed.invoices.length > 0 && (
                 <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 font-semibold text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">

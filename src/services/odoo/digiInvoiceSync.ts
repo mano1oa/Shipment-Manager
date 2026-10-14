@@ -1,5 +1,7 @@
-import { OdooSession } from './client.js';
+import { OdooError, OdooSession } from './client.js';
 import {
+  deleteOdooInvoices,
+  recordOdooSyncRun,
   getOdooWriteDates,
   markMissingOdooInvoices,
   upsertOdooInvoice,
@@ -11,9 +13,10 @@ import type { DigiInvoiceLineInput } from '../../lib/digiInvoices.js';
 /**
  * Pulls the DIGI LOGISTIC invoices addressed to NextHope from Odoo.
  *
- * Condition: account.move whose `dest_partner_id` is the NextHope entity
+ * Conditions: account.move whose `dest_partner_id` is the NextHope entity
  * (ODOO_DEST_PARTNER_ID when set, otherwise name contains
- * ODOO_DEST_PARTNER_NAME, "NextHope" by default).
+ * ODOO_DEST_PARTNER_NAME, "NextHope" by default), drafts included,
+ * cancelled invoices excluded (and removed when already synced).
  *
  * Only invoices changed since the last sync (Odoo write_date) are re-read.
  * Invoices that disappear from the filter are flagged, never deleted.
@@ -43,6 +46,7 @@ export interface DigiOdooSyncResult {
   failed: number;
   remaining: number; // not processed because of the time budget
   missing: number; // flagged as no longer present in Odoo
+  cancelled_removed: number; // synced earlier, cancelled since in Odoo
   complete: boolean;
 }
 
@@ -121,15 +125,19 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
   const startedAt = Date.now();
   const odoo = await OdooSession.connect();
 
-  // 1. Every matching invoice id with its last modification date (light call)
-  const listed = await odoo.searchRead<{ id: number; write_date: string }>(
+  // 1. Every matching invoice id with its state and last modification date
+  // (light call). Cancelled ones are listed too, to remove those synced before.
+  const all = await odoo.searchRead<{ id: number; write_date: string; state: string }>(
     'account.move',
     destinationDomain(),
-    ['write_date'],
+    ['write_date', 'state'],
     { order: 'id asc', limit: MAX_LISTED_INVOICES }
   );
+  const listed = all.filter((m) => m.state !== 'cancel');
+  const cancelledIds = all.filter((m) => m.state === 'cancel').map((m) => m.id);
 
   const known = await getOdooWriteDates();
+  const cancelledRemoved = await deleteOdooInvoices(cancelledIds.filter((id) => known.has(id)));
   const toRead = listed.filter((m) => known.get(m.id) !== m.write_date).map((m) => m.id);
 
   const result: DigiOdooSyncResult = {
@@ -140,6 +148,7 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
     failed: 0,
     remaining: 0,
     missing: 0,
+    cancelled_removed: cancelledRemoved,
     complete: true,
   };
 
@@ -158,6 +167,11 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
     const linesById = new Map(lines.map((l) => [l.id as number, l]));
 
     for (const move of moves) {
+      // Cancelled between the listing and the read: not tracked
+      if (move.state === 'cancel') {
+        await deleteOdooInvoices([move.id]);
+        continue;
+      }
       try {
         const outcome = await upsertOdooInvoice(toInvoice(move, linesById));
         result[outcome]++;
@@ -169,9 +183,43 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
   }
 
   // 3. Flag invoices no longer returned by Odoo (only after a full listing)
-  if (listed.length < MAX_LISTED_INVOICES) {
+  if (all.length < MAX_LISTED_INVOICES) {
     result.missing = await markMissingOdooInvoices(listed.map((m) => m.id));
   }
 
   return result;
+}
+
+/**
+ * Runs a sync and records it in the sync history (manual button or cron).
+ * Errors are recorded too, then rethrown.
+ */
+export async function runDigiOdooSync(params: {
+  trigger: 'manual' | 'cron';
+  actorEmail: string | null;
+  timeBudgetMs: number;
+}): Promise<DigiOdooSyncResult> {
+  const startedAt = new Date().toISOString();
+  try {
+    const result = await syncDigiInvoicesFromOdoo({ timeBudgetMs: params.timeBudgetMs });
+    await recordOdooSyncRun({
+      trigger: params.trigger,
+      actor_email: params.actorEmail,
+      started_at: startedAt,
+      success: true,
+      result: { ...result },
+      error: null,
+    });
+    return result;
+  } catch (err: any) {
+    await recordOdooSyncRun({
+      trigger: params.trigger,
+      actor_email: params.actorEmail,
+      started_at: startedAt,
+      success: false,
+      result: null,
+      error: err instanceof OdooError ? err.publicMessage : 'Échec de la synchronisation Odoo',
+    });
+    throw err;
+  }
 }

@@ -33,8 +33,19 @@ export interface DigiInvoice {
   lines: DigiInvoiceLine[];
 }
 
+export interface DigiSyncRun {
+  trigger: 'manual' | 'cron';
+  actor_email: string | null;
+  started_at: string;
+  finished_at: string;
+  success: boolean;
+  result: Partial<DigiOdooSyncResult> | null;
+  error: string | null;
+}
+
 export interface DigiConfig {
   odoo_configured: boolean;
+  last_sync: DigiSyncRun | null;
   dest_partner_name: string;
   dest_partner_id: number | null;
   import_max_invoices: number;
@@ -48,6 +59,7 @@ export interface DigiOdooSyncResult {
   failed: number;
   remaining: number;
   missing: number;
+  cancelled_removed: number;
   complete: boolean;
 }
 

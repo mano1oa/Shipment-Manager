@@ -140,6 +140,24 @@ async function initDigiInvoicesSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_digi_invoice_lines_invoice
       ON digi_invoice_lines (invoice_id, position);
   `;
+
+  // History of Odoo syncs (manual button or daily cron)
+  await sql`
+    CREATE TABLE IF NOT EXISTS digi_odoo_sync_runs (
+      id BIGSERIAL PRIMARY KEY,
+      trigger VARCHAR(10) NOT NULL CHECK (trigger IN ('manual', 'cron')),
+      actor_email VARCHAR(255),
+      started_at TIMESTAMPTZ NOT NULL,
+      finished_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      success BOOLEAN NOT NULL,
+      result JSONB,
+      error TEXT
+    );
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_digi_odoo_sync_runs_started
+      ON digi_odoo_sync_runs (started_at DESC);
+  `;
 }
 
 function toNumber(value: unknown): number | null {
@@ -452,6 +470,58 @@ export async function markMissingOdooInvoices(seenOdooIds: number[]): Promise<nu
     RETURNING odoo_missing
   `;
   return rows.filter((r: any) => r.odoo_missing).length;
+}
+
+/**
+ * Removes invoices cancelled in Odoo (cancelled invoices are not tracked).
+ */
+export async function deleteOdooInvoices(odooMoveIds: number[]): Promise<number> {
+  if (odooMoveIds.length === 0) return 0;
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    DELETE FROM digi_invoices WHERE odoo_move_id = ANY(${odooMoveIds}::int[])
+    RETURNING id
+  `;
+  return rows.length;
+}
+
+export interface DigiOdooSyncRun {
+  trigger: 'manual' | 'cron';
+  actor_email: string | null;
+  started_at: string;
+  finished_at: string;
+  success: boolean;
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+export async function recordOdooSyncRun(run: Omit<DigiOdooSyncRun, 'finished_at'>): Promise<void> {
+  try {
+    await ensureDigiInvoicesSchema();
+    const sql = getDb();
+    await sql`
+      INSERT INTO digi_odoo_sync_runs (trigger, actor_email, started_at, success, result, error)
+      VALUES (
+        ${run.trigger}, ${run.actor_email}, ${run.started_at}, ${run.success},
+        ${run.result ? JSON.stringify(run.result) : null}::jsonb, ${run.error}
+      )
+    `;
+  } catch (err: any) {
+    console.error('[DIGI] Could not record sync run:', err?.message || err);
+  }
+}
+
+export async function getLastOdooSyncRun(): Promise<DigiOdooSyncRun | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT trigger, actor_email, started_at, finished_at, success, result, error
+    FROM digi_odoo_sync_runs
+    ORDER BY started_at DESC
+    LIMIT 1
+  `;
+  return (rows[0] as DigiOdooSyncRun) ?? null;
 }
 
 // ---------------------------------------------------------------------------

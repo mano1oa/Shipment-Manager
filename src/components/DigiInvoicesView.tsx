@@ -90,6 +90,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
       ];
       if (r.failed > 0) parts.push(`${r.failed} en échec`);
       if (r.missing > 0) parts.push(`${r.missing} absente(s) d'Odoo`);
+      if (r.cancelled_removed > 0) parts.push(`${r.cancelled_removed} annulée(s) retirée(s)`);
       setMessage(
         `Synchronisation Odoo : ${parts.join(', ')}.` +
           (r.complete ? '' : ` ${r.remaining} restante(s) : relancez la synchronisation.`)
@@ -98,6 +99,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
     } catch (err: any) {
       setError(err.message);
     } finally {
+      fetchDigiConfig().then(setConfig).catch(() => {});
       setSyncing(false);
     }
   };
@@ -138,10 +140,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
     });
   }, [invoices, search, sourceFilter]);
 
-  const lastSync = useMemo(() => {
-    const dates = invoices.map((i) => i.odoo_synced_at).filter(Boolean) as string[];
-    return dates.length ? dates.sort().at(-1)! : null;
-  }, [invoices]);
+  const lastSync = config?.last_sync ?? null;
 
   const button =
     'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold shadow-sm transition disabled:opacity-50';
@@ -158,9 +157,20 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
             Factures DIGI LOGISTIC dont l'entité de destination est <strong>{destination}</strong>, avec leurs lignes de
             produits. Sources : Odoo, import Excel, saisie manuelle.
           </p>
-          {lastSync && (
+          {config?.odoo_configured && (
             <p className="mt-0.5 text-[11px] text-slate-400">
-              Dernière synchronisation Odoo : {new Date(lastSync).toLocaleString('fr-FR')}
+              Synchronisation automatique chaque jour vers 8 h (heure de Madagascar), et à la demande avec le bouton.
+              {lastSync && (
+                <>
+                  {' '}Dernière : {new Date(lastSync.finished_at).toLocaleString('fr-FR')} (
+                  {lastSync.trigger === 'cron' ? 'automatique' : lastSync.actor_email || 'manuelle'})
+                  {lastSync.success ? (
+                    lastSync.result?.complete === false ? ' — incomplète, à relancer.' : ' — réussie.'
+                  ) : (
+                    <span className="font-semibold text-rose-500"> — en échec : {lastSync.error}</span>
+                  )}
+                </>
+              )}
             </p>
           )}
         </div>

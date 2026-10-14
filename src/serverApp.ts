@@ -54,12 +54,13 @@ import {
   updateDigiInvoice,
   deleteDigiInvoice,
   importDigiInvoices,
+  getLastOdooSyncRun,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
 } from './db/digiInvoices.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
-import { syncDigiInvoicesFromOdoo, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
+import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
 const ODOO_SYNC_TIME_BUDGET_MS = 240_000;
@@ -451,6 +452,39 @@ export function createServerApp(): Express {
     } catch (err: any) {
       console.error('[Tracking Cron] Failed:', err);
       return res.status(500).json({ success: false, error: 'Tracking cron failed' });
+    }
+  });
+
+  // Daily Odoo DIGI invoices sync (same CRON_SECRET rules as above).
+  app.get('/api/cron/sync-digi-invoices', async (req, res) => {
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (!cronSecret) {
+      console.error('[DIGI Cron] CRON_SECRET is not configured: job not run.');
+      return res.status(500).json({ success: false, error: 'Cron configuration error' });
+    }
+
+    if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    if (!isOdooConfigured()) {
+      console.log('[DIGI Cron] Odoo is not configured: nothing to sync.');
+      return res.json({ success: true, skipped: 'ODOO_NOT_CONFIGURED' });
+    }
+
+    try {
+      const startedAt = Date.now();
+      const result = await runDigiOdooSync({
+        trigger: 'cron',
+        actorEmail: null,
+        timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
+      });
+      console.log('[DIGI Cron]', JSON.stringify(result));
+      return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result });
+    } catch (err: any) {
+      console.error('[DIGI Cron] Failed:', err);
+      return res.status(500).json({ success: false, error: 'DIGI invoices sync failed' });
     }
   });
 
@@ -1384,14 +1418,21 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   // Reads and changes: SUPPLY_CHAIN + SOURCING. Delete: SUPPLY_CHAIN.
   // =========================================================
 
-  app.get('/api/digi-invoices/config', requireRole('SUPPLY_CHAIN', 'SOURCING'), (_req, res) => {
+  app.get('/api/digi-invoices/config', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (_req, res) => {
     const dest = getDestinationFilter();
+    let lastRun = null;
+    try {
+      lastRun = await getLastOdooSyncRun();
+    } catch (err: any) {
+      console.error('[DIGI] Could not read last sync run:', err?.message || err);
+    }
     res.json({
       success: true,
       odoo_configured: isOdooConfigured(),
       dest_partner_name: dest.name,
       dest_partner_id: dest.id,
       import_max_invoices: DIGI_IMPORT_MAX_INVOICES,
+      last_sync: lastRun,
     });
   });
 
@@ -1566,7 +1607,11 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
     try {
       const startedAt = Date.now();
-      const result = await syncDigiInvoicesFromOdoo({ timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS });
+      const result = await runDigiOdooSync({
+        trigger: 'manual',
+        actorEmail: req.user.email,
+        timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
+      });
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: '*',
