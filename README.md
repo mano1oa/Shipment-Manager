@@ -295,8 +295,8 @@ ou une saisie) :
 - pas d'expédition automatique pour : les brouillons Odoo (créée à la
   validation), les factures datées d'avant `DIGI_AUTO_SHIPMENT_FROM`
   (60 derniers jours par défaut, pour ne pas recréer l'historique déjà livré)
-  — bouton « Créer l'expédition » dans ces cas, ou si l'expédition a été
-  supprimée.
+  — bouton « Créer l'expédition » (colonne Expédition et détail de la
+  facture) dans ces cas, ou si l'expédition a été supprimée ou détachée.
 
 **Envoi groupé.** Plusieurs factures peuvent voyager dans la même expédition :
 bouton « Rattacher à une expédition existante » sur la facture (recherche par

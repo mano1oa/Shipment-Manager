@@ -16,6 +16,7 @@ import {
   Wrench,
   PackageCheck,
   Link2,
+  PlusCircle,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -261,16 +262,25 @@ export const DigiInvoicesView: React.FC<Props> = ({
     }
     if (isServicesInvoice(inv)) return <span className="text-slate-400">Service</span>;
     if (!inv.has_items) return <span className="text-slate-400">—</span>;
-    if (inv.odoo_state && inv.odoo_state !== 'posted' && !inv.shipment_id) {
-      return <span className="text-slate-400" title="Créée automatiquement quand la facture est validée dans Odoo">À la validation</span>;
-    }
+    return createShipmentButton(inv);
+  };
+
+  /** Creates the shipment of an invoice that has none (old, draft, deleted, detached). */
+  const createShipmentButton = (inv: DigiInvoice) => {
+    const isDraft = Boolean(inv.odoo_state && inv.odoo_state !== 'posted');
     return (
       <button
         onClick={() => handleCreateShipment(inv)}
         disabled={busyId === inv.id}
-        className="rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#643288] hover:text-[#643288] disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+        title={
+          isDraft
+            ? 'Brouillon Odoo : l\'expédition serait créée automatiquement à la validation, mais vous pouvez la créer dès maintenant.'
+            : 'Créer une expédition à partir de cette facture'
+        }
+        className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#522870] disabled:opacity-50"
       >
-        {inv.shipment_id ? 'Supprimée — recréer' : 'Créer l\'expédition'}
+        {busyId === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <PlusCircle className="h-3 w-3" />}
+        {inv.shipment_id ? 'Recréer l\'expédition' : 'Créer l\'expédition'}
       </button>
     );
   };
@@ -544,6 +554,22 @@ export const DigiInvoicesView: React.FC<Props> = ({
                         <tr className="bg-slate-50/60 dark:bg-slate-900/40">
                           <td />
                           <td colSpan={10} className="px-3 py-3">
+                            {inv.has_items && !isServicesInvoice(inv) && !(inv.shipment_id && inv.shipment_exists) && (
+                              <div className="mb-3 flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-800">
+                                <span className="flex-1 text-slate-600 dark:text-slate-300">
+                                  {inv.shipment_id
+                                    ? `L'expédition ${inv.shipment_id} de cette facture a été supprimée.`
+                                    : 'Cette facture n\'a pas encore d\'expédition.'}
+                                </span>
+                                {createShipmentButton(inv)}
+                                <button
+                                  onClick={() => setAttaching(inv)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#643288] hover:text-[#643288] dark:border-slate-600 dark:text-slate-200"
+                                >
+                                  <Link2 className="h-3 w-3" /> Rattacher à une expédition existante
+                                </button>
+                              </div>
+                            )}
                             {inv.lines.length === 0 ? (
                               <p className="text-slate-500">Aucune ligne de facture.</p>
                             ) : (
