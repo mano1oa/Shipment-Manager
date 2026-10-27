@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react';
+import { formatDateTime } from '../lib/dateFormat';
 
 type UserRole = 'SUPPLY_CHAIN' | 'SOURCING' | 'DIRECTION';
 
@@ -301,11 +302,7 @@ export function SettingsUsersView() {
                     </td>
 
                     <td className="px-4 py-3 text-slate-500">
-                      {user.last_login_at
-                        ? new Date(
-                            user.last_login_at
-                          ).toLocaleString()
-                        : 'Jamais'}
+                      {formatDateTime(user.last_login_at, 'Jamais')}
                     </td>
                   </tr>
                 ))}

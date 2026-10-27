@@ -278,9 +278,12 @@ useEffect(() => {
     }
   };
 
+  // Load once the session is known: before login the API answers 401.
   useEffect(() => {
-    loadShipmentsFromNeon();
-  }, []);
+    if (authUser) {
+      loadShipmentsFromNeon();
+    }
+  }, [authUser?.id]);
 
   const handleDeleteShipment = async (shipmentId: string) => {
     try {
@@ -435,7 +438,16 @@ useEffect(() => {
   } catch (error) {
     console.error('Logout error:', error);
   } finally {
+    // Drop the previous user's data so the next login starts clean
     setAuthUser(null);
+    setShipments([]);
+    setShipmentsError(null);
+    setDbConnected(null);
+    setResolvedAlertIds([]);
+    setSelectedShipment(null);
+    setShowNewModal(false);
+    setGlobalSearch('');
+    setActiveTab('dashboard');
   }
 }
 
@@ -458,7 +470,8 @@ useEffect(() => {
 
       const savedShipment: Shipment = data.shipment || updated;
       setShipments((prev) => prev.map((s) => (s.id === savedShipment.id ? savedShipment : s)));
-      setSelectedShipment(savedShipment);
+      // Refresh the open detail view only: inline edits in the lists must not open it
+      setSelectedShipment((prev) => (prev && prev.id === savedShipment.id ? savedShipment : prev));
       showToast(`✅ Expédition ${savedShipment.id} mise à jour dans Neon PostgreSQL.`);
     } catch (err: any) {
       showToast(`❌ Erreur réseau lors de la mise à jour: ${err?.message || 'Erreur inconnue'}`);
@@ -692,9 +705,12 @@ useEffect(() => {
     }
   };
 
+  // Restart the timer on each message: an older timer must not hide a newer toast
+  const toastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3500);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setNotification(null), 3500);
   };
 
   const canEdit = currentRole === 'supply_chain' || currentRole === 'sourcing';
@@ -705,6 +721,26 @@ useEffect(() => {
     sourcing: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'assistant'],
     direction: ['dashboard', 'assistant'],
   }), []);
+
+  const allowedTabs = allowedTabsByRole[currentRole];
+
+  const navigateTab = (tab: NavTab) => {
+    if (allowedTabs.includes(tab)) setActiveTab(tab);
+  };
+
+  const openNewShipment = (mode?: 'Air' | 'Sea') => {
+    setCreateError(null);
+    if (mode) setNewMode(mode);
+    setShowNewModal(true);
+  };
+
+  // The navbar search filters the Air / Sea lists: jump to one when typing elsewhere
+  const handleGlobalSearchChange = (value: string) => {
+    setGlobalSearch(value);
+    if (value.trim() && activeTab !== 'air' && activeTab !== 'sea') {
+      navigateTab('air');
+    }
+  };
 
   // Ensure active tab stays within allowed tabs for the current role
   useEffect(() => {
@@ -745,14 +781,11 @@ if (!authUser) {
         darkMode={darkMode}
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         globalSearch={globalSearch}
-        onSearchChange={setGlobalSearch}
-        alertsCount={allAlerts.length}
+        onSearchChange={handleGlobalSearchChange}
+        showSearch={allowedTabsByRole[currentRole].includes('air')}
+        alertsCount={allAlertsWithResolved.filter((a) => !a.resolved).length}
         onOpenAssistant={() => setActiveTab('assistant')}
-        onOpenAlerts={() => {
-          if (allowedTabsByRole[currentRole].includes('alerts')) {
-            setActiveTab('alerts');
-          }
-        }}
+        onOpenAlerts={() => navigateTab('alerts')}
         dbConnected={dbConnected}
         isLoadingDb={isLoadingDb}
         onRefreshDb={loadShipmentsFromNeon}
@@ -765,7 +798,7 @@ if (!authUser) {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           criticalAlertsCount={metrics.criticalAlertsCount}
-          onNewShipment={() => setShowNewModal(true)}
+          onNewShipment={() => openNewShipment()}
           canEdit={canEdit}
           currentRole={currentRole}
         />
@@ -797,7 +830,8 @@ if (!authUser) {
               shipments={shipmentsWithAlerts}
               alerts={allAlerts}
               metrics={metrics}
-              onNavigateTab={setActiveTab}
+              allowedTabs={allowedTabs}
+              onNavigateTab={navigateTab}
               onSelectShipment={setSelectedShipment}
               onOpenRelanceModal={(alt) => {
                 const linked = shipmentsWithAlerts.find((s) => s.id === alt.shipment_id);
@@ -810,14 +844,12 @@ if (!authUser) {
             <ShipmentsView
               shipments={shipmentsWithAlerts}
               modeFilter="Air"
+              globalSearch={globalSearch}
+              onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
               canEdit={canEdit}
               onUpdateShipment={handleSaveShipment}
-              onNewShipment={() => {
-                setCreateError(null);
-                setNewMode('Air');
-                setShowNewModal(true);
-              }}
+              onNewShipment={canEdit ? () => openNewShipment('Air') : undefined}
             />
           )}
 
@@ -825,14 +857,12 @@ if (!authUser) {
             <ShipmentsView
               shipments={shipmentsWithAlerts}
               modeFilter="Sea"
+              globalSearch={globalSearch}
+              onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
               canEdit={canEdit}
               onUpdateShipment={handleSaveShipment}
-              onNewShipment={() => {
-                setCreateError(null);
-                setNewMode('Sea');
-                setShowNewModal(true);
-              }}
+              onNewShipment={canEdit ? () => openNewShipment('Sea') : undefined}
             />
           )}
 
@@ -866,6 +896,7 @@ if (!authUser) {
       {/* Shipment Detail Modal */}
       {selectedShipment && (
         <ShipmentDetailModal
+          key={selectedShipment.id}
           shipment={selectedShipment}
           onClose={() => setSelectedShipment(null)}
           canEdit={canEdit}

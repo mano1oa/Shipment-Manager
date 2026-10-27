@@ -635,7 +635,7 @@ app.put(
         role
       );
 
-      if (!result.ok) {
+      if ('reason' in result) {
         if (result.reason === 'NOT_FOUND') {
           return res.status(404).json({
             success: false,
@@ -714,7 +714,7 @@ app.put(
         isActive
       );
 
-      if (!result.ok) {
+      if ('reason' in result) {
         if (result.reason === 'NOT_FOUND') {
           return res.status(404).json({
             success: false,
@@ -1625,6 +1625,16 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       const message = err instanceof OdooError ? err.publicMessage : 'Échec de la synchronisation Odoo';
       return res.status(502).json({ success: false, error: message });
     }
+  });
+
+  // Legacy Google Sheets links (Administration): kept out of the public code
+  app.get('/api/admin/links', requireRole('SUPPLY_CHAIN'), (_req, res) => {
+    const url = (v?: string) => (v && /^https:\/\//.test(v.trim()) ? v.trim() : null);
+    res.json({
+      success: true,
+      google_sheet_air_url: url(process.env.GOOGLE_SHEET_AIR_URL),
+      google_sheet_sea_url: url(process.env.GOOGLE_SHEET_SEA_URL),
+    });
   });
 
   // --- NEON POSTGRESQL DIRECT SQL ENDPOINTS ---

@@ -18,6 +18,7 @@ import {
   WARNING_LABELS,
   detectTrackingNumber,
 } from '../lib/carrierDetection';
+import { formatDateTime } from '../lib/dateFormat';
 
 type TrackingStatus =
   | 'UNKNOWN'
@@ -89,16 +90,6 @@ const MANUAL_STATUSES: TrackingStatus[] = [
 const inputClass =
   'w-full rounded-lg border border-slate-200 bg-white p-2 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white';
 
-const formatDateTime = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleString('fr-FR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : '—';
 
 const nowForInput = () => {
   const d = new Date();
@@ -232,6 +223,10 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
   const handleSaveEvent = async (id: string) => {
     if (!eventStatus || !eventDescription.trim()) {
       setError('Le statut et la description de l’événement sont obligatoires.');
+      return;
+    }
+    if (!eventAt || isNaN(new Date(eventAt).getTime())) {
+      setError('La date de l’événement est obligatoire.');
       return;
     }
     setSavingEvent(true);
@@ -427,6 +422,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                           value={eventDescription}
                           onChange={(e) => setEventDescription(e.target.value)}
                           aria-label="Description"
+                          placeholder="Description de l’événement *"
                           className={`${inputClass} sm:col-span-2`}
                         />
                         <input
@@ -434,6 +430,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                           value={eventLocation}
                           onChange={(e) => setEventLocation(e.target.value)}
                           aria-label="Lieu"
+                          placeholder="Lieu"
                           className={inputClass}
                         />
                         <div className="flex justify-end gap-2">
@@ -498,6 +495,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                     }
                   }}
                   aria-label="Nouveau numéro de suivi"
+                  placeholder="Nouveau n° de suivi"
                   className={`${inputClass} font-mono`}
                 />
                 <select

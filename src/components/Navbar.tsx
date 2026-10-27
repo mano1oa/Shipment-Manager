@@ -33,11 +33,10 @@ interface NavbarProps {
   onToggleDarkMode: () => void;
   globalSearch: string;
   onSearchChange: (search: string) => void;
+  showSearch?: boolean;
   alertsCount: number;
   onOpenAssistant: () => void;
   onOpenAlerts: () => void;
-  onSyncShipments?: () => void;
-  isSyncing?: boolean;
   dbConnected?: boolean | null;
   isLoadingDb?: boolean;
   onRefreshDb?: () => void;
@@ -52,11 +51,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleDarkMode,
   globalSearch,
   onSearchChange,
+  showSearch = true,
   alertsCount,
   onOpenAssistant,
   onOpenAlerts,
-  onSyncShipments,
-  isSyncing = false,
   dbConnected = null,
   isLoadingDb = false,
   onRefreshDb,
@@ -153,8 +151,8 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* Global Search */}
-      <div className="hidden max-w-sm flex-1 px-6 md:block">
+      {/* Global Search (filters the Air / Sea lists) */}
+      <div className={`hidden max-w-sm flex-1 px-6 ${showSearch ? 'md:block' : ''}`}>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -176,7 +174,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           title={
             dbConnected
               ? 'Connecté en direct à Neon PostgreSQL via DATABASE_URL / POSTGRES_URL. Cliquez pour recharger.'
-              : 'Mode local actif (fallback). Dès que DATABASE_URL est configuré sur Vercel, la base Neon prendra le relais automatiquement.'
+              : 'Base Neon non joignable : aucune donnée chargée. Cliquez pour réessayer.'
           }
           className={`hidden sm:flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition ${
             dbConnected
@@ -191,24 +189,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 dbConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
               }`}
             />
-            {dbConnected ? 'Neon PostgreSQL' : 'Données Locales'}
+            {dbConnected ? 'Neon PostgreSQL' : dbConnected === null ? 'Connexion…' : 'Base non connectée'}
           </span>
           {isLoadingDb && <RefreshCw className="h-2.5 w-2.5 animate-spin" />}
         </div>
-
-        {/* SYNC. SHIPMENT Button */}
-        {onSyncShipments && (
-          <button
-            id="nav-btn-sync-shipment"
-            onClick={onSyncShipments}
-            disabled={isSyncing}
-            className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-3 py-1.5 text-xs font-black uppercase tracking-wider text-white shadow-md shadow-emerald-600/20 transition hover:from-emerald-500 hover:to-teal-500 active:scale-95 disabled:opacity-50"
-            title="Synchroniser l'application avec la base de données Google Sheets (ID: 15L895NUzVJK49xcv9XRkX2YbfAK9GILQK73gc4s8k2E)"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>SYNC. SHIPMENT</span>
-          </button>
-        )}
 
         {/* Role Switcher */}
         <div className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -254,12 +238,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
         </button>
 
-          <div className="hidden items-center gap-2 border-l border-slate-200 pl-3 dark:border-slate-700 lg:flex">
-  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#643288]/10 text-[#643288] dark:bg-[#643288]/30 dark:text-purple-200">
+          <div className="flex items-center gap-2 border-l border-slate-200 pl-3 dark:border-slate-700">
+  <div className="hidden h-8 w-8 lg:flex items-center justify-center rounded-full bg-[#643288]/10 text-[#643288] dark:bg-[#643288]/30 dark:text-purple-200">
     <User className="h-4 w-4" />
   </div>
 
-  <div className="max-w-[160px]">
+  <div className="hidden max-w-[160px] lg:block">
     <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">
       {authUser.display_name}
     </p>

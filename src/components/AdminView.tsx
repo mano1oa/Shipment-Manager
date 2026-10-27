@@ -17,18 +17,31 @@ import {
   UploadCloud,
   Trash2,
 } from 'lucide-react';
+import { CARRIER_CODES, CARRIER_LABELS } from '../lib/carrierDetection';
+
+// Fixed in src/lib/rulesEngine.ts ("colis en attente d'expédition")
+const ORLY_ALERT_DAYS = 10;
 
 export const AdminView: React.FC = () => {
-  const [googleSheetAirUrl, setGoogleSheetAirUrl] = useState(
-    'https://docs.google.com/spreadsheets/d/15L895NUzVJK49xcv9XRkX2YbfAK9GILQK73gc4s8k2E/edit'
-  );
-  const [googleSheetSeaUrl, setGoogleSheetSeaUrl] = useState(
-    'https://docs.google.com/spreadsheets/d/1pdFr2cLmR0dlxTRV4MONxjcdsFgjyZ-4plfQadt6EUE/edit?gid=1539514939#gid=1539514939'
-  );
-  const [orlyThreshold, setOrlyThreshold] = useState(10);
-  const [transitaireThreshold, setTransitaireThreshold] = useState(4);
-  const [webhookStatus, setWebhookStatus] = useState<string | null>(null);
+  const [webhookStatus, setWebhookStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [testingWebhook, setTestingWebhook] = useState(false);
+  const [automatedCarriers, setAutomatedCarriers] = useState<string[] | null>(null);
+  // Legacy Google Sheets (read only, no sync): URLs come from server env vars, not from the code
+  const [sheetLinks, setSheetLinks] = useState<{ air: string | null; sea: string | null }>({ air: null, sea: null });
+
+  useEffect(() => {
+    fetch('/api/admin/links', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => setSheetLinks({ air: data?.google_sheet_air_url ?? null, sea: data?.google_sheet_sea_url ?? null }))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/tracking/config', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => setAutomatedCarriers(Array.isArray(data?.automated_carriers) ? data.automated_carriers : []))
+      .catch(() => setAutomatedCarriers(null));
+  }, []);
 
   // Neon DB State
   const [dbStatus, setDbStatus] = useState<{
@@ -120,19 +133,12 @@ export const AdminView: React.FC = () => {
     }
   };
 
-  const carriersConnectors = [
-    { name: 'DHL Express API', type: 'Air', status: 'Actif (REST/OAuth)', ping: '42ms' },
-    { name: 'FedEx Web Services', type: 'Air', status: 'Actif (REST)', ping: '58ms' },
-    { name: 'UPS Quantum View', type: 'Air', status: 'Actif (OAuth2)', ping: '61ms' },
-    { name: 'TNT Express API', type: 'Air', status: 'Actif (REST)', ping: '49ms' },
-    { name: 'Amazon Logistics API', type: 'Air/Road', status: 'Actif (SP-API)', ping: '35ms' },
-    { name: 'DB Schenker Logistics', type: 'Air/Sea', status: 'Actif (EDI/REST)', ping: '72ms' },
-    { name: 'Dachser eLogistics', type: 'Road/Air', status: 'Actif (REST)', ping: '65ms' },
-    { name: 'CEVA Logistics API', type: 'Air/Sea', status: 'Actif (REST)', ping: '80ms' },
-    { name: 'Chronopost / Colissimo', type: 'Postal Air', status: 'Actif (SOAP/REST)', ping: '30ms' },
-    { name: 'MSC Line Direct', type: 'Sea', status: 'Actif (DCSA Standard)', ping: '110ms' },
-    { name: 'Maersk API Integration', type: 'Sea', status: 'Actif (DCSA REST)', ping: '95ms' },
-  ];
+  // Real status: a carrier is automated only when a tracking provider is configured server side
+  const carriersConnectors = CARRIER_CODES.filter((c) => c !== 'OTHER' && c !== 'UNKNOWN').map((code) => ({
+    code,
+    name: CARRIER_LABELS[code],
+    automated: automatedCarriers?.includes(code) ?? false,
+  }));
 
   const handleTestN8NWebhook = async () => {
     setTestingWebhook(true);
@@ -149,12 +155,12 @@ export const AdminView: React.FC = () => {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
-        setWebhookStatus('Succès ! Message de test transmis à Google Chat.');
+        setWebhookStatus({ ok: true, text: 'Succès ! Message de test transmis à Google Chat.' });
       } else {
-        setWebhookStatus(`Échec : ${data?.error || `erreur ${res.status}`}`);
+        setWebhookStatus({ ok: false, text: `Échec : ${data?.error || `erreur ${res.status}`}` });
       }
     } catch (err) {
-      setWebhookStatus('Erreur lors de la transmission au webhook.');
+      setWebhookStatus({ ok: false, text: 'Erreur lors de la transmission au webhook.' });
     } finally {
       setTestingWebhook(false);
     }
@@ -320,8 +326,14 @@ export const AdminView: React.FC = () => {
             </div>
 
             {webhookStatus && (
-              <div className="mt-3 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 p-2.5 rounded-lg border border-emerald-200 dark:border-emerald-900">
-                {webhookStatus}
+              <div
+                className={`mt-3 text-xs font-semibold p-2.5 rounded-lg border ${
+                  webhookStatus.ok
+                    ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-900'
+                    : 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950 border-rose-200 dark:border-rose-900'
+                }`}
+              >
+                {webhookStatus.text}
               </div>
             )}
           </div>
@@ -330,82 +342,51 @@ export const AdminView: React.FC = () => {
         {/* Google Sheets Sync Configuration */}
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
           <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700">
-            <Database className="h-4 w-4 text-[#643288]" /> Synchronisation Google Sheets
+            <Database className="h-4 w-4 text-[#643288]" /> Fichiers Google Sheets &amp; seuils d'alerte
           </h2>
+          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            Consultation uniquement : il n'y a pas de synchronisation avec Google Sheets, Neon est la seule source de
+            données.
+          </p>
 
           <div className="mt-4 space-y-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                URL Google Sheet - Expéditions Aériennes
-              </label>
-              <div className="mt-1 flex gap-2">
-                <input
-                  type="text"
-                  value={googleSheetAirUrl}
-                  onChange={(e) => setGoogleSheetAirUrl(e.target.value)}
-                  className="flex-1 rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs font-mono text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                />
-                <a
-                  href={googleSheetAirUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200"
-                >
-                  <ExternalLink className="h-4 w-4" /> Ouvrir AIR
-                </a>
+            {[
+              { label: 'Google Sheet - Expéditions Aériennes', url: sheetLinks.air, envVar: 'GOOGLE_SHEET_AIR_URL', button: 'Ouvrir AIR' },
+              { label: 'Google Sheet - Expéditions Maritimes', url: sheetLinks.sea, envVar: 'GOOGLE_SHEET_SEA_URL', button: 'Ouvrir SEA' },
+            ].map((sheet) => (
+              <div key={sheet.envVar} className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">{sheet.label}</span>
+                {sheet.url ? (
+                  <a
+                    href={sheet.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200"
+                  >
+                    <ExternalLink className="h-4 w-4" /> {sheet.button}
+                  </a>
+                ) : (
+                  <span className="text-[11px] text-slate-400">
+                    Non configuré (variable <code className="font-mono">{sheet.envVar}</code>)
+                  </span>
+                )}
               </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                URL Google Sheet - Expéditions Maritimes
-              </label>
-              <div className="mt-1 flex gap-2">
-                <input
-                  type="text"
-                  value={googleSheetSeaUrl}
-                  onChange={(e) => setGoogleSheetSeaUrl(e.target.value)}
-                  className="flex-1 rounded-xl border border-slate-200 bg-slate-50 p-2 text-xs font-mono text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                />
-                <a
-                  href={googleSheetSeaUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1 rounded-xl bg-indigo-100 px-3 py-2 text-xs font-bold text-indigo-800 hover:bg-indigo-200 dark:bg-indigo-950 dark:text-indigo-300"
-                >
-                  <ExternalLink className="h-4 w-4" /> Ouvrir SEA
-                </a>
-              </div>
-            </div>
+            ))}
 
             <div className="pt-2">
               <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Seuils de Déclenchement des Alertes Métier
               </label>
-              <div className="mt-2 grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">
-                    Seuil Bloqué Orly (Jours)
-                  </span>
-                  <input
-                    type="number"
-                    value={orlyThreshold}
-                    onChange={(e) => setOrlyThreshold(Number(e.target.value))}
-                    className="mt-1 w-full rounded-lg border border-slate-200 p-1.5 text-xs font-bold dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
+              <div className="mt-2 rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
+                <span className="text-[10px] font-bold text-slate-500 uppercase">
+                  Colis en attente d'expédition
+                </span>
+                <div className="mt-1 text-xs font-bold text-slate-900 dark:text-white">
+                  {ORLY_ALERT_DAYS} jours
                 </div>
-
-                <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-900">
-                  <span className="text-[10px] font-bold text-slate-500 uppercase">
-                    Seuil Transitaire (Jours)
-                  </span>
-                  <input
-                    type="number"
-                    value={transitaireThreshold}
-                    onChange={(e) => setTransitaireThreshold(Number(e.target.value))}
-                    className="mt-1 w-full rounded-lg border border-slate-200 p-1.5 text-xs font-bold dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
+                <p className="mt-1 text-[10px] text-slate-500">
+                  Seuil fixé dans le moteur de règles : il n'est pas modifiable depuis l'application.
+                </p>
               </div>
             </div>
           </div>
@@ -415,33 +396,40 @@ export const AdminView: React.FC = () => {
       {/* Carriers Connector Status Matrix */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
         <h2 className="text-sm font-bold text-slate-900 dark:text-white border-b border-slate-100 pb-3 dark:border-slate-700 flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-emerald-600" /> Matrice des Connecteurs API Transporteurs ({carriersConnectors.length})
+          <ShieldCheck className="h-4 w-4 text-emerald-600" /> Suivi automatique par transporteur
         </h2>
+        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+          {automatedCarriers === null
+            ? 'État des connecteurs indisponible.'
+            : automatedCarriers.length === 0
+              ? 'Aucun fournisseur de suivi n’est encore branché : le suivi de tous les transporteurs est manuel.'
+              : `${automatedCarriers.length} transporteur(s) suivi(s) automatiquement.`}
+        </p>
 
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] dark:bg-slate-900/60 dark:text-slate-400">
               <tr>
-                <th className="px-3 py-2 font-semibold">Nom du Connecteur</th>
-                <th className="px-3 py-2 font-semibold">Mode Cible</th>
-                <th className="px-3 py-2 font-semibold">Protocole Integration</th>
-                <th className="px-3 py-2 font-semibold">Latence / Ping</th>
-                <th className="px-3 py-2 text-right font-semibold">Statut Routeur</th>
+                <th className="px-3 py-2 font-semibold">Transporteur</th>
+                <th className="px-3 py-2 text-right font-semibold">Suivi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
-              {carriersConnectors.map((c, idx) => (
-                <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
+              {carriersConnectors.map((c) => (
+                <tr key={c.code} className="hover:bg-slate-50 dark:hover:bg-slate-700/30">
                   <td className="px-3 py-2.5 font-bold text-slate-900 dark:text-slate-100">
                     {c.name}
                   </td>
-                  <td className="px-3 py-2.5 text-slate-600 dark:text-slate-400">{c.type}</td>
-                  <td className="px-3 py-2.5 font-mono text-slate-500">{c.status}</td>
-                  <td className="px-3 py-2.5 font-mono text-emerald-600 font-bold">{c.ping}</td>
                   <td className="px-3 py-2.5 text-right">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                      <CheckCircle2 className="h-3 w-3" /> Connecté
-                    </span>
+                    {c.automated ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
+                        <CheckCircle2 className="h-3 w-3" /> Automatique
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-900 dark:text-slate-400">
+                        Manuel
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))}

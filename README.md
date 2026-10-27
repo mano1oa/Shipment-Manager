@@ -408,6 +408,7 @@ Node.js 20+ et une base Neon PostgreSQL.
 | `CRON_SECRET` | Obligatoire pour les crons quotidiens (suivi transporteur, factures DIGI) |
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY` | Connexion en lecture à Odoo DIGI LOGISTIC (API JSON-RPC ; clé API de l'utilisateur) |
 | `ODOO_DEST_PARTNER_ID` / `ODOO_DEST_PARTNER_NAME` | Entité de destination filtrée : identifiant du partenaire, sinon nom (« NextHope » par défaut) |
+| `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Administration (consultation, aucune synchronisation) |
 | `NODE_ENV` | `production` en production (cookie `Secure`) |
 
 Ne jamais exposer ces valeurs via une variable `VITE_*`. Le fichier `.env` est

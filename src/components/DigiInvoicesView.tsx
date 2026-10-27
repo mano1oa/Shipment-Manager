@@ -25,6 +25,7 @@ import {
   fetchDigiInvoices,
   formatAmount,
   formatDate,
+  formatDateTime,
   formatQuantity,
   syncDigiOdoo,
 } from './digiApi';
@@ -162,7 +163,7 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
               Synchronisation automatique chaque jour vers 8 h (heure de Madagascar), et à la demande avec le bouton.
               {lastSync && (
                 <>
-                  {' '}Dernière : {new Date(lastSync.finished_at).toLocaleString('fr-FR')} (
+                  {' '}Dernière : {formatDateTime(lastSync.finished_at)} (
                   {lastSync.trigger === 'cron' ? 'automatique' : lastSync.actor_email || 'manuelle'})
                   {lastSync.success ? (
                     lastSync.result?.complete === false ? ' — incomplète, à relancer.' : ' — réussie.'
@@ -393,9 +394,9 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
                             <p className="mt-2 text-[10px] text-slate-400">
                               {inv.source === 'odoo'
                                 ? 'Facture Odoo : modifiable uniquement dans Odoo, puis resynchronisée.'
-                                : `Ajoutée par ${inv.created_by_email || '—'} le ${new Date(inv.created_at).toLocaleDateString('fr-FR')}` +
+                                : `Ajoutée par ${inv.created_by_email || '—'} le ${formatDate(inv.created_at)}` +
                                   (inv.updated_by_email && inv.updated_at !== inv.created_at
-                                    ? ` · modifiée par ${inv.updated_by_email} le ${new Date(inv.updated_at).toLocaleDateString('fr-FR')}`
+                                    ? ` · modifiée par ${inv.updated_by_email} le ${formatDate(inv.updated_at)}`
                                     : '')}
                             </p>
                           </td>

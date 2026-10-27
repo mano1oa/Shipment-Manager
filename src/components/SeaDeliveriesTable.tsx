@@ -31,6 +31,14 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingRow, setEditingRow] = useState<SeaDeliveryItem | null>(null);
+  // Volume typed as text: converting on each keystroke dropped the decimal point ("1.25" became 25)
+  const [volumeDraft, setVolumeDraft] = useState('');
+
+  const startEditing = (item: SeaDeliveryItem) => {
+    setEditingId(item.id);
+    setEditingRow({ ...item });
+    setVolumeDraft(item.volume_m3 ? String(item.volume_m3) : '');
+  };
 
   // Helper to re-index item_no sequentially: "01", "02", "03"...
   const formatItemNo = (index: number) => {
@@ -63,8 +71,7 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
     };
     onUpdateShipment(updatedShipment);
     // Start editing the newly added row
-    setEditingId(newItem.id);
-    setEditingRow(newItem);
+    startEditing(newItem);
   };
 
   const handleDeleteRow = (id: string, e: React.MouseEvent) => {
@@ -90,16 +97,17 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
 
   const handleStartEdit = (item: SeaDeliveryItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    setEditingId(item.id);
-    setEditingRow({ ...item });
+    startEditing(item);
   };
 
   const handleSaveEdit = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!editingRow) return;
 
+    const volume = Number(volumeDraft.replace(',', '.'));
+    const savedRow = { ...editingRow, volume_m3: Number.isFinite(volume) && volume > 0 ? volume : 0 };
     const updatedDeliveries = deliveries.map((d) =>
-      d.id === editingRow.id ? editingRow : d
+      d.id === savedRow.id ? savedRow : d
     );
 
     onUpdateShipment({
@@ -259,12 +267,10 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
                     <td className="px-3 py-2.5 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
                       {isEditing ? (
                         <input
-                          type="number"
-                          step="0.01"
-                          value={rowData.volume_m3}
-                          onChange={(e) =>
-                            setEditingRow({ ...rowData, volume_m3: parseFloat(e.target.value) || 0 })
-                          }
+                          type="text"
+                          inputMode="decimal"
+                          value={volumeDraft}
+                          onChange={(e) => setVolumeDraft(e.target.value)}
                           className="w-16 rounded-lg border border-slate-300 bg-white p-1 text-center text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                         />
                       ) : (
