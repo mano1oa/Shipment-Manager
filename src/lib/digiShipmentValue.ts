@@ -44,7 +44,7 @@ export function buildDigiValueLookup(
     if (inv.odoo_missing || inv.amount_total === null) continue;
     const match: DigiValueMatch = {
       amount: inv.amount_total,
-      invoiceLabel: inv.odoo_move_name || inv.ref || inv.sale_move_ref || '',
+      invoiceLabel: `Facture DIGI ${inv.odoo_move_name || inv.ref || inv.sale_move_ref || ''}`.trim(),
     };
     const keys = new Set(
       [inv.ref, inv.odoo_move_name, inv.sale_move_ref].map(normalizeInvoiceKey).filter(Boolean)

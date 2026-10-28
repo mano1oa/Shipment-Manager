@@ -16,6 +16,8 @@ export interface DigiInvoiceLineInput {
   price_unit: number | null;
   price_subtotal: number | null;
   odoo_line_id?: number | null;
+  /** Fee line (DEEE, RCP, FRDP…): not an item to ship. */
+  is_service?: boolean;
 }
 
 export interface DigiInvoiceInput {
@@ -32,6 +34,67 @@ export const DIGI_TEXT_MAX_LENGTH = 255;
 export const DIGI_LINE_NAME_MAX_LENGTH = 2000;
 export const DIGI_MAX_LINES_PER_INVOICE = 500;
 export const DIGI_IMPORT_MAX_INVOICES = 2000;
+
+// ---------------------------------------------------------------------------
+// Service (fee) lines
+// ---------------------------------------------------------------------------
+
+/**
+ * Odoo product codes of fee lines (eco-participation DEEE, RCP, shipping
+ * costs FRDP). They are not items to track: they are merged into a single
+ * "[SERVICES]" line so that the invoice total still equals the Odoo total.
+ * SERVICES is the code of the merged line itself (merging is idempotent).
+ */
+export const SERVICE_PRODUCT_CODES = ['DEEE', 'RCP', 'FRDP'] as const;
+const MERGED_SERVICE_CODE = 'SERVICES';
+const SERVICE_CODE_RE = new RegExp(`^\\s*\\[(${[...SERVICE_PRODUCT_CODES, MERGED_SERVICE_CODE].join('|')})\\]`, 'i');
+
+/** True when a label starts with a fee product code, e.g. "[FRDP] Frais de port". */
+export function isServiceLabel(name: string | null | undefined): boolean {
+  return Boolean(name) && SERVICE_CODE_RE.test(name as string);
+}
+
+function lineAmount(line: DigiInvoiceLineInput): number | null {
+  if (line.price_subtotal !== null) return line.price_subtotal;
+  if (line.quantity !== null && line.price_unit !== null) return line.quantity * line.price_unit;
+  return null;
+}
+
+/**
+ * Keeps item lines as they are and replaces all fee lines with one
+ * "[SERVICES] …" line (quantity 1, price = sum of the fee lines).
+ */
+export function mergeServiceLines(lines: DigiInvoiceLineInput[]): DigiInvoiceLineInput[] {
+  const services = lines.filter((l) => l.is_service || isServiceLabel(l.name));
+  if (services.length === 0) return lines;
+
+  const items = lines.filter((l) => !services.includes(l));
+  const amounts = services.map(lineAmount);
+  const total = amounts.some((a) => a !== null)
+    ? Math.round(amounts.reduce<number>((sum, a) => sum + (a ?? 0), 0) * 100) / 100
+    : null;
+
+  const codes = new Set<string>();
+  for (const line of services) {
+    const code = /^\s*\[([^\]]+)\]/.exec(line.name)?.[1]?.toUpperCase();
+    if (code && code !== MERGED_SERVICE_CODE) codes.add(code);
+    // Already merged line: keep the codes listed in its label
+    if (code === MERGED_SERVICE_CODE) {
+      for (const known of SERVICE_PRODUCT_CODES) if (line.name.toUpperCase().includes(known)) codes.add(known);
+    }
+  }
+
+  return [
+    ...items,
+    {
+      name: `[${MERGED_SERVICE_CODE}] ${codes.size ? [...codes].join(', ') : 'Frais'} — services, non expédiés`,
+      quantity: 1,
+      price_unit: total,
+      price_subtotal: total,
+      is_service: true,
+    },
+  ];
+}
 
 /** Default destination entity on DIGI LOGISTIC. */
 export const DEFAULT_DEST_PARTNER_NAME = 'NextHope';
@@ -209,7 +272,7 @@ export function validateDigiInvoiceInput(raw: any): { value: DigiInvoiceInput | 
     invoice_date: invoiceDate,
     amazon_order_ref: optionalText(raw.amazon_order_ref, 'Commande Amazon', errors),
     sale_move_ref: optionalText(raw.sale_move_ref, 'Facture vente', errors),
-    lines,
+    lines: mergeServiceLines(lines),
   };
 
   return { value: errors.length === 0 ? value : null, errors };

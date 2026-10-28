@@ -1,5 +1,7 @@
 import crypto from 'crypto';
 import { getDb } from './neon.js';
+import { ensureNeonSchema } from './shipments.js';
+import { isServiceLabel, mergeServiceLines } from '../lib/digiInvoices.js';
 import type { DigiInvoiceInput, DigiInvoiceLineInput } from '../lib/digiInvoices.js';
 
 /**
@@ -39,6 +41,7 @@ export interface DigiInvoiceLineRecord {
   quantity: number | null;
   price_unit: number | null;
   price_subtotal: number | null;
+  is_service: boolean;
 }
 
 export interface DigiInvoiceRecord {
@@ -56,6 +59,16 @@ export interface DigiInvoiceRecord {
   odoo_missing: boolean;
   odoo_synced_at: string | null;
   amount_total: number | null;
+  /** Shipment created for this invoice (null = none yet). */
+  shipment_id: string | null;
+  /** False when the linked shipment has been deleted since. */
+  shipment_exists: boolean;
+  shipment_mode: 'Air' | 'Sea' | null;
+  shipment_global_status: string | null;
+  /** Marked by hand as services only: nothing to ship (manual work). */
+  no_shipment: boolean;
+  /** At least one item line (not a fee/service line). */
+  has_items: boolean;
   created_by_email: string | null;
   updated_by_email: string | null;
   created_at: string;
@@ -88,6 +101,8 @@ export function ensureDigiInvoicesSchema(): Promise<void> {
 }
 
 async function initDigiInvoicesSchema(): Promise<void> {
+  // digi_invoices is joined with shipments: make sure that table exists
+  await ensureNeonSchema();
   const sql = getDb();
 
   await sql`
@@ -141,6 +156,21 @@ async function initDigiInvoicesSchema(): Promise<void> {
       ON digi_invoice_lines (invoice_id, position);
   `;
 
+  // Link to the shipment created for the invoice, services flag (v2)
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS shipment_id VARCHAR(50);`;
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS shipment_created_at TIMESTAMPTZ;`;
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS no_shipment BOOLEAN NOT NULL DEFAULT FALSE;`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_digi_invoices_shipment ON digi_invoices (shipment_id);`;
+  await sql`ALTER TABLE digi_invoice_lines ADD COLUMN IF NOT EXISTS is_service BOOLEAN NOT NULL DEFAULT FALSE;`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS app_migrations (
+      key VARCHAR(100) PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await mergeExistingServiceLines();
+
   // History of Odoo syncs (manual button or daily cron)
   await sql`
     CREATE TABLE IF NOT EXISTS digi_odoo_sync_runs (
@@ -160,6 +190,43 @@ async function initDigiInvoicesSchema(): Promise<void> {
   `;
 }
 
+/**
+ * One-time: merge the fee lines (DEEE, RCP, FRDP) of invoices stored before
+ * the rule existed. Odoo invoices are simply re-read at the next sync.
+ */
+async function mergeExistingServiceLines(): Promise<void> {
+  const sql = getDb();
+  const key = 'digi_merge_service_lines_v1';
+  const done = await sql`SELECT 1 FROM app_migrations WHERE key = ${key}`;
+  if (done.length > 0) return;
+
+  await sql`UPDATE digi_invoices SET odoo_write_date = NULL WHERE odoo_move_id IS NOT NULL`;
+
+  const rows = await sql`
+    SELECT i.id,
+      json_agg(json_build_object(
+        'name', l.name, 'quantity', l.quantity, 'price_unit', l.price_unit,
+        'price_subtotal', l.price_subtotal, 'odoo_line_id', l.odoo_line_id
+      ) ORDER BY l.position) AS lines
+    FROM digi_invoices i JOIN digi_invoice_lines l ON l.invoice_id = i.id
+    WHERE i.odoo_move_id IS NULL
+    GROUP BY i.id
+  `;
+  for (const row of rows as any[]) {
+    const lines: DigiInvoiceLineInput[] = row.lines.map((l: any) => ({
+      name: l.name,
+      quantity: toNumber(l.quantity),
+      price_unit: toNumber(l.price_unit),
+      price_subtotal: toNumber(l.price_subtotal),
+      odoo_line_id: l.odoo_line_id,
+    }));
+    if (!lines.some((l) => isServiceLabel(l.name))) continue;
+    await sql.transaction(replaceLinesQueries(row.id, mergeServiceLines(lines)));
+  }
+
+  await sql`INSERT INTO app_migrations (key) VALUES (${key}) ON CONFLICT DO NOTHING`;
+}
+
 function toNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const n = Number(value);
@@ -174,6 +241,7 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     quantity: toNumber(line.quantity),
     price_unit: toNumber(line.price_unit),
     price_subtotal: toNumber(line.price_subtotal),
+    is_service: Boolean(line.is_service),
   }));
 
   return {
@@ -193,6 +261,12 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     amount_total: lines.some((l) => l.price_subtotal !== null)
       ? Math.round(lines.reduce((sum, l) => sum + (l.price_subtotal ?? 0), 0) * 100) / 100
       : null,
+    shipment_id: row.shipment_id,
+    shipment_exists: Boolean(row.shipment_exists),
+    shipment_mode: row.shipment_mode ?? null,
+    shipment_global_status: row.shipment_global_status ?? null,
+    no_shipment: Boolean(row.no_shipment),
+    has_items: lines.some((l) => !l.is_service),
     created_by_email: row.created_by_email,
     updated_by_email: row.updated_by_email,
     created_at: row.created_at,
@@ -207,13 +281,15 @@ const SELECT_WITH_LINES = `
     TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
     i.amazon_order_ref, i.sale_move_ref, i.odoo_move_id, i.odoo_move_name,
     i.odoo_state, i.odoo_missing, i.odoo_synced_at,
+    i.shipment_id, i.no_shipment,
+    (s.id IS NOT NULL) AS shipment_exists, s.mode AS shipment_mode, s.global_status AS shipment_global_status,
     i.created_by_email, i.updated_by_email, i.created_at, i.updated_at,
     COALESCE(
       (
         SELECT json_agg(json_build_object(
           'id', l.id, 'position', l.position, 'name', l.name,
           'quantity', l.quantity, 'price_unit', l.price_unit,
-          'price_subtotal', l.price_subtotal
+          'price_subtotal', l.price_subtotal, 'is_service', l.is_service
         ) ORDER BY l.position)
         FROM digi_invoice_lines l
         WHERE l.invoice_id = i.id
@@ -221,6 +297,7 @@ const SELECT_WITH_LINES = `
       '[]'::json
     ) AS lines
   FROM digi_invoices i
+  LEFT JOIN shipments s ON s.id = i.shipment_id
 `;
 
 export async function listDigiInvoices(): Promise<DigiInvoiceRecord[]> {
@@ -264,16 +341,17 @@ function replaceLinesQueries(invoiceId: string, lines: DigiInvoiceLineInput[]) {
   if (lines.length > 0) {
     queries.push(sql`
       INSERT INTO digi_invoice_lines
-        (invoice_id, position, name, quantity, price_unit, price_subtotal, odoo_line_id)
-      SELECT ${invoiceId}::uuid, t.position, t.name, t.quantity, t.price_unit, t.price_subtotal, t.odoo_line_id
+        (invoice_id, position, name, quantity, price_unit, price_subtotal, odoo_line_id, is_service)
+      SELECT ${invoiceId}::uuid, t.position, t.name, t.quantity, t.price_unit, t.price_subtotal, t.odoo_line_id, t.is_service
       FROM UNNEST(
         ${lines.map((_, i) => i + 1)}::int[],
         ${lines.map((l) => l.name)}::text[],
         ${lines.map((l) => l.quantity)}::numeric[],
         ${lines.map((l) => l.price_unit)}::numeric[],
         ${lines.map((l) => l.price_subtotal)}::numeric[],
-        ${lines.map((l) => l.odoo_line_id ?? null)}::int[]
-      ) AS t(position, name, quantity, price_unit, price_subtotal, odoo_line_id)
+        ${lines.map((l) => l.odoo_line_id ?? null)}::int[],
+        ${lines.map((l) => Boolean(l.is_service || isServiceLabel(l.name)))}::boolean[]
+      ) AS t(position, name, quantity, price_unit, price_subtotal, odoo_line_id, is_service)
     `);
   }
   return queries;
@@ -602,4 +680,168 @@ export async function importDigiInvoices(
   }
 
   return { created, duplicates };
+}
+
+// ---------------------------------------------------------------------------
+// Link with shipments
+// ---------------------------------------------------------------------------
+
+export interface InvoiceForShipment {
+  id: string;
+  supplier_name: string | null;
+  ref: string | null;
+  invoice_date: string | null;
+  amazon_order_ref: string | null;
+  sale_move_ref: string | null;
+  odoo_move_name: string | null;
+}
+
+/**
+ * Invoices that should get their shipment automatically: never had one, not
+ * marked as services, at least one item line, posted (Odoo) or entered in the
+ * app, dated on/after `fromDate` (or undated).
+ */
+export async function listInvoicesNeedingShipment(fromDate: string, limit: number): Promise<InvoiceForShipment[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id, i.supplier_name, i.ref, TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
+      i.amazon_order_ref, i.sale_move_ref, i.odoo_move_name
+    FROM digi_invoices i
+    WHERE i.shipment_id IS NULL
+      AND i.shipment_created_at IS NULL
+      AND NOT i.no_shipment
+      AND (i.odoo_move_id IS NULL OR i.odoo_state = 'posted')
+      AND (i.invoice_date IS NULL OR i.invoice_date >= ${fromDate}::date)
+      AND EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id AND NOT l.is_service)
+    ORDER BY i.invoice_date ASC NULLS LAST, i.created_at ASC
+    LIMIT ${limit}
+  `;
+  return rows as InvoiceForShipment[];
+}
+
+export async function getInvoiceForShipment(id: string): Promise<InvoiceForShipment | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id, supplier_name, ref, TO_CHAR(invoice_date, 'YYYY-MM-DD') AS invoice_date,
+      amazon_order_ref, sale_move_ref, odoo_move_name
+    FROM digi_invoices WHERE id = ${id}
+  `;
+  return (rows[0] as InvoiceForShipment) ?? null;
+}
+
+/**
+ * Reserves the invoice for a new shipment id. Returns false when the invoice
+ * is marked as services or already has an existing shipment (concurrent run).
+ */
+export async function claimInvoiceForShipment(invoiceId: string, shipmentId: string): Promise<boolean> {
+  const sql = getDb();
+  const rows = await sql`
+    UPDATE digi_invoices i SET shipment_id = ${shipmentId}, shipment_created_at = NOW()
+    WHERE i.id = ${invoiceId}
+      AND NOT i.no_shipment
+      AND (i.shipment_id IS NULL OR NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = i.shipment_id))
+    RETURNING i.id
+  `;
+  return rows.length > 0;
+}
+
+/** Undoes a claim when the shipment could not be saved (retried next run). */
+export async function releaseInvoiceClaim(invoiceId: string, shipmentId: string): Promise<void> {
+  const sql = getDb();
+  await sql`
+    UPDATE digi_invoices SET shipment_id = NULL, shipment_created_at = NULL
+    WHERE id = ${invoiceId} AND shipment_id = ${shipmentId}
+  `;
+}
+
+/**
+ * Marks an invoice as services only (nothing to ship) or back to "to ship".
+ * Marking as services detaches it from its shipment, which is kept.
+ */
+export async function setInvoiceNoShipment(
+  id: string,
+  noShipment: boolean
+): Promise<{ previous_shipment_id: string | null } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const before = await sql`SELECT shipment_id FROM digi_invoices WHERE id = ${id}`;
+  if (!before[0]) return null;
+  await sql`
+    UPDATE digi_invoices SET
+      no_shipment = ${noShipment},
+      shipment_id = CASE WHEN ${noShipment} THEN NULL ELSE shipment_id END,
+      updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return { previous_shipment_id: noShipment ? (before[0].shipment_id as string | null) : null };
+}
+
+export async function listDigiInvoicesForShipment(shipmentId: string): Promise<DigiInvoiceRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql.query(
+    `${SELECT_WITH_LINES} WHERE i.shipment_id = $1 ORDER BY i.invoice_date ASC NULLS LAST, i.created_at ASC`,
+    [shipmentId]
+  );
+  return (rows as any[]).map(mapInvoiceRow);
+}
+
+/**
+ * Value of each shipment from its DIGI invoices: shipment id → {count, total}.
+ */
+export async function getInvoiceTotalsByShipment(): Promise<Map<string, { count: number; total: number | null }>> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.shipment_id, COUNT(DISTINCT i.id)::int AS count, SUM(l.price_subtotal)::float AS total
+    FROM digi_invoices i
+    LEFT JOIN digi_invoice_lines l ON l.invoice_id = i.id
+    WHERE i.shipment_id IS NOT NULL
+    GROUP BY i.shipment_id
+  `;
+  return new Map(
+    rows.map((r: any) => [
+      r.shipment_id as string,
+      { count: r.count, total: r.total === null ? null : Math.round(r.total * 100) / 100 },
+    ])
+  );
+}
+
+/**
+ * Moves an invoice to an existing shipment (several invoices can travel in
+ * the same shipment), or detaches it (shipmentId = null). Detached invoices
+ * are never given a new shipment automatically.
+ * Returns null when the invoice does not exist.
+ */
+export async function assignInvoiceToShipment(
+  invoiceId: string,
+  shipmentId: string | null
+): Promise<{ previous_shipment_id: string | null; previous_shipment_empty: boolean } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const before = await sql`SELECT shipment_id FROM digi_invoices WHERE id = ${invoiceId}`;
+  if (!before[0]) return null;
+  const previous = (before[0].shipment_id as string | null) ?? null;
+
+  await sql`
+    UPDATE digi_invoices SET
+      shipment_id = ${shipmentId},
+      shipment_created_at = COALESCE(shipment_created_at, NOW()),
+      no_shipment = CASE WHEN ${shipmentId}::text IS NULL THEN no_shipment ELSE FALSE END,
+      updated_at = NOW()
+    WHERE id = ${invoiceId}
+  `;
+
+  let previousEmpty = false;
+  if (previous && previous !== shipmentId) {
+    const rest = await sql`
+      SELECT
+        EXISTS (SELECT 1 FROM shipments WHERE id = ${previous}) AS still_exists,
+        EXISTS (SELECT 1 FROM digi_invoices WHERE shipment_id = ${previous}) AS has_invoices
+    `;
+    previousEmpty = Boolean(rest[0]?.still_exists) && !rest[0]?.has_invoices;
+  }
+  return { previous_shipment_id: previous, previous_shipment_empty: previousEmpty };
 }

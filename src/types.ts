@@ -9,11 +9,28 @@ export type GlobalStatus =
   | 'Livré entrepôt'
   | 'Statut non défini';
 
+/** Status of the parcel at the Orly hub, as confirmed by Antoine (MIDEX). */
 export type AntoineStatus =
-  | 'Confirmé'
   | 'En attente Antoine'
+  | 'Reçu et expédié vers Mada'
+  | 'Avis de recherche'
+  // Former values, still displayed on older shipments but no longer offered
+  | 'Confirmé'
   | 'Transmis transitaire'
   | 'A vérifier';
+
+/** Statuses offered, in workflow order. */
+export const ANTOINE_STATUSES: AntoineStatus[] = ['En attente Antoine', 'Reçu et expédié vers Mada', 'Avis de recherche'];
+
+/** Displayed labels. */
+export const ANTOINE_STATUS_LABELS: Record<AntoineStatus, string> = {
+  'En attente Antoine': 'En attente Antoine (à recevoir)',
+  'Reçu et expédié vers Mada': 'Reçu et expédié vers Mada',
+  'Avis de recherche': 'Avis de recherche (reçu par Antoine, pas arrivé à Mada)',
+  Confirmé: 'Confirmé (ancien statut)',
+  'Transmis transitaire': 'Transmis transitaire (ancien statut)',
+  'A vérifier': 'A vérifier (ancien statut)',
+};
 
 export type CarrierStatus =
   | 'Information Received'
@@ -134,6 +151,17 @@ export interface Shipment {
   port_of_loading?: string; // Port de départ (ex: Le Havre / Rouen)
   port_of_discharge?: string; // Port de destination (ex: Port de Toamasina)
   transshipment_ports?: string[]; // Escales / Transbordement
+  // Computed by the API from the linked DIGI invoices (read only)
+  digi_invoice_count?: number;
+  digi_invoice_total?: number | null;
+}
+
+/**
+ * Value of a shipment: total of its DIGI invoice lines; the manual cost is
+ * only a fallback for shipments without invoices (history).
+ */
+export function shipmentValue(s: Pick<Shipment, 'digi_invoice_total' | 'cost_eur'>): number {
+  return s.digi_invoice_total ?? (Number(s.cost_eur) || 0);
 }
 
 export interface SeaTrackingEvent {

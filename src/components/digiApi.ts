@@ -9,6 +9,7 @@ export interface DigiInvoiceLine {
   quantity: number | null;
   price_unit: number | null;
   price_subtotal: number | null;
+  is_service: boolean;
 }
 
 export interface DigiInvoice {
@@ -26,6 +27,12 @@ export interface DigiInvoice {
   odoo_missing: boolean;
   odoo_synced_at: string | null;
   amount_total: number | null;
+  shipment_id: string | null;
+  shipment_exists: boolean;
+  shipment_mode: 'Air' | 'Sea' | null;
+  shipment_global_status: string | null;
+  no_shipment: boolean;
+  has_items: boolean;
   created_by_email: string | null;
   updated_by_email: string | null;
   created_at: string;
@@ -60,6 +67,7 @@ export interface DigiOdooSyncResult {
   remaining: number;
   missing: number;
   cancelled_removed: number;
+  shipments_created?: number;
   complete: boolean;
 }
 
@@ -67,6 +75,7 @@ export interface DigiImportResult {
   created: number;
   duplicates: string[];
   rejected: { ref: string | null; errors: string[] }[];
+  shipments_created?: number;
 }
 
 export async function apiJson<T = any>(url: string, init?: RequestInit): Promise<T> {
@@ -100,6 +109,31 @@ export const importDigiInvoices = (invoices: DigiInvoiceInput[], fileName: strin
     method: 'POST',
     body: JSON.stringify({ invoices, file_name: fileName }),
   });
+
+export const createShipmentFromInvoice = (id: string) =>
+  apiJson<{ invoice: DigiInvoice; shipment: { id: string } }>(`/api/digi-invoices/${id}/create-shipment`, {
+    method: 'POST',
+  });
+
+export const setInvoiceServices = (id: string, noShipment: boolean) =>
+  apiJson<{ invoice: DigiInvoice; detached_shipment_id: string | null }>(`/api/digi-invoices/${id}/services`, {
+    method: 'PATCH',
+    body: JSON.stringify({ no_shipment: noShipment }),
+  });
+
+export const assignInvoiceShipment = (id: string, shipmentId: string | null) =>
+  apiJson<{ invoice: DigiInvoice; previous_shipment_id: string | null; previous_shipment_empty: boolean }>(
+    `/api/digi-invoices/${id}/shipment`,
+    { method: 'PATCH', body: JSON.stringify({ shipment_id: shipmentId }) }
+  );
+
+export const fetchShipmentInvoices = (shipmentId: string) =>
+  apiJson<{ invoices: DigiInvoice[] }>(`/api/shipments/${encodeURIComponent(shipmentId)}/digi-invoices`).then(
+    (d) => d.invoices
+  );
+
+/** Services only: marked by hand, or every line is a fee line. */
+export const isServicesInvoice = (inv: DigiInvoice) => inv.no_shipment || (inv.lines.length > 0 && !inv.has_items);
 
 export const syncDigiOdoo = () =>
   apiJson<DigiOdooSyncResult>('/api/digi-invoices/sync-odoo', { method: 'POST' });

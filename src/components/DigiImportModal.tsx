@@ -8,7 +8,7 @@ interface Props {
   destination: string;
   maxInvoices: number;
   onClose: () => void;
-  onImported: () => void;
+  onImported: (result: DigiImportResult) => void;
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -103,8 +103,9 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
     setImporting(true);
     setError(null);
     try {
-      setResult(await importDigiInvoices(parsed.invoices, fileName));
-      onImported();
+      const imported = await importDigiInvoices(parsed.invoices, fileName);
+      setResult(imported);
+      onImported(imported);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -179,6 +180,7 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
               <p className="flex items-center gap-2 font-bold">
                 <CheckCircle2 className="h-4 w-4" /> {result.created} facture(s) importée(s)
+                {result.shipments_created ? ` · ${result.shipments_created} expédition(s) créée(s)` : ''}
               </p>
               {result.duplicates.length > 0 && (
                 <p className="mt-1">

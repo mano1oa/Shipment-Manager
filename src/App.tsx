@@ -12,10 +12,10 @@ import { AIAssistantBubble } from './components/AIAssistantBubble';
 import { SettingsView } from './components/SettingsView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
 import { apiJson } from './components/digiApi';
-import { buildDigiValueLookup, DigiInvoiceForValue } from './lib/digiShipmentValue';
+import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
-import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
+import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from './types';
 
 type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTransportMode };
 type ReferenceSupplier = { id: string; name: string };
@@ -329,8 +329,9 @@ useEffect(() => {
     }
   }, [darkMode]);
 
-  // Shipment value = amount of the linked DIGI LOGISTIC invoice, else cost_eur
-  // (the value entered on the shipment). Reloaded when opening the dashboard or
+  // Shipment value = total of the DIGI invoices linked to the shipment; for older
+  // shipments without linked invoice, the DIGI invoice matching its Ref FA /
+  // invoice number; else cost_eur (the value entered on the shipment). Reloaded when opening the dashboard or
   // the Air / Sea lists so a fresh Odoo sync shows up.
   const [digiValues, setDigiValues] = useState<DigiInvoiceForValue[]>([]);
 
@@ -347,8 +348,17 @@ useEffect(() => {
     };
   }, [authUser?.id, activeTab]);
 
-  const digiValueFor = useMemo(() => buildDigiValueLookup(digiValues), [digiValues]);
-  const shipmentValue = (s: Shipment) => digiValueFor(s)?.amount ?? (s.cost_eur || 0);
+  const digiValueFor = useMemo(() => {
+    const byReference = buildDigiValueLookup(digiValues);
+    return (s: Shipment): DigiValueMatch | null =>
+      s.digi_invoice_total != null
+        ? {
+            amount: s.digi_invoice_total,
+            invoiceLabel: s.digi_invoice_count === 1 ? '1 facture DIGI liée' : `${s.digi_invoice_count} factures DIGI liées`,
+          }
+        : byReference(s);
+  }, [digiValues]);
+  const valueOfShipment = (s: Shipment) => digiValueFor(s)?.amount ?? shipmentValue(s);
 
   // Resolved alerts: shared state persisted in Neon (GET /api/alerts/resolved).
   // Other users' changes appear on reload or when the Alerts tab is opened.
@@ -391,7 +401,7 @@ useEffect(() => {
 
   // Evaluate rules against current shipments (claim messages use the effective value)
   const { shipmentsWithAlerts, allAlerts } = useMemo(() => {
-    return evaluateShipmentRules(shipments, shipmentValue);
+    return evaluateShipmentRules(shipments, valueOfShipment);
   }, [shipments, digiValueFor]);
 
   // Combine alerts with resolved status from state
@@ -436,11 +446,11 @@ useEffect(() => {
 
     const totalValueInTransit = shipmentsWithAlerts
       .filter((s) => s.global_status === 'Reçu et expédié')
-      .reduce((sum, s) => sum + shipmentValue(s), 0);
+      .reduce((sum, s) => sum + valueOfShipment(s), 0);
 
     const totalValuePerduOrly = shipmentsWithAlerts
       .filter((s) => s.global_status === 'Perdu Orly')
-      .reduce((sum, s) => sum + shipmentValue(s), 0);
+      .reduce((sum, s) => sum + valueOfShipment(s), 0);
 
     return {
       totalShipments: total,
@@ -500,7 +510,12 @@ useEffect(() => {
         return;
       }
 
-      const savedShipment: Shipment = data.shipment || updated;
+      // The value from the DIGI invoices is computed by the list endpoint only
+      const savedShipment: Shipment = {
+        ...(data.shipment || updated),
+        digi_invoice_count: updated.digi_invoice_count,
+        digi_invoice_total: updated.digi_invoice_total,
+      };
       setShipments((prev) => prev.map((s) => (s.id === savedShipment.id ? savedShipment : s)));
       // Refresh the open detail view only: inline edits in the lists must not open it
       setSelectedShipment((prev) => (prev && prev.id === savedShipment.id ? savedShipment : prev));
@@ -942,7 +957,19 @@ if (!authUser) {
             />
           )}
 
-          {activeTab === 'digi' && <DigiInvoicesView canDelete={currentRole === 'supply_chain'} />}
+          {activeTab === 'digi' && (
+            <DigiInvoicesView
+              canDelete={currentRole === 'supply_chain'}
+              onOpenShipment={(id) => {
+                const linked = shipmentsWithAlerts.find((s) => s.id === id);
+                if (linked) setSelectedShipment(linked);
+                else showToast('Expédition introuvable : rechargez la liste des expéditions.');
+              }}
+              onShipmentsChanged={loadShipmentsFromNeon}
+              shipments={shipmentsWithAlerts}
+              onDeleteShipment={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
+            />
+          )}
 
           {activeTab === 'alerts' && (
             <AlertsCenterView
@@ -1175,7 +1202,7 @@ if (!authUser) {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Statut Antoine *
+                    Statut du colis à Orly (Antoine) *
                   </label>
                   <select
                     required
@@ -1184,10 +1211,11 @@ if (!authUser) {
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   >
                     <option value="">— Sélectionner —</option>
-                    <option value="En attente Antoine">En attente Antoine</option>
-                    <option value="Confirmé">Confirmé</option>
-                    <option value="Transmis transitaire">Transmis transitaire</option>
-                    <option value="A vérifier">A vérifier</option>
+                    {ANTOINE_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {ANTOINE_STATUS_LABELS[s]}
+                      </option>
+                    ))}
                   </select>
                 </div>
 

@@ -593,9 +593,9 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                   <div>{digiAmountFormat.format(digi.amount)} €</div>
                                   <div
                                     className="font-sans text-[10px] font-medium text-indigo-600 dark:text-indigo-400"
-                                    title="Montant de la facture DIGI LOGISTIC → NextHope liée (Ref FA / N° facture)"
+                                    title="Total des factures DIGI LOGISTIC → NextHope de cette expédition"
                                   >
-                                    Facture DIGI {digi.invoiceLabel}
+                                    {digi.invoiceLabel}
                                   </div>
                                 </>
                               );
