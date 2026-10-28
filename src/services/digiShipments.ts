@@ -36,7 +36,7 @@ function buildShipment(id: string, invoice: InvoiceForShipment): Shipment {
     carrier_last_location: '',
     eta: '',
     // Invoiced = ordered: the parcel is on its way to the Orly hub
-    global_status: 'En livraison vers Orly',
+    global_status: 'En préparation',
     antoine_status: 'En attente Antoine',
     remarks: '',
     priority: 'Moyenne',

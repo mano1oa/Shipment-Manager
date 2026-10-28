@@ -20,6 +20,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { Shipment, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from '../types';
+import { SHIPMENT_STATUSES, applyAutomaticShipmentStatus } from '../lib/parcelTracking';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { TrackingPanel } from './TrackingPanel';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
@@ -34,14 +35,7 @@ interface ShipmentDetailModalProps {
   onDispatchGoogleChat: (message: string, space?: string) => Promise<void>;
 }
 
-const GLOBAL_STATUSES: GlobalStatus[] = [
-  'Attente confirmation transitaire',
-  'En livraison vers Orly',
-  'Reçu et expédié',
-  'Bloqué douane',
-  'Perdu Orly',
-  'Livré entrepôt',
-];
+const GLOBAL_STATUSES: readonly GlobalStatus[] = SHIPMENT_STATUSES;
 const CUSTOMS_STATUSES: Shipment['customs_status'][] = ['Non Requis', 'En cours', 'Dédouané', 'Bloqué Douane'];
 
 const inputClass =
@@ -132,11 +126,13 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
     invoices && invoices.some((i) => i.amount_total !== null)
       ? invoices.reduce((sum, i) => sum + (i.amount_total ?? 0), 0)
       : null;
-  const value = invoices && invoices.length > 0 ? invoicesTotal : shipmentValue(shipment) || null;
+  // The API total converts "hors DIGI" USD amounts; the local sum is a fallback
+  const value =
+    invoices && invoices.length > 0 ? shipment.digi_invoice_total ?? invoicesTotal : shipmentValue(shipment) || null;
 
   const handleSave = () => {
     const updated: Shipment = {
-      ...draft,
+      ...applyAutomaticShipmentStatus(draft),
       departure_madagascar: calculateDepartureMadagascar(draft.orly_scan_date),
       orly_shipment_status: draft.orly_scan_date ? 'Scanné & Expédié Orly' : shipment.orly_shipment_status,
       updated_at: new Date().toISOString().split('T')[0],

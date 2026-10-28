@@ -24,6 +24,9 @@ export async function ensureNeonSchema(): Promise<void> {
           console.log('⚡ Table "shipments" inexistante dans Neon. Création du schéma SQL...');
           await initNeonSchema();
         }
+        // Parcel model columns (filled by the conversion, see parcelSchema.ts)
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS legacy_global_status VARCHAR(100);`;
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS needs_review BOOLEAN NOT NULL DEFAULT FALSE;`;
       } catch (err: any) {
         schemaEnsuredPromise = null; // Permet de réessayer lors de l'appel suivant
         if (
@@ -94,6 +97,8 @@ export async function getShipmentsFromNeon(): Promise<Shipment[]> {
         history,
         alerts,
         sea_deliveries,
+        legacy_global_status,
+        needs_review,
         created_at,
         updated_at
       FROM shipments

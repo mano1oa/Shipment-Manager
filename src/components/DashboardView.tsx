@@ -183,7 +183,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
           </div>
           <div className="mt-3 text-xs text-indigo-800/80 dark:text-indigo-300/80">
-            Reçu et expédié
+            Expédiées vers Mada
           </div>
         </div>
 
@@ -203,7 +203,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
           </div>
           <div className="mt-3 text-xs text-rose-800/80 dark:text-rose-300/80">
-            Perdu Orly
+            Anciennes expéditions « Perdu Orly »
           </div>
         </div>
 
@@ -211,7 +211,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm transition hover:shadow-md dark:border-amber-900/50 dark:bg-amber-950/20">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-              Colis Hub Orly
+              Expéditions en préparation
             </span>
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300">
               <Building2 className="h-5 w-5" />
@@ -228,7 +228,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
           <div className="mt-3 text-xs text-amber-800/80 dark:text-amber-300/80">
-            Reçus en zone transit avant vol Madagascar
+            À Orly, pas encore parties vers Madagascar
           </div>
         </div>
 
@@ -354,11 +354,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <td className="px-3 py-3">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                          shp.global_status === 'Livré Client/Entrepôt'
+                          shp.global_status === 'Livrée entrepôt'
                             ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                            : shp.global_status === 'Livré Orly'
+                            : shp.global_status === 'En préparation'
                             ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                            : shp.global_status === 'Bloqué Douane'
+                            : shp.global_status === 'Bloquée douane'
                             ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
                             : 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
                         }`}

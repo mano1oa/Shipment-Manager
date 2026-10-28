@@ -16,6 +16,7 @@ import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from './types';
+import { SHIPMENT_STATUSES } from './lib/parcelTracking';
 
 type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTransportMode };
 type ReferenceSupplier = { id: string; name: string };
@@ -422,9 +423,8 @@ useEffect(() => {
       (s) => s.carrier_status === 'Exception / Delay' || (s.alerts && s.alerts.length > 0)
     ).length;
 
-    const orlyStock = shipmentsWithAlerts.filter(
-      (s) => s.global_status === 'Reçu et expédié' || s.global_status === 'Livré Orly' || s.carrier_status === 'Delivered'
-    );
+    // At Orly, not departed yet
+    const orlyStock = shipmentsWithAlerts.filter((s) => s.global_status === 'En préparation');
     const orlyStockCount = orlyStock.length;
 
     const orlyOverdueCount = allAlerts.filter(
@@ -434,22 +434,22 @@ useEffect(() => {
     const criticalAlertsCount = allAlerts.filter((a) => a.severity === 'critical').length;
 
     const customsBlockedCount = shipmentsWithAlerts.filter(
-      (s) => s.customs_status === 'Bloqué Douane' || s.global_status === 'Bloqué douane' || s.global_status === 'Bloqué Douane'
+      (s) => s.customs_status === 'Bloqué Douane' || s.global_status === 'Bloquée douane'
     ).length;
 
-    const pendingTransitConfirm = shipmentsWithAlerts.filter(
-      (s) => s.global_status === 'Attente confirmation transitaire'
-    ).length;
+    // Shipments saved before the parcel model, to regroup or delete
+    const pendingTransitConfirm = shipmentsWithAlerts.filter((s) => s.needs_review).length;
 
     const onTimeCount = total - delaysCount;
     const slaComplianceRate = total > 0 ? Math.round((onTimeCount / total) * 100) : 100;
 
     const totalValueInTransit = shipmentsWithAlerts
-      .filter((s) => s.global_status === 'Reçu et expédié')
+      .filter((s) => s.global_status === 'Expédiée vers Mada')
       .reduce((sum, s) => sum + valueOfShipment(s), 0);
 
+    // Former "Perdu Orly" shipments; new losses are tracked on the parcels
     const totalValuePerduOrly = shipmentsWithAlerts
-      .filter((s) => s.global_status === 'Perdu Orly')
+      .filter((s) => s.legacy_global_status === 'Perdu Orly')
       .reduce((sum, s) => sum + valueOfShipment(s), 0);
 
     return {
@@ -1176,12 +1176,11 @@ if (!authUser) {
                     className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                   >
                     <option value="">— Sélectionner —</option>
-                    <option value="Attente confirmation transitaire">Attente confirmation transitaire</option>
-                    <option value="Reçu et expédié">Reçu et expédié</option>
-                    <option value="En livraison vers Orly">En livraison vers Orly</option>
-                    <option value="Livré Orly">Livré Orly</option>
-                    <option value="Bloqué douane">Bloqué douane</option>
-                    <option value="Livré entrepôt">Livré entrepôt</option>
+                    {SHIPMENT_STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                 </div>
 

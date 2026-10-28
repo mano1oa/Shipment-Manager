@@ -70,7 +70,11 @@ import {
   assignInvoiceToShipment,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
+  WrongInvoiceKindError,
+  ensureDigiInvoicesSchema,
 } from './db/digiInvoices.js';
+import { getTrackingSettings } from './db/settings.js';
+import { isShipmentStatus, applyAutomaticShipmentStatus } from './lib/parcelTracking.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
 import { createShipmentForInvoice } from './services/digiShipments.js';
@@ -1877,6 +1881,12 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           error: 'Cette facture vient d\'Odoo : elle se modifie dans Odoo, puis se resynchronise.',
         });
       }
+      if (err instanceof WrongInvoiceKindError) {
+        return res.status(409).json({
+          success: false,
+          error: 'Cette facture est une facture hors DIGI : elle se modifie depuis son propre formulaire.',
+        });
+      }
       if (err instanceof DuplicateDigiInvoiceError) {
         return res.status(409).json({
           success: false,
@@ -2022,10 +2032,17 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           message: 'DATABASE_URL (ou POSTGRES_URL) n\'est pas configurée. Passez votre URI Neon pour charger les données réelles.',
         });
       }
-      const shipments = await getShipmentsFromNeon();
-      // Value of each shipment = total of its DIGI invoices
+      // Converts the shipments saved before the parcel model (once) before reading them
       try {
-        const totals = await getInvoiceTotalsByShipment();
+        await ensureDigiInvoicesSchema();
+      } catch (schemaErr) {
+        console.error('[Parcels] Could not prepare the parcel model:', schemaErr);
+      }
+      const shipments = await getShipmentsFromNeon();
+      // Value of each shipment = total of its invoices
+      try {
+        const { usd_eur_rate } = await getTrackingSettings();
+        const totals = await getInvoiceTotalsByShipment(usd_eur_rate);
         for (const shipment of shipments as any[]) {
           const t = totals.get(shipment.id);
           shipment.digi_invoice_count = t?.count ?? 0;
@@ -2081,7 +2098,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!['Air', 'Sea'].includes(data.mode)) missing.push('mode');
       if (!requiredText(data.supplier)) missing.push('supplier');
       if (!requiredText(data.order_reference)) missing.push('order_reference');
-      if (!requiredText(data.global_status)) missing.push('global_status');
+      if (!isShipmentStatus(data.global_status)) missing.push('global_status');
       if (!ANTOINE_STATUSES.includes(data.antoine_status)) {
         missing.push('antoine_status');
       }
@@ -2104,7 +2121,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         });
       }
 
-      const saved = await upsertShipmentInNeon(data);
+      const saved = await upsertShipmentInNeon(applyAutomaticShipmentStatus(data));
 
       // Attach the tracking number(s) typed in the creation form
       if (typeof data.tracking_no === 'string' && data.tracking_no.trim()) {
@@ -2157,7 +2174,10 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         return res.status(404).json({ success: false, error: 'Expédition introuvable' });
       }
 
-      const data = { ...req.body, id: req.params.id };
+      if (req.body?.global_status !== undefined && !isShipmentStatus(req.body.global_status)) {
+        return res.status(400).json({ success: false, error: 'Statut d\'expédition invalide.' });
+      }
+      const data = applyAutomaticShipmentStatus({ ...req.body, id: req.params.id });
       const saved = await upsertShipmentInNeon(data);
 
       // Record which fields changed (names only: values may be large JSON)
