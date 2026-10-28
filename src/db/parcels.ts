@@ -505,3 +505,19 @@ export async function listGoodsInvoicesWithoutParcel(): Promise<InvoiceWithoutPa
     validation_status: r.validation_status,
   }));
 }
+
+/** Parcels of the invoices of a shipment (arrival check in Madagascar). */
+export async function listParcelsForShipment(shipmentId: string): Promise<ParcelRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql.query(
+    `${SELECT_PARCELS}
+     WHERE p.id IN (
+       SELECT pi.parcel_id FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+       WHERE i.shipment_id = $1
+     )
+     ORDER BY p.supplier_name NULLS LAST, p.tracking_number`,
+    [shipmentId]
+  );
+  return (rows as any[]).map(mapParcelRow);
+}

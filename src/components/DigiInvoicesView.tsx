@@ -15,7 +15,6 @@ import {
   Trash2,
   Wrench,
   PackageCheck,
-  Link2,
   X,
   FileText,
   Package,
@@ -41,12 +40,10 @@ import {
   isAwaitingValidation,
   isGoodsInvoice,
   isInvoiceReceived,
-  assignInvoiceShipment,
   setInvoiceTriage,
   setInvoiceValidation,
   fetchTrackingSettings,
 } from './digiApi';
-import { AttachShipmentModal } from './AttachShipmentModal';
 import { Shipment } from '../types';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
@@ -130,7 +127,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
   const [sourceFilter, setSourceFilter] = useState<'all' | DigiInvoiceSource>('all');
   const [section, setSection] = useState<Section>('to_sort');
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [attaching, setAttaching] = useState<DigiInvoice | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [supplierFilter, setSupplierFilter] = useState('all');
   const [parcelFilter, setParcelFilter] = useState<ParcelFilter>('all');
@@ -211,29 +207,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
   const replaceInvoice = (updated: DigiInvoice) =>
     setInvoices((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
-
-  const handleAssign = async (inv: DigiInvoice, shipmentId: string | null) => {
-    const r = await assignInvoiceShipment(inv.id, shipmentId);
-    replaceInvoice(r.invoice);
-    setAttaching(null);
-    onShipmentsChanged();
-    setMessage(
-      shipmentId
-        ? `Facture ${inv.ref ?? ''} rattachée à l'expédition ${shipmentId}.`
-        : `Facture ${inv.ref ?? ''} détachée de ${r.previous_shipment_id}.`
-    );
-    const emptied = r.previous_shipment_empty ? r.previous_shipment_id : null;
-    if (emptied) {
-      if (
-        onDeleteShipment &&
-        window.confirm(`L'expédition ${emptied} n'a plus aucune facture. La supprimer ?`)
-      ) {
-        await onDeleteShipment(emptied);
-      } else if (!onDeleteShipment) {
-        setMessage(`Facture rattachée. L'expédition ${emptied} n'a plus de facture : demandez à Supply Chain de la supprimer si besoin.`);
-      }
-    }
-  };
 
   const TRIAGE_DONE: Record<InvoiceTriage, string> = {
     goods: 'classée en marchandises (suivi des colis)',
@@ -635,15 +608,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
                 >
                   <Package className="h-4 w-4" />
-                </button>
-              )}
-              {isGoodsInvoice(inv) && inv.shipment_id && inv.shipment_exists && (
-                <button
-                  onClick={() => setAttaching(inv)}
-                  title="Changer d'expédition"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
-                >
-                  <Link2 className="h-4 w-4" />
                 </button>
               )}
               {inv.is_digi && inv.triage !== 'goods' && !isServicesInvoice(inv) && (
@@ -1220,15 +1184,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
             );
             reloadInvoices();
           }}
-        />
-      )}
-
-      {attaching && (
-        <AttachShipmentModal
-          invoice={attaching}
-          shipments={shipments}
-          onClose={() => setAttaching(null)}
-          onConfirm={(shipmentId) => handleAssign(attaching, shipmentId)}
         />
       )}
 

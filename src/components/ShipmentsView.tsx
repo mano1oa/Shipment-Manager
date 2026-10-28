@@ -391,7 +391,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               onChange={(e) => setSelectedGlobalStatus(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
-              <option value="all">Tous les statuts Orly - Mada</option>
+              <option value="all">Tous les statuts d'expédition</option>
               {SHIPMENT_STATUSES.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -478,10 +478,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                     </th>
                   </>
                 )}
-                <th className="px-3 py-3 font-semibold">Statut Orly - Mada</th>
+                <th className="px-3 py-3 font-semibold">Statut de l'expédition</th>
                 {modeFilter === 'Air' && (
                   <th className="px-3 py-3 font-semibold text-amber-700 dark:text-amber-400">
-                    Date Scan Orly (Manuelle)
+                    Remise / scan Orly
                   </th>
                 )}
                 <th className="px-3 py-3 font-semibold text-indigo-700 dark:text-indigo-400">

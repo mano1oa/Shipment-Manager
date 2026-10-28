@@ -94,7 +94,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       <div className="space-y-6">
         {/* New Shipment Button */}
-        {canEdit && (
+        {currentRole === 'supply_chain' && (
           <button
             id="sidebar-btn-new-shipment"
             onClick={onNewShipment}

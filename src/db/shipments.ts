@@ -269,6 +269,24 @@ export async function upsertShipmentInNeon(shipment: Shipment, skipEnsure = fals
   };
 }
 
+/** Shipment holding this Réf FA DIGI-NXT (one sale invoice = one shipment), other than `exceptId`. */
+export async function findShipmentByRefFa(refFa: string, exceptId: string | null): Promise<string | null> {
+  await ensureNeonSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id FROM shipments
+    WHERE LOWER(TRIM(ref_fa_digi_nxt)) = LOWER(TRIM(${refFa})) AND id IS DISTINCT FROM ${exceptId}
+    LIMIT 1
+  `;
+  return (rows[0]?.id as string) ?? null;
+}
+
+/** Clears the "to review" flag (shipment regrouped under the parcel model). */
+export async function clearShipmentReview(id: string): Promise<void> {
+  const sql = getDb();
+  await sql`UPDATE shipments SET needs_review = FALSE WHERE id = ${id}`;
+}
+
 /**
  * Supprime une expédition par son ID
  */

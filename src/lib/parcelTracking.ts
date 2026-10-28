@@ -61,12 +61,22 @@ export function convertLegacyShipmentStatus(s: {
   return { status: 'En préparation', needsReview: true };
 }
 
-/** "Livrée entrepôt" as soon as the Madagascar receipt date is entered. */
-export function applyAutomaticShipmentStatus<T extends { global_status?: string; mada_receipt_date?: string }>(
-  s: T
-): T {
-  if (hasText(s.mada_receipt_date) && s.global_status !== 'Livrée entrepôt') {
-    return { ...s, global_status: 'Livrée entrepôt' };
+/**
+ * Statuses set from the dates:
+ * - "Livrée entrepôt" as soon as the Madagascar receipt date is entered;
+ * - "Expédiée vers Mada" for a shipment in preparation once its departure is
+ *   known (air: hand-over / scan date at Orly, which gives the Saturday
+ *   flight; sea: ETD). "Bloquée douane" stays manual.
+ */
+export function applyAutomaticShipmentStatus<
+  T extends { global_status?: string; mada_receipt_date?: string; orly_scan_date?: string; etd?: string; mode?: string }
+>(s: T): T {
+  if (hasText(s.mada_receipt_date)) {
+    return s.global_status === 'Livrée entrepôt' ? s : { ...s, global_status: 'Livrée entrepôt' };
+  }
+  const departed = s.mode === 'Sea' ? hasText(s.etd) : hasText(s.orly_scan_date);
+  if (departed && (s.global_status === 'En préparation' || !s.global_status)) {
+    return { ...s, global_status: 'Expédiée vers Mada' };
   }
   return s;
 }

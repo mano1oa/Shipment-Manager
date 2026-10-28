@@ -64,11 +64,9 @@ import {
   deleteDigiInvoice,
   importDigiInvoices,
   getLastOdooSyncRun,
-  getInvoiceForShipment,
   getInvoiceTotalsByShipment,
   listDigiInvoicesForShipment,
   setInvoiceNoShipment,
-  assignInvoiceToShipment,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
   WrongInvoiceKindError,
@@ -112,6 +110,7 @@ import type { ParcelInput } from './lib/parcelTracking.js';
 import {
   listParcelsForInvoice,
   listParcels,
+  listParcelsForShipment,
   listGoodsInvoicesWithoutParcel,
   listLateTriageInvoices,
   markOverdueParcelsLost,
@@ -127,7 +126,12 @@ import {
 } from './db/parcels.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
-import { createShipmentForInvoice } from './services/digiShipments.js';
+import {
+  createShipmentFromInvoices,
+  addInvoicesToShipment,
+  removeInvoiceFromShipment,
+  ShipmentGroupingError,
+} from './services/digiShipments.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 import { runParcelLossCheck } from './services/parcelLossNotifier.js';
 
@@ -1817,30 +1821,6 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Shipment by hand: old invoice, deleted shipment, Odoo draft…
-  app.post('/api/digi-invoices/:id/create-shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) {
-      return res.status(404).json({ success: false, error: 'Facture introuvable' });
-    }
-    try {
-      const invoice = await getInvoiceForShipment(req.params.id);
-      if (!invoice) {
-        return res.status(404).json({ success: false, error: 'Facture introuvable' });
-      }
-      const shipment = await createShipmentForInvoice(invoice, req.user);
-      if (!shipment) {
-        return res.status(409).json({
-          success: false,
-          error: 'Cette facture a déjà une expédition, ou elle est classée en services.',
-        });
-      }
-      return res.status(201).json({ success: true, shipment, invoice: await getDigiInvoice(req.params.id) });
-    } catch (err: any) {
-      console.error('[DIGI] Create shipment error:', err);
-      return res.status(500).json({ success: false, error: 'Impossible de créer l\'expédition' });
-    }
-  });
-
   // Services only (nothing to ship, manual work) ↔ to ship
   app.patch('/api/digi-invoices/:id/services', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) {
@@ -1873,34 +1853,73 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Group invoices: attach to an existing shipment, or detach (shipment_id null)
-  app.patch('/api/digi-invoices/:id/shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) {
-      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+  // ---------------------------------------------------------------------------
+  // Shipments Orly / Rouen → Mada: grouping of received invoices (Supply Chain)
+  // ---------------------------------------------------------------------------
+
+  const sendGroupingError = (res: any, err: any, fallback: string) => {
+    if (err instanceof ShipmentGroupingError) {
+      return res.status(err.status).json({ success: false, error: err.message, not_received: err.notReceived });
     }
-    const target = req.body?.shipment_id;
-    if (target !== null && (typeof target !== 'string' || !target.trim() || target.length > 50)) {
-      return res.status(400).json({ success: false, error: 'Expédition invalide.' });
-    }
+    console.error('[Shipments] Grouping error:', err);
+    return res.status(500).json({ success: false, error: fallback });
+  };
+
+  /**
+   * New shipment from invoices received at the hub, with its Réf FA DIGI-NXT.
+   * not_received in a 409 answer: invoices to confirm with force (exception).
+   */
+  app.post('/api/shipments/from-invoices', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const body = req.body || {};
+    if (!['Air', 'Sea'].includes(body.mode)) return res.status(400).json({ success: false, error: 'Mode invalide.' });
+    if (!isUuidList(body.invoice_ids)) return res.status(400).json({ success: false, error: 'Sélectionnez les factures.' });
+    const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
     try {
-      if (target !== null && !(await getShipmentByIdFromNeon(target))) {
-        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
-      }
-      const outcome = await assignInvoiceToShipment(req.params.id, target);
-      if (!outcome) {
-        return res.status(404).json({ success: false, error: 'Facture introuvable' });
-      }
-      await writeAuditLog({
-        entityType: 'DIGI_INVOICE',
-        entityId: req.params.id,
-        action: target ? 'ATTACH_DIGI_INVOICE_TO_SHIPMENT' : 'DETACH_DIGI_INVOICE_FROM_SHIPMENT',
-        actor: req.user,
-        details: { from: outcome.previous_shipment_id, to: target },
-      });
-      return res.json({ success: true, ...outcome, invoice: await getDigiInvoice(req.params.id) });
+      const outcome = await createShipmentFromInvoices(
+        {
+          mode: body.mode,
+          ref_fa_digi_nxt: text(body.ref_fa_digi_nxt, 100),
+          bl_awb: text(body.bl_awb, 100),
+          carrier: text(body.carrier, 100),
+          remarks: text(body.remarks, 2000),
+          invoice_ids: body.invoice_ids,
+          force: body.force === true,
+        },
+        req.user
+      );
+      return res.status(201).json({ success: true, ...outcome });
     } catch (err: any) {
-      console.error('[DIGI] Assign shipment error:', err);
-      return res.status(500).json({ success: false, error: 'Impossible de rattacher la facture' });
+      return sendGroupingError(res, err, 'Impossible de créer l\'expédition');
+    }
+  });
+
+  app.post('/api/shipments/:id/invoices', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!isUuidList(req.body?.invoice_ids)) return res.status(400).json({ success: false, error: 'Sélectionnez les factures.' });
+    try {
+      const outcome = await addInvoicesToShipment(req.params.id, req.body.invoice_ids, req.body?.force === true, req.user);
+      return res.json({ success: true, ...outcome });
+    } catch (err: any) {
+      return sendGroupingError(res, err, 'Impossible d\'ajouter les factures');
+    }
+  });
+
+  app.delete('/api/shipments/:id/invoices/:invoiceId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.invoiceId)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    try {
+      const shipment = await removeInvoiceFromShipment(req.params.id, req.params.invoiceId, req.user);
+      return res.json({ success: true, shipment });
+    } catch (err: any) {
+      return sendGroupingError(res, err, 'Impossible de retirer la facture');
+    }
+  });
+
+  // Parcels of the shipment's invoices (arrival check in Madagascar)
+  app.get('/api/shipments/:id/parcels', async (req: any, res) => {
+    try {
+      return res.json({ success: true, parcels: await listParcelsForShipment(req.params.id) });
+    } catch (err: any) {
+      console.error('[Shipments] Parcels error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis de l\'expédition' });
     }
   });
 

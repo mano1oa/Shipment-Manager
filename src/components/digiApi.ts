@@ -135,22 +135,67 @@ export const importDigiInvoices = (invoices: DigiInvoiceInput[], fileName: strin
     body: JSON.stringify({ invoices, file_name: fileName }),
   });
 
-export const createShipmentFromInvoice = (id: string) =>
-  apiJson<{ invoice: DigiInvoice; shipment: { id: string } }>(`/api/digi-invoices/${id}/create-shipment`, {
-    method: 'POST',
-  });
-
 export const setInvoiceServices = (id: string, noShipment: boolean) =>
   apiJson<{ invoice: DigiInvoice; detached_shipment_id: string | null }>(`/api/digi-invoices/${id}/services`, {
     method: 'PATCH',
     body: JSON.stringify({ no_shipment: noShipment }),
   });
 
-export const assignInvoiceShipment = (id: string, shipmentId: string | null) =>
-  apiJson<{ invoice: DigiInvoice; previous_shipment_id: string | null; previous_shipment_empty: boolean }>(
-    `/api/digi-invoices/${id}/shipment`,
-    { method: 'PATCH', body: JSON.stringify({ shipment_id: shipmentId }) }
-  );
+// ---- Shipments Orly / Rouen → Mada (grouping of received invoices, Supply Chain) ----
+
+export interface NotReceivedInvoice {
+  id: string;
+  ref: string | null;
+  supplier: string | null;
+  parcels_received: number;
+  parcels_total: number;
+}
+
+/**
+ * Outcome of a grouping request. needsException: invoices whose parcels are
+ * not all confirmed received; the same request is sent again with force
+ * once Supply Chain confirms the exception.
+ */
+export type GroupingResult =
+  | { ok: true; shipment: { id: string }; emptied: string[] }
+  | { ok: false; needsException: NotReceivedInvoice[] };
+
+async function groupingRequest(url: string, method: string, body: unknown): Promise<GroupingResult> {
+  const res = await fetch(url, {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 409 && Array.isArray(data?.not_received) && data.not_received.length > 0) {
+    return { ok: false, needsException: data.not_received };
+  }
+  if (!res.ok || !data?.success) throw new Error(data?.error || `Erreur ${res.status}`);
+  return { ok: true, shipment: data.shipment, emptied: data.emptied || [] };
+}
+
+export const createShipmentFromInvoices = (input: {
+  mode: 'Air' | 'Sea';
+  ref_fa_digi_nxt: string;
+  bl_awb: string;
+  carrier: string;
+  remarks: string;
+  invoice_ids: string[];
+  force: boolean;
+}) => groupingRequest('/api/shipments/from-invoices', 'POST', input);
+
+export const addInvoicesToShipment = (shipmentId: string, invoiceIds: string[], force: boolean) =>
+  groupingRequest(`/api/shipments/${encodeURIComponent(shipmentId)}/invoices`, 'POST', {
+    invoice_ids: invoiceIds,
+    force,
+  });
+
+export const removeInvoiceFromShipment = (shipmentId: string, invoiceId: string) =>
+  apiJson(`/api/shipments/${encodeURIComponent(shipmentId)}/invoices/${invoiceId}`, { method: 'DELETE' });
+
+export const fetchShipmentParcels = (shipmentId: string) =>
+  apiJson<{ parcels: Parcel[] }>(`/api/shipments/${encodeURIComponent(shipmentId)}/parcels`).then((d) => d.parcels);
 
 export const fetchShipmentInvoices = (shipmentId: string) =>
   apiJson<{ invoices: DigiInvoice[] }>(`/api/shipments/${encodeURIComponent(shipmentId)}/digi-invoices`).then(
