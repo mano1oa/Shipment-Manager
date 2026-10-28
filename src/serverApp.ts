@@ -84,8 +84,18 @@ import {
   applyAutomaticShipmentStatus,
   validateParcelInput,
   isParcelStatus,
+  isParcelDestination,
   INVOICE_TRIAGES,
 } from './lib/parcelTracking.js';
+import {
+  listReceptionPoints,
+  getReceptionPoint,
+  createReceptionPoint,
+  listPointPhotos,
+  addPointPhoto,
+  linkPointPhoto,
+  deletePointPhoto,
+} from './db/receptionPoints.js';
 import {
   isPhotoStorageConfigured,
   presignPhotoUpload,
@@ -104,7 +114,6 @@ import {
   markOverdueParcelsLost,
   setParcelStatus,
   listParcelPhotos,
-  addParcelPhoto,
   deleteParcelPhoto,
   getParcel,
   createParcel,
@@ -2055,6 +2064,31 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   // Parcels (supplier → Orly)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Invoices of a new parcel: they exist, are not services and have one
+   * supplier. Returns that supplier, or undefined after answering the error.
+   */
+  const checkParcelInvoices = async (invoiceIds: string[], res: any): Promise<string | null | undefined> => {
+    const { supplier, mixed } = await commonSupplierOf(invoiceIds);
+    if (mixed) {
+      res.status(400).json({ success: false, error: 'Un colis ne peut regrouper que des factures d\'un même fournisseur.' });
+      return undefined;
+    }
+    const invoices = await Promise.all(invoiceIds.map((id: string) => getDigiInvoice(id)));
+    if (invoices.some((inv) => !inv)) {
+      res.status(404).json({ success: false, error: 'Facture introuvable' });
+      return undefined;
+    }
+    if (invoices.some((inv) => inv!.triage === 'services')) {
+      res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
+      return undefined;
+    }
+    return supplier;
+  };
+
+  const isUuidList = (ids: unknown): ids is string[] =>
+    Array.isArray(ids) && ids.length > 0 && ids.length <= 100 && ids.every((id) => typeof id === 'string' && UUID_RE.test(id));
+
   /** Reception date: YYYY-MM-DD, null when absent (today), undefined when invalid or in the future. */
   const parseReceptionDate = (value: unknown): string | null | undefined => {
     if (value === undefined || value === null || value === '') return null;
@@ -2145,15 +2179,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
     try {
       if (!(await applyParcelCarrier(value, res))) return;
-      const { supplier, mixed } = await commonSupplierOf(invoiceIds);
-      if (mixed) {
-        return res.status(400).json({ success: false, error: 'Un colis ne peut regrouper que des factures d\'un même fournisseur.' });
-      }
-      const invoices = await Promise.all(invoiceIds.map((id: string) => getDigiInvoice(id)));
-      if (invoices.some((inv) => !inv)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
-      if (invoices.some((inv) => inv!.triage === 'services')) {
-        return res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
-      }
+      const supplier = await checkParcelInvoices(invoiceIds, res);
+      if (supplier === undefined) return;
       // Parcel created at reception (tracking number unknown until Antoine's photo): Supply Chain only
       const receivedNow = req.body?.received === true;
       if (receivedNow && req.user.role !== 'SUPPLY_CHAIN') {
@@ -2314,9 +2341,78 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Step 1: a presigned PUT URL for one compressed photo (sent by the browser to the bucket)
-  app.post('/api/parcels/:id/photos/upload-url', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+  // ---------------------------------------------------------------------------
+  // Point Antoine (Orly) / reception at Rouen: photos uploaded in one go, then
+  // matched one by one to a parcel (matching confirms the reception)
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/reception-points', async (req: any, res) => {
+    const destination = req.query?.destination ?? 'ORLY';
+    if (!isParcelDestination(destination)) return res.status(400).json({ success: false, error: 'Destination invalide.' });
+    try {
+      return res.json({
+        success: true,
+        points: await listReceptionPoints(destination),
+        storage_configured: isPhotoStorageConfigured(),
+      });
+    } catch (err: any) {
+      console.error('[Points] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les points de réception' });
+    }
+  });
+
+  app.post('/api/reception-points', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const destination = req.body?.destination ?? 'ORLY';
+    if (!isParcelDestination(destination)) return res.status(400).json({ success: false, error: 'Destination invalide.' });
+    const pointDate = parseReceptionDate(req.body?.point_date);
+    if (!pointDate) return res.status(400).json({ success: false, error: 'Date du point invalide (pas dans le futur).' });
+    const notes = typeof req.body?.notes === 'string' && req.body.notes.trim() ? req.body.notes.trim().slice(0, 2000) : null;
+    try {
+      const id = await createReceptionPoint(destination, pointDate, notes, req.user.email);
+      await writeAuditLog({
+        entityType: 'RECEPTION_POINT',
+        entityId: id,
+        action: 'CREATE_RECEPTION_POINT',
+        actor: req.user,
+        details: { destination, point_date: pointDate },
+      });
+      return res.status(201).json({ success: true, point: await getReceptionPoint(id) });
+    } catch (err: any) {
+      console.error('[Points] Create error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de créer le point de réception' });
+    }
+  });
+
+  // The point with its photos (short display URLs)
+  app.get('/api/reception-points/:id', async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
+    try {
+      const point = await getReceptionPoint(req.params.id);
+      if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      const configured = isPhotoStorageConfigured();
+      const photos = await Promise.all(
+        (await listPointPhotos(point.id)).map(async (p) => ({
+          id: p.id,
+          parcel_id: p.parcel_id,
+          content_type: p.content_type,
+          size_bytes: p.size_bytes,
+          uploaded_at: p.uploaded_at,
+          uploaded_by_email: p.uploaded_by_email,
+          linked_by_email: p.linked_by_email,
+          linked_at: p.linked_at,
+          url: configured ? await presignPhotoView(p.storage_key).catch(() => null) : null,
+        }))
+      );
+      return res.json({ success: true, point, photos, storage_configured: configured });
+    } catch (err: any) {
+      console.error('[Points] Read error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger le point de réception' });
+    }
+  });
+
+  // Step 1 of an upload: a presigned PUT URL for one compressed photo (browser → bucket)
+  app.post('/api/reception-points/:id/photos/upload-url', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
     if (!isPhotoStorageConfigured()) {
       return res.status(503).json({ success: false, error: 'Le stockage des photos (Neon Object Storage) n\'est pas configuré.' });
     }
@@ -2329,45 +2425,123 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(400).json({ success: false, error: 'Photo trop lourde (5 Mo maximum après compression).' });
     }
     try {
-      if (!(await getParcel(req.params.id))) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      if (!(await getReceptionPoint(req.params.id))) return res.status(404).json({ success: false, error: 'Point introuvable' });
       const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
-      const key = `parcels/${req.params.id}/${crypto.randomUUID()}.${ext}`;
+      const key = `points/${req.params.id}/${crypto.randomUUID()}.${ext}`;
       const upload = await presignPhotoUpload(key, contentType);
       return res.json({ success: true, key, url: upload.url, method: upload.method, headers: upload.headers });
     } catch (err: any) {
-      console.error('[Parcels] Upload URL error:', err);
+      console.error('[Points] Upload URL error:', err);
       return res.status(502).json({ success: false, error: 'Le stockage des photos ne répond pas. Réessayez.' });
     }
   });
 
   // Step 2: records the uploaded photo (the database keeps the key only)
-  app.post('/api/parcels/:id/photos', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+  app.post('/api/reception-points/:id/photos', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
     const key = req.body?.key;
     const contentType = req.body?.content_type;
     const size = req.body?.size_bytes;
-    // Only a key issued for this parcel by the upload-url step
-    const keyRe = new RegExp(`^parcels/${req.params.id}/[0-9a-f-]{36}\\.(jpg|png|webp)$`);
-    if (typeof key !== 'string' || !keyRe.test(key)) {
-      return res.status(400).json({ success: false, error: 'Photo invalide.' });
-    }
+    // Only a key issued for this point by the upload-url step
+    const keyRe = new RegExp(`^points/${req.params.id}/[0-9a-f-]{36}\\.(jpg|png|webp)$`);
+    if (typeof key !== 'string' || !keyRe.test(key)) return res.status(400).json({ success: false, error: 'Photo invalide.' });
     if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType) || !Number.isInteger(size) || size > PHOTO_MAX_BYTES) {
       return res.status(400).json({ success: false, error: 'Photo invalide.' });
     }
     try {
-      if (!(await getParcel(req.params.id))) return res.status(404).json({ success: false, error: 'Colis introuvable' });
-      const id = await addParcelPhoto(req.params.id, key, contentType, size, req.user.email);
-      await writeAuditLog({
-        entityType: 'PARCEL',
-        entityId: req.params.id,
-        action: 'ADD_PARCEL_PHOTO',
-        actor: req.user,
-        details: { photo_id: id, size_bytes: size },
-      });
+      if (!(await getReceptionPoint(req.params.id))) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      const id = await addPointPhoto(req.params.id, key, contentType, size, req.user.email);
       return res.status(201).json({ success: true, id });
     } catch (err: any) {
-      console.error('[Parcels] Add photo error:', err);
+      console.error('[Points] Add photo error:', err);
       return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la photo' });
+    }
+  });
+
+  /**
+   * Matches a photo of the point:
+   * - { parcel_id }: an existing parcel (number read on the label);
+   * - { new_parcel: { tracking_number?, invoice_ids } }: a parcel not announced
+   *   (or label unreadable), created for invoices of one supplier;
+   * - { parcel_id: null }: back to "to match" (the parcel keeps its state).
+   * The parcel is confirmed "received" at the point date (unless already received).
+   */
+  app.patch('/api/reception-points/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
+      return res.status(404).json({ success: false, error: 'Photo introuvable' });
+    }
+    try {
+      const point = await getReceptionPoint(req.params.id);
+      if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+
+      if (req.body?.parcel_id === null) {
+        if (!(await linkPointPhoto(point.id, req.params.photoId, null, req.user.email))) {
+          return res.status(404).json({ success: false, error: 'Photo introuvable' });
+        }
+        return res.json({ success: true, parcel: null });
+      }
+
+      let parcelId: string;
+      let created = false;
+      if (typeof req.body?.parcel_id === 'string') {
+        if (!UUID_RE.test(req.body.parcel_id) || !(await getParcel(req.body.parcel_id))) {
+          return res.status(404).json({ success: false, error: 'Colis introuvable' });
+        }
+        parcelId = req.body.parcel_id;
+      } else {
+        const input = req.body?.new_parcel;
+        if (!input || !isUuidList(input.invoice_ids)) {
+          return res.status(400).json({ success: false, error: 'Choisissez la ou les factures de ce colis.' });
+        }
+        const { value, errors } = validateParcelInput({ ...input, destination: point.destination });
+        if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+        if (!(await applyParcelCarrier(value, res))) return;
+        const supplier = await checkParcelInvoices(input.invoice_ids, res);
+        if (supplier === undefined) return;
+        const outcome = await createParcel(value, input.invoice_ids, supplier, req.user.email);
+        parcelId = outcome.id;
+        created = !outcome.existed;
+      }
+
+      if (!(await linkPointPhoto(point.id, req.params.photoId, parcelId, req.user.email))) {
+        return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      }
+      const parcel = await getParcel(parcelId);
+      const confirmed = parcel && parcel.status !== 'received' && parcel.status !== 'search';
+      if (confirmed) await setParcelStatus(parcelId, 'received', point.point_date, req.user.email);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: parcelId,
+        action: 'LINK_POINT_PHOTO',
+        actor: req.user,
+        details: { point_id: point.id, photo_id: req.params.photoId, created, reception_confirmed: Boolean(confirmed) },
+      });
+      return res.json({ success: true, created, reception_confirmed: Boolean(confirmed), parcel: await getParcel(parcelId) });
+    } catch (err: any) {
+      console.error('[Points] Link photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de rattacher la photo' });
+    }
+  });
+
+  app.delete('/api/reception-points/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
+      return res.status(404).json({ success: false, error: 'Photo introuvable' });
+    }
+    try {
+      const key = await deletePointPhoto(req.params.id, req.params.photoId);
+      if (!key) return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      await removePhotoObjects([key]);
+      await writeAuditLog({
+        entityType: 'RECEPTION_POINT',
+        entityId: req.params.id,
+        action: 'DELETE_POINT_PHOTO',
+        actor: req.user,
+        details: { photo_id: req.params.photoId },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Points] Delete photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer la photo' });
     }
   });
 

@@ -277,6 +277,14 @@ export async function unlinkParcelInvoice(
     DELETE FROM parcel_invoices WHERE parcel_id = ${parcelId} AND invoice_id = ${invoiceId} RETURNING parcel_id
   `;
   if (rows.length === 0) return { unlinked: false, deleted: false, photo_keys: [] };
+  const remaining = await sql`SELECT 1 FROM parcel_invoices WHERE parcel_id = ${parcelId} LIMIT 1`;
+  if (remaining.length === 0) {
+    // Photos of a point Antoine go back to "to match" instead of disappearing
+    await sql`
+      UPDATE parcel_photos SET parcel_id = NULL, linked_by_email = NULL, linked_at = NULL
+      WHERE parcel_id = ${parcelId} AND point_id IS NOT NULL
+    `;
+  }
   const keys = await sql`SELECT storage_key FROM parcel_photos WHERE parcel_id = ${parcelId}`;
   const orphan = await sql`
     DELETE FROM parcels p WHERE p.id = ${parcelId}
@@ -413,26 +421,6 @@ export async function listParcelPhotos(parcelId: string): Promise<ParcelPhotoRec
     FROM parcel_photos WHERE parcel_id = ${parcelId} ORDER BY uploaded_at
   `;
   return rows as unknown as ParcelPhotoRecord[];
-}
-
-export async function addParcelPhoto(
-  parcelId: string,
-  storageKey: string,
-  contentType: string,
-  sizeBytes: number,
-  actorEmail: string
-): Promise<string> {
-  await ensureDigiInvoicesSchema();
-  const sql = getDb();
-  const rows = await sql`
-    INSERT INTO parcel_photos (parcel_id, storage_key, content_type, size_bytes, uploaded_by_email)
-    VALUES (${parcelId}, ${storageKey}, ${contentType}, ${sizeBytes}, ${actorEmail})
-    ON CONFLICT (storage_key) DO NOTHING
-    RETURNING id
-  `;
-  if (rows[0]?.id) return rows[0].id as string;
-  const existing = await sql`SELECT id FROM parcel_photos WHERE storage_key = ${storageKey}`;
-  return existing[0].id as string;
 }
 
 export async function deleteParcelPhoto(parcelId: string, photoId: string): Promise<string | null> {

@@ -1,25 +1,25 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Camera, ImageOff, Loader2, Trash2, Upload, X } from 'lucide-react';
-import { Parcel, ParcelPhoto, deleteParcelPhoto, fetchParcelPhotos, formatDateTime, uploadParcelPhoto } from './digiApi';
-import { compressPhoto } from './photoCompression';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AlertCircle, Camera, ImageOff, Loader2, Trash2, X } from 'lucide-react';
+import { Parcel, ParcelPhoto, deleteParcelPhoto, fetchParcelPhotos, formatDateTime } from './digiApi';
 
 interface Props {
   parcel: Parcel;
-  /** Supply Chain: adds and deletes photos. */
+  /** Supply Chain: deletes photos (they are added at the point Antoine). */
   canEdit: boolean;
   onClose: () => void;
   /** Photo count changed. */
   onChanged: () => void;
 }
 
-/** Antoine's photos of a parcel: proof of reception, used for claims. */
+/**
+ * Antoine's photos of a parcel: proof of reception, used for claims. Photos
+ * are uploaded and matched at the point Antoine (Colis vers Orly › Point).
+ */
 export const ParcelPhotosModal: React.FC<Props> = ({ parcel, canEdit, onClose, onChanged }) => {
   const [photos, setPhotos] = useState<ParcelPhoto[] | null>(null);
   const [configured, setConfigured] = useState(true);
-  const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<ParcelPhoto | null>(null);
-  const input = useRef<HTMLInputElement>(null);
 
   const load = useCallback(() => {
     fetchParcelPhotos(parcel.id)
@@ -31,26 +31,6 @@ export const ParcelPhotosModal: React.FC<Props> = ({ parcel, canEdit, onClose, o
   }, [parcel.id]);
 
   useEffect(load, [load]);
-
-  const handleFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setError(null);
-    const failures: string[] = [];
-    const list = Array.from(files);
-    for (let i = 0; i < list.length; i++) {
-      setProgress(`Photo ${i + 1} / ${list.length} : compression et envoi…`);
-      try {
-        await uploadParcelPhoto(parcel.id, await compressPhoto(list[i]));
-      } catch (err: any) {
-        failures.push(`${list[i].name} (${err.message})`);
-      }
-    }
-    setProgress(null);
-    if (input.current) input.current.value = '';
-    if (failures.length > 0) setError(`Non envoyée(s) : ${failures.join(' ; ')}`);
-    load();
-    onChanged();
-  };
 
   const handleDelete = async (photo: ParcelPhoto) => {
     if (!window.confirm('Supprimer cette photo ? Elle peut servir de preuve en cas de réclamation.')) return;
@@ -99,34 +79,14 @@ export const ParcelPhotosModal: React.FC<Props> = ({ parcel, canEdit, onClose, o
           </div>
         )}
 
-        {canEdit && configured && (
-          <div className="mt-4 flex items-center gap-3">
-            <input
-              ref={input}
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={(e) => handleFiles(e.target.files)}
-              className="hidden"
-            />
-            <button
-              onClick={() => input.current?.click()}
-              disabled={progress !== null}
-              className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
-            >
-              {progress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Ajouter des photos
-            </button>
-            <span className="text-slate-500">
-              {progress || 'Réduites à 1 600 px avant envoi. Une photo = ce colis (un seul fournisseur).'}
-            </span>
-          </div>
-        )}
-
         <div className="mt-4">
           {photos === null ? (
             <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
           ) : photos.length === 0 ? (
-            <p className="text-slate-500">Aucune photo pour ce colis (la photo est facultative).</p>
+            <p className="text-slate-500">
+              Aucune photo pour ce colis (la photo est facultative). Les photos se déposent et se rattachent au point
+              Antoine.
+            </p>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {photos.map((photo) => (

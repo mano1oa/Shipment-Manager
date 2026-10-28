@@ -90,6 +90,29 @@ export async function initParcelSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_parcel_photos_parcel ON parcel_photos (parcel_id);`;
 
+  // Point Antoine (or Rouen reception): all the photos of a date are uploaded
+  // first, then matched one by one to a parcel (which confirms its reception)
+  await sql`
+    CREATE TABLE IF NOT EXISTS reception_points (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      destination VARCHAR(10) NOT NULL DEFAULT 'ORLY',
+      point_date DATE NOT NULL,
+      notes TEXT,
+      created_by_email VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_reception_points_date ON reception_points (destination, point_date DESC);`;
+  // A photo of a point is not matched yet: parcel_id stays NULL until then
+  await sql`ALTER TABLE parcel_photos ALTER COLUMN parcel_id DROP NOT NULL;`;
+  await sql`
+    ALTER TABLE parcel_photos
+      ADD COLUMN IF NOT EXISTS point_id UUID REFERENCES reception_points(id) ON DELETE CASCADE;
+  `;
+  await sql`ALTER TABLE parcel_photos ADD COLUMN IF NOT EXISTS linked_by_email VARCHAR(255);`;
+  await sql`ALTER TABLE parcel_photos ADD COLUMN IF NOT EXISTS linked_at TIMESTAMPTZ;`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_parcel_photos_point ON parcel_photos (point_id);`;
+
   await runOnce('parcel_model_v1', runConversion);
   // After the conversion (which fills the NULLs): new DIGI invoices start unsorted
   await sql`ALTER TABLE digi_invoices ALTER COLUMN triage SET DEFAULT 'to_sort';`;

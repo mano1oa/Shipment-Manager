@@ -20,6 +20,7 @@ import { InvoiceWithoutParcel, Parcel, formatDate, setParcelStatus } from './dig
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
+import { ReceptionPointView } from './ReceptionPointView';
 
 type StatusFilter = 'open' | ParcelStatus | 'all';
 
@@ -81,6 +82,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
   const [receiving, setReceiving] = useState(false);
+  const [pointOpen, setPointOpen] = useState(false);
 
   /** Changes the state of parcels one by one and reports the failures. */
   const changeStatus = async (list: Parcel[], status: ParcelStatus, label: string) => {
@@ -187,16 +189,26 @@ export const ParcelsBoardView: React.FC<Props> = ({
           {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
           {isSupplyChain &&
             (destination === 'ORLY'
-              ? ' Au point avec Antoine : cochez les colis reçus et confirmez leur réception, puis joignez ses photos.'
+              ? ' Au point avec Antoine : « Point Antoine » pour déposer toutes ses photos puis les rattacher (la réception est confirmée) ; les colis confirmés sans photo se cochent ici.'
               : ' Cochez les colis reçus au quai et confirmez leur réception.')}
         </p>
         {isSupplyChain && (
-          <button
-            onClick={() => setReceiving(true)}
-            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
-          >
-            <PackageCheck className="h-4 w-4" /> Colis reçu non annoncé
-          </button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button
+              onClick={() => setPointOpen(true)}
+              title="Déposer toutes les photos du point, puis les rattacher une à une (confirme les réceptions)"
+              className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
+            >
+              <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
+            </button>
+            <button
+              onClick={() => setReceiving(true)}
+              title="Colis confirmé sans photo et sans n° de suivi saisi"
+              className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+            >
+              <PackageCheck className="h-4 w-4" /> Colis reçu non annoncé
+            </button>
+          </div>
         )}
       </div>
 
@@ -434,7 +446,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                         <div className="flex justify-end gap-0.5">
                           <button
                             onClick={() => setPhotosOf(p)}
-                            title={isSupplyChain ? 'Photos (ajouter / voir)' : 'Voir les photos'}
+                            title="Voir les photos"
                             className={`${iconButton} hover:text-[#643288]`}
                           >
                             <Camera className="h-4 w-4" />
@@ -507,9 +519,19 @@ export const ParcelsBoardView: React.FC<Props> = ({
             setReceiving(false);
             setActionMessage(`Colis ${parcel.tracking_number || 'sans n° de suivi'} enregistré comme reçu à ${hub}.`);
             onReload();
-            // Antoine's photo is the proof: offered right away
-            setPhotosOf(parcel);
           }}
+        />
+      )}
+
+      {pointOpen && (
+        <ReceptionPointView
+          destination={destination}
+          parcels={parcels || []}
+          onClose={() => {
+            setPointOpen(false);
+            onReload();
+          }}
+          onChanged={onReload}
         />
       )}
     </div>

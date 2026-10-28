@@ -275,13 +275,48 @@ export interface ParcelPhoto {
 export const fetchParcelPhotos = (parcelId: string) =>
   apiJson<{ photos: ParcelPhoto[]; storage_configured: boolean }>(`/api/parcels/${parcelId}/photos`);
 
+export const deleteParcelPhoto = (parcelId: string, photoId: string) =>
+  apiJson(`/api/parcels/${parcelId}/photos/${photoId}`, { method: 'DELETE' });
+
+// ---- Point Antoine (Orly) / reception at Rouen ----
+
+export interface ReceptionPoint {
+  id: string;
+  destination: ParcelDestination;
+  point_date: string;
+  notes: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  photo_count: number;
+  linked_count: number;
+}
+
+export interface PointPhoto extends ParcelPhoto {
+  /** Parcel the photo was matched to (null = to match). */
+  parcel_id: string | null;
+  linked_by_email: string | null;
+  linked_at: string | null;
+}
+
+export const fetchReceptionPoints = (destination: ParcelDestination) =>
+  apiJson<{ points: ReceptionPoint[]; storage_configured: boolean }>(`/api/reception-points?destination=${destination}`);
+
+export const createReceptionPoint = (destination: ParcelDestination, pointDate: string) =>
+  apiJson<{ point: ReceptionPoint }>('/api/reception-points', {
+    method: 'POST',
+    body: JSON.stringify({ destination, point_date: pointDate }),
+  }).then((d) => d.point);
+
+export const fetchReceptionPoint = (id: string) =>
+  apiJson<{ point: ReceptionPoint; photos: PointPhoto[]; storage_configured: boolean }>(`/api/reception-points/${id}`);
+
 /**
- * Uploads one photo: presigned URL from the API, then PUT straight to the
- * private bucket, then the key is recorded. The image never goes through the server.
+ * Uploads one photo of a point: presigned URL from the API, PUT straight to
+ * the private bucket, then the key is recorded. The image never goes through the server.
  */
-export async function uploadParcelPhoto(parcelId: string, photo: Blob): Promise<void> {
+export async function uploadPointPhoto(pointId: string, photo: Blob): Promise<void> {
   const upload = await apiJson<{ key: string; url: string; method: string; headers: Record<string, string> }>(
-    `/api/parcels/${parcelId}/photos/upload-url`,
+    `/api/reception-points/${pointId}/photos/upload-url`,
     { method: 'POST', body: JSON.stringify({ content_type: photo.type, size_bytes: photo.size }) }
   );
   const res = await fetch(upload.url, {
@@ -290,14 +325,25 @@ export async function uploadParcelPhoto(parcelId: string, photo: Blob): Promise<
     body: photo,
   });
   if (!res.ok) throw new Error(`Envoi de la photo refusé par le stockage (${res.status}).`);
-  await apiJson(`/api/parcels/${parcelId}/photos`, {
+  await apiJson(`/api/reception-points/${pointId}/photos`, {
     method: 'POST',
     body: JSON.stringify({ key: upload.key, content_type: photo.type, size_bytes: photo.size }),
   });
 }
 
-export const deleteParcelPhoto = (parcelId: string, photoId: string) =>
-  apiJson(`/api/parcels/${parcelId}/photos/${photoId}`, { method: 'DELETE' });
+export type PointPhotoLink =
+  | { parcel_id: string | null }
+  | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } };
+
+/** Matches a photo to a parcel (confirms its reception at the point date), or detaches it. */
+export const linkPointPhoto = (pointId: string, photoId: string, link: PointPhotoLink) =>
+  apiJson<{ parcel: Parcel | null; created?: boolean; reception_confirmed?: boolean }>(
+    `/api/reception-points/${pointId}/photos/${photoId}`,
+    { method: 'PATCH', body: JSON.stringify(link) }
+  );
+
+export const deletePointPhoto = (pointId: string, photoId: string) =>
+  apiJson(`/api/reception-points/${pointId}/photos/${photoId}`, { method: 'DELETE' });
 
 export const fetchInvoiceParcels = (invoiceId: string) =>
   apiJson<{ parcels: Parcel[] }>(`/api/digi-invoices/${invoiceId}/parcels`).then((d) => d.parcels);

@@ -17,7 +17,7 @@ import {
 interface Props {
   destination: ParcelDestination;
   onClose: () => void;
-  /** The parcel was created as received: the caller may open its photos. */
+  /** The parcel was created as received. */
   onSaved: (parcel: Parcel) => void;
 }
 
@@ -184,7 +184,7 @@ export const ReceiveParcelModal: React.FC<Props> = ({ destination, onClose, onSa
           </label>
         </div>
 
-        <p className="mt-3 text-[11px] text-slate-500">Vous pourrez joindre la photo d'Antoine juste après l'enregistrement.</p>
+        <p className="mt-3 text-[11px] text-slate-500">Pour un colis photographié par Antoine, utilisez plutôt « Point Antoine » : la photo y est rattachée en même temps.</p>
 
         <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
           <button
