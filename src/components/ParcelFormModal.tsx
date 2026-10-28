@@ -1,0 +1,171 @@
+import React, { useMemo, useState } from 'react';
+import { AlertCircle, Loader2, Package, X } from 'lucide-react';
+import { CARRIER_CODES, CARRIER_LABELS, detectTrackingNumber } from '../lib/carrierDetection';
+import type { CarrierCode } from '../lib/carrierDetection';
+import { validateParcelInput } from '../lib/parcelTracking';
+import { DigiInvoice, Parcel, createParcel, inputClass, updateParcel } from './digiApi';
+
+interface Props {
+  /** Invoices covered by the new parcel (one supplier). Ignored when editing. */
+  invoices: DigiInvoice[];
+  parcel?: Parcel | null;
+  onClose: () => void;
+  /** existed: the tracking number already belonged to a parcel, now linked to these invoices. */
+  onSaved: (parcel: Parcel, existed: boolean) => void;
+}
+
+export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, onClose, onSaved }) => {
+  const [trackingNumber, setTrackingNumber] = useState(parcel?.tracking_number ?? '');
+  // '' = detected from the tracking number format
+  const [carrier, setCarrier] = useState<CarrierCode | ''>(parcel && parcel.carrier !== 'UNKNOWN' ? parcel.carrier : '');
+  const [expected, setExpected] = useState(parcel?.expected_delivery ?? '');
+  const [notes, setNotes] = useState(parcel?.notes ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const detected = useMemo(() => (trackingNumber.trim() ? detectTrackingNumber(trackingNumber) : null), [trackingNumber]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    const { value, errors } = validateParcelInput({
+      tracking_number: trackingNumber,
+      carrier: carrier || undefined,
+      expected_delivery: expected || null,
+      notes,
+    });
+    if (!value) {
+      setError(errors.join(' '));
+      return;
+    }
+    setSaving(true);
+    try {
+      if (parcel) {
+        onSaved(await updateParcel(parcel.id, value), false);
+      } else {
+        const r = await createParcel(
+          value,
+          invoices.map((i) => i.id)
+        );
+        onSaved(r.parcel, r.existed);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const label = 'font-semibold text-slate-700 dark:text-slate-300';
+  const supplier = parcel?.supplier_name || invoices[0]?.supplier_display || '—';
+  const refs = (parcel ? parcel.invoices : invoices).map((i) => i.ref || '—').join(', ');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-900/60 p-4 backdrop-blur-xs">
+      <form
+        onSubmit={handleSubmit}
+        className="my-8 w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 text-xs shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
+              <Package className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
+                {parcel ? 'Modifier le colis' : 'Ajouter un colis'}
+              </h2>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                {supplier} · facture(s) {refs}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="sm:col-span-2">
+            <span className={label}>N° de suivi</span>
+            <input
+              value={trackingNumber}
+              onChange={(e) => setTrackingNumber(e.target.value)}
+              placeholder="Laisser vide s'il n'est pas connu"
+              className={`${inputClass} font-mono`}
+              autoFocus
+            />
+            {detected && (
+              <span className="mt-1 block text-[11px] text-slate-500">
+                {detected.number ? (
+                  <>
+                    Lu : <span className="font-mono">{detected.number}</span> · format{' '}
+                    {detected.carrier === 'UNKNOWN' ? 'non reconnu' : CARRIER_LABELS[detected.carrier]}
+                  </>
+                ) : (
+                  'Ce texte ne ressemble pas à un n° de suivi.'
+                )}
+              </span>
+            )}
+          </label>
+          <label>
+            <span className={label}>Transporteur</span>
+            <select
+              value={carrier}
+              onChange={(e) => setCarrier(e.target.value as CarrierCode | '')}
+              className={inputClass}
+            >
+              <option value="">Selon le n° de suivi</option>
+              {CARRIER_CODES.filter((c) => c !== 'UNKNOWN').map((c) => (
+                <option key={c} value={c}>
+                  {CARRIER_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className={label}>Livraison prévue à Orly</span>
+            <input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className={inputClass} />
+          </label>
+          <label className="sm:col-span-2">
+            <span className={label}>Remarque</span>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={inputClass} />
+          </label>
+        </div>
+
+        <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">
+          Sans date de livraison prévue, l'alerte de perte part de la date de facture. Un n° de suivi déjà connu rattache
+          ces factures au colis existant (un colis peut couvrir plusieurs factures du même fournisseur).
+        </p>
+
+        <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 px-4 py-2 font-bold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+          >
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+};

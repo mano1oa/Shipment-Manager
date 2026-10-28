@@ -3,6 +3,7 @@ import { Settings, Users, Truck, Workflow, Server } from 'lucide-react';
 import { SettingsUsersView } from './SettingsUsersView';
 import { SettingsCarriersPanel } from './SettingsCarriersPanel';
 import { IntegrationsPanel, NeonDatabasePanel } from './SettingsSystemPanels';
+import { TrackingSettingsPanel } from './TrackingSettingsPanel';
 
 type SettingsSection = 'users' | 'carriers' | 'integrations' | 'database';
 
@@ -59,7 +60,12 @@ export const SettingsView: React.FC<{ currentUserId: string }> = ({ currentUserI
         <div className="min-w-0 flex-1 space-y-6">
           {section === 'users' && <SettingsUsersView currentUserId={currentUserId} />}
           {section === 'carriers' && <SettingsCarriersPanel />}
-          {section === 'integrations' && <IntegrationsPanel />}
+          {section === 'integrations' && (
+            <>
+              <TrackingSettingsPanel />
+              <IntegrationsPanel />
+            </>
+          )}
           {section === 'database' && <NeonDatabasePanel />}
         </div>
       </div>

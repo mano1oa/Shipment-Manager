@@ -72,9 +72,28 @@ import {
   ReadOnlyDigiInvoiceError,
   WrongInvoiceKindError,
   ensureDigiInvoicesSchema,
+  createDirectInvoice,
+  updateDirectInvoice,
+  setInvoiceValidation,
+  setInvoiceTriage,
 } from './db/digiInvoices.js';
-import { getTrackingSettings } from './db/settings.js';
-import { isShipmentStatus, applyAutomaticShipmentStatus } from './lib/parcelTracking.js';
+import { getTrackingSettings, validateTrackingSettings, saveTrackingSettings } from './db/settings.js';
+import {
+  isShipmentStatus,
+  applyAutomaticShipmentStatus,
+  validateParcelInput,
+  INVOICE_TRIAGES,
+} from './lib/parcelTracking.js';
+import { validateDirectInvoiceInput } from './lib/directInvoices.js';
+import {
+  listParcelsForInvoice,
+  getParcel,
+  createParcel,
+  updateParcel,
+  unlinkParcelInvoice,
+  commonSupplierOf,
+  DuplicateParcelError,
+} from './db/parcels.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
 import { createShipmentForInvoice } from './services/digiShipments.js';
@@ -1895,6 +1914,267 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       console.error('[DIGI] Update invoice error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // "Hors DIGI" invoices, sort, validation
+  // ---------------------------------------------------------------------------
+
+  // Supply Chain's are validated at once; Sourcing's wait for Supply Chain
+  app.post('/api/digi-invoices/direct', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const { value, errors } = validateDirectInvoiceInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    const validated = req.user.role === 'SUPPLY_CHAIN';
+    try {
+      const id = await createDirectInvoice(value, req.user.email, validated);
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: id,
+        action: 'CREATE_DIRECT_INVOICE',
+        actor: req.user,
+        details: { supplier: value.supplier_name, ref: value.ref, amount: value.amount, currency: value.currency, validated },
+      });
+      return res.status(201).json({ success: true, invoice: await getDigiInvoice(id) });
+    } catch (err: any) {
+      if (err instanceof DuplicateDigiInvoiceError) {
+        return res.status(409).json({ success: false, error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.` });
+      }
+      console.error('[Invoices] Create direct invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la facture' });
+    }
+  });
+
+  // Sourcing can only correct its invoices not validated yet
+  app.put('/api/digi-invoices/:id/direct', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const { value, errors } = validateDirectInvoiceInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      const current = await getDigiInvoice(req.params.id);
+      if (!current) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      if (req.user.role !== 'SUPPLY_CHAIN' && current.validation_status === 'validated') {
+        return res.status(403).json({ success: false, error: 'Facture validée : seule la Supply Chain peut la modifier.' });
+      }
+      await updateDirectInvoice(req.params.id, value, req.user.email, req.user.role === 'SUPPLY_CHAIN');
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: 'UPDATE_DIRECT_INVOICE',
+        actor: req.user,
+        details: { supplier: value.supplier_name, ref: value.ref, amount: value.amount, currency: value.currency },
+      });
+      return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      if (err instanceof WrongInvoiceKindError) {
+        return res.status(409).json({ success: false, error: 'Cette facture est une facture DIGI.' });
+      }
+      if (err instanceof DuplicateDigiInvoiceError) {
+        return res.status(409).json({ success: false, error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.` });
+      }
+      console.error('[Invoices] Update direct invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  app.patch('/api/digi-invoices/:id/validation', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const decision = req.body?.decision;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 1000) : '';
+    if (decision !== 'validated' && decision !== 'rejected') {
+      return res.status(400).json({ success: false, error: 'Décision invalide.' });
+    }
+    if (decision === 'rejected' && !reason) {
+      return res.status(400).json({ success: false, error: 'Le motif du refus est obligatoire.' });
+    }
+    try {
+      const outcome = await setInvoiceValidation(req.params.id, decision, reason || null, req.user.email);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Facture hors DIGI introuvable' });
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: decision === 'validated' ? 'VALIDATE_DIRECT_INVOICE' : 'REJECT_DIRECT_INVOICE',
+        actor: req.user,
+        details: { previous: outcome.previous, reason: reason || null },
+      });
+      return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[Invoices] Validation error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la décision' });
+    }
+  });
+
+  // Sort of a DIGI invoice: to_sort / goods (tracked) / services
+  app.patch('/api/digi-invoices/:id/triage', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const triage = req.body?.triage;
+    if (!(INVOICE_TRIAGES as readonly string[]).includes(triage)) {
+      return res.status(400).json({ success: false, error: 'Tri invalide.' });
+    }
+    try {
+      const outcome = await setInvoiceTriage(req.params.id, triage, req.user.email);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: 'SORT_DIGI_INVOICE',
+        actor: req.user,
+        details: { triage, detached_shipment_id: outcome.previous_shipment_id },
+      });
+      return res.json({
+        success: true,
+        detached_shipment_id: outcome.previous_shipment_id,
+        invoice: await getDigiInvoice(req.params.id),
+      });
+    } catch (err: any) {
+      console.error('[Invoices] Sort error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de trier la facture' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Parcels (supplier → Orly)
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/digi-invoices/:id/parcels', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    try {
+      return res.json({ success: true, parcels: await listParcelsForInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[Parcels] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis' });
+    }
+  });
+
+  /**
+   * Adds a parcel to invoices of one supplier. A tracking number already known
+   * links the invoices to that parcel (one parcel can cover several invoices).
+   */
+  app.post('/api/parcels', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const invoiceIds = req.body?.invoice_ids;
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0 || invoiceIds.length > 100 || !invoiceIds.every((id) => UUID_RE.test(id))) {
+      return res.status(400).json({ success: false, error: 'Factures du colis invalides.' });
+    }
+    const { value, errors } = validateParcelInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      const { supplier, mixed } = await commonSupplierOf(invoiceIds);
+      if (mixed) {
+        return res.status(400).json({ success: false, error: 'Un colis ne peut regrouper que des factures d\'un même fournisseur.' });
+      }
+      const invoices = await Promise.all(invoiceIds.map((id: string) => getDigiInvoice(id)));
+      if (invoices.some((inv) => !inv)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      if (invoices.some((inv) => inv!.triage === 'services')) {
+        return res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
+      }
+      const { id, existed } = await createParcel(value, invoiceIds, supplier, req.user.email);
+      const parcel = await getParcel(id);
+      if (existed && parcel) {
+        // The known parcel must stay single-supplier
+        const check = await commonSupplierOf(parcel.invoices.map((i) => i.id));
+        if (check.mixed) {
+          for (const invoiceId of invoiceIds) await unlinkParcelInvoice(id, invoiceId);
+          return res.status(409).json({
+            success: false,
+            error: `Le n° de suivi ${value.tracking_number} est déjà utilisé par un colis d'un autre fournisseur.`,
+          });
+        }
+      }
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: id,
+        action: existed ? 'LINK_PARCEL_INVOICES' : 'CREATE_PARCEL',
+        actor: req.user,
+        details: { tracking_number: value.tracking_number, carrier: value.carrier, invoice_ids: invoiceIds },
+      });
+      return res.status(existed ? 200 : 201).json({ success: true, existed, parcel: await getParcel(id) });
+    } catch (err: any) {
+      console.error('[Parcels] Create error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer le colis' });
+    }
+  });
+
+  app.put('/api/parcels/:id', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const { value, errors } = validateParcelInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      const updated = await updateParcel(req.params.id, value, req.user.email);
+      if (!updated) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'UPDATE_PARCEL',
+        actor: req.user,
+        details: { tracking_number: value.tracking_number, carrier: value.carrier, expected_delivery: value.expected_delivery },
+      });
+      return res.json({ success: true, parcel: await getParcel(req.params.id) });
+    } catch (err: any) {
+      if (err instanceof DuplicateParcelError) {
+        return res.status(409).json({ success: false, error: `Le n° de suivi ${value.tracking_number} est déjà utilisé par un autre colis.` });
+      }
+      console.error('[Parcels] Update error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier le colis' });
+    }
+  });
+
+  // Detaches a parcel from one invoice (deleted when it has no invoice left)
+  app.delete('/api/parcels/:id/invoices/:invoiceId', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.invoiceId)) {
+      return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    }
+    try {
+      const parcel = await getParcel(req.params.id);
+      if (!parcel) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      // Proof of reception: only Supply Chain removes a parcel received at Orly
+      if (parcel.status !== 'to_receive' && req.user.role !== 'SUPPLY_CHAIN') {
+        return res.status(403).json({ success: false, error: 'Colis déjà traité à Orly : seule la Supply Chain peut le retirer.' });
+      }
+      const outcome = await unlinkParcelInvoice(req.params.id, req.params.invoiceId);
+      if (!outcome.unlinked) return res.status(404).json({ success: false, error: 'Ce colis n\'est pas rattaché à cette facture' });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: outcome.deleted ? 'DELETE_PARCEL' : 'UNLINK_PARCEL_INVOICE',
+        actor: req.user,
+        details: { tracking_number: parcel.tracking_number, invoice_id: req.params.invoiceId },
+      });
+      return res.json({ success: true, deleted: outcome.deleted });
+    } catch (err: any) {
+      console.error('[Parcels] Unlink error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de retirer le colis' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tracking settings (Paramètres › Intégrations)
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/settings/tracking', async (_req, res) => {
+    try {
+      return res.json({ success: true, settings: await getTrackingSettings() });
+    } catch (err: any) {
+      console.error('[Settings] Read error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les paramètres' });
+    }
+  });
+
+  app.put('/api/settings/tracking', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const { value, errors } = validateTrackingSettings(req.body);
+    if (errors.length > 0) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      const settings = await saveTrackingSettings(value, req.user.email);
+      await writeAuditLog({
+        entityType: 'SETTINGS',
+        entityId: 'tracking',
+        action: 'UPDATE_TRACKING_SETTINGS',
+        actor: req.user,
+        details: value as Record<string, unknown>,
+      });
+      return res.json({ success: true, settings });
+    } catch (err: any) {
+      console.error('[Settings] Save error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer les paramètres' });
     }
   });
 

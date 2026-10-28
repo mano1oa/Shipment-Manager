@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { CARRIER_CODES, CARRIER_LABELS } from '../lib/carrierDetection';
 
-// Fixed in src/lib/rulesEngine.ts ("colis en attente d'expédition")
+// Fixed in src/lib/rulesEngine.ts ("expédition en attente de départ")
 const ORLY_ALERT_DAYS = 10;
 
 /** Card used by every settings section, so they all share one layout. */
@@ -396,7 +396,7 @@ export const IntegrationsPanel: React.FC = () => {
           description="Règles appliquées par le moteur d'alertes."
         >
           <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800">
-            <span className="text-[10px] font-bold uppercase text-slate-500">Colis en attente d'expédition</span>
+            <span className="text-[10px] font-bold uppercase text-slate-500">Expédition aérienne en préparation</span>
             <div className="mt-1 text-xs font-bold text-slate-900 dark:text-white">{ORLY_ALERT_DAYS} jours</div>
             <p className="mt-1 text-[10px] text-slate-500">
               Seuil fixé dans le moteur de règles : il n'est pas modifiable depuis l'application.

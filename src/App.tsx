@@ -960,6 +960,7 @@ if (!authUser) {
           {activeTab === 'digi' && (
             <DigiInvoicesView
               canDelete={currentRole === 'supply_chain'}
+              isSupplyChain={currentRole === 'supply_chain'}
               onOpenShipment={(id) => {
                 const linked = shipmentsWithAlerts.find((s) => s.id === id);
                 if (linked) setSelectedShipment(linked);

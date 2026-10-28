@@ -1,4 +1,14 @@
 import type { DigiInvoiceInput } from '../lib/digiInvoices';
+import type { DirectInvoiceInput } from '../lib/directInvoices';
+import type { CarrierCode } from '../lib/carrierDetection';
+import type {
+  Currency,
+  InvoiceTriage,
+  ParcelInput,
+  ParcelStatus,
+  TrackingSettings,
+  ValidationStatus,
+} from '../lib/parcelTracking';
 
 export type DigiInvoiceSource = 'odoo' | 'excel' | 'manual';
 
@@ -36,6 +46,18 @@ export interface DigiInvoice {
   shipment_global_status: string | null;
   no_shipment: boolean;
   has_items: boolean;
+  /** False for a "hors DIGI" invoice (amount + currency, no lines). */
+  is_digi: boolean;
+  currency: Currency;
+  buyer: string | null;
+  validation_status: ValidationStatus;
+  rejection_reason: string | null;
+  validated_by_email: string | null;
+  validated_at: string | null;
+  triage: InvoiceTriage;
+  triaged_at: string | null;
+  parcel_count: number;
+  parcel_received_count: number;
   created_by_email: string | null;
   updated_by_email: string | null;
   created_at: string;
@@ -133,8 +155,89 @@ export const fetchShipmentInvoices = (shipmentId: string) =>
     (d) => d.invoices
   );
 
-/** Services only: marked by hand, or every line is a fee line. */
-export const isServicesInvoice = (inv: DigiInvoice) => inv.no_shipment || (inv.lines.length > 0 && !inv.has_items);
+/** Services only: sorted as services, or every line is a fee line. */
+export const isServicesInvoice = (inv: DigiInvoice) =>
+  inv.triage === 'services' || inv.no_shipment || (inv.is_digi && inv.lines.length > 0 && !inv.has_items);
+
+/** "Hors DIGI" invoice not validated by Supply Chain yet (pending or refused). */
+export const isAwaitingValidation = (inv: DigiInvoice) => !inv.is_digi && inv.validation_status !== 'validated';
+
+/** Tracked invoice: sorted as goods (DIGI) or "hors DIGI" not refused. */
+export const isGoodsInvoice = (inv: DigiInvoice) =>
+  !isServicesInvoice(inv) && inv.triage === 'goods' && inv.validation_status !== 'rejected';
+
+/** Received at Orly: every parcel confirmed by Antoine. */
+export const isInvoiceReceived = (inv: DigiInvoice) =>
+  inv.parcel_count > 0 && inv.parcel_received_count === inv.parcel_count;
+
+// ---- "Hors DIGI" invoices, sort, validation ----
+
+export const saveDirectInvoice = (input: DirectInvoiceInput, id?: string) =>
+  apiJson<{ invoice: DigiInvoice }>(id ? `/api/digi-invoices/${id}/direct` : '/api/digi-invoices/direct', {
+    method: id ? 'PUT' : 'POST',
+    body: JSON.stringify(input),
+  }).then((d) => d.invoice);
+
+export const setInvoiceTriage = (id: string, triage: InvoiceTriage) =>
+  apiJson<{ invoice: DigiInvoice; detached_shipment_id: string | null }>(`/api/digi-invoices/${id}/triage`, {
+    method: 'PATCH',
+    body: JSON.stringify({ triage }),
+  });
+
+export const setInvoiceValidation = (id: string, decision: 'validated' | 'rejected', reason?: string) =>
+  apiJson<{ invoice: DigiInvoice }>(`/api/digi-invoices/${id}/validation`, {
+    method: 'PATCH',
+    body: JSON.stringify({ decision, reason }),
+  }).then((d) => d.invoice);
+
+// ---- Parcels ----
+
+export interface Parcel {
+  id: string;
+  tracking_number: string | null;
+  carrier: CarrierCode;
+  supplier_name: string | null;
+  expected_delivery: string | null;
+  status: ParcelStatus;
+  received_at: string | null;
+  received_by_email: string | null;
+  status_changed_at: string | null;
+  notes: string | null;
+  legacy_shipment_id: string | null;
+  invoices: { id: string; ref: string | null; supplier_display: string | null; invoice_date: string | null }[];
+  photo_count: number;
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchInvoiceParcels = (invoiceId: string) =>
+  apiJson<{ parcels: Parcel[] }>(`/api/digi-invoices/${invoiceId}/parcels`).then((d) => d.parcels);
+
+export const createParcel = (input: ParcelInput, invoiceIds: string[]) =>
+  apiJson<{ parcel: Parcel; existed: boolean }>('/api/parcels', {
+    method: 'POST',
+    body: JSON.stringify({ ...input, invoice_ids: invoiceIds }),
+  });
+
+export const updateParcel = (id: string, input: ParcelInput) =>
+  apiJson<{ parcel: Parcel }>(`/api/parcels/${id}`, { method: 'PUT', body: JSON.stringify(input) }).then(
+    (d) => d.parcel
+  );
+
+export const unlinkParcel = (parcelId: string, invoiceId: string) =>
+  apiJson<{ deleted: boolean }>(`/api/parcels/${parcelId}/invoices/${invoiceId}`, { method: 'DELETE' });
+
+// ---- Settings ----
+
+export const fetchTrackingSettings = () =>
+  apiJson<{ settings: TrackingSettings }>('/api/settings/tracking').then((d) => d.settings);
+
+export const saveTrackingSettings = (update: Partial<TrackingSettings>) =>
+  apiJson<{ settings: TrackingSettings }>('/api/settings/tracking', {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  }).then((d) => d.settings);
 
 export const syncDigiOdoo = () =>
   apiJson<DigiOdooSyncResult>('/api/digi-invoices/sync-odoo', { method: 'POST' });

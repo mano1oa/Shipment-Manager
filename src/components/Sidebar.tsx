@@ -61,7 +61,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'digi' as NavTab,
-      label: 'Factures DIGI',
+      label: 'Factures fournisseurs',
       icon: ReceiptText,
       badge: null,
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
