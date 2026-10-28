@@ -89,3 +89,16 @@ export async function deleteSession(token: string) {
     WHERE token_hash = ${tokenHash}
   `;
 }
+
+/** Signs the user out everywhere except the session holding `keepToken`. */
+export async function deleteOtherSessions(userId: string, keepToken: string) {
+  const sql = getDb();
+
+  const keepHash = hashToken(keepToken);
+
+  await sql`
+    DELETE FROM user_sessions
+    WHERE user_id = ${userId}
+      AND token_hash <> ${keepHash}
+  `;
+}

@@ -10,6 +10,8 @@ export interface CarrierRecord {
   id: string;
   name: string;
   transport_mode: CarrierTransportMode;
+  /** Tracking connector (CARRIER_CODES, e.g. 'DHL') this carrier is linked to; null = not linked. */
+  tracking_carrier_code: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -30,7 +32,7 @@ export async function getActiveCarriers(): Promise<CarrierRecord[]> {
   const sql = getDb();
 
   const rows = await sql`
-    SELECT id, name, transport_mode, is_active, created_at, updated_at
+    SELECT id, name, transport_mode, tracking_carrier_code, is_active, created_at, updated_at
     FROM shipment_carriers
     WHERE is_active = TRUE
     ORDER BY LOWER(name) ASC
@@ -42,7 +44,7 @@ export async function getActiveCarriers(): Promise<CarrierRecord[]> {
 async function findCarrierByName(name: string): Promise<CarrierRecord | null> {
   const sql = getDb();
   const rows = await sql`
-    SELECT id, name, transport_mode, is_active, created_at, updated_at
+    SELECT id, name, transport_mode, tracking_carrier_code, is_active, created_at, updated_at
     FROM shipment_carriers
     WHERE LOWER(TRIM(name)) = LOWER(TRIM(${name}))
     LIMIT 1
@@ -70,7 +72,7 @@ export async function createCarrier(
     const rows = await sql`
       INSERT INTO shipment_carriers (name, transport_mode)
       VALUES (${name}, ${transportMode})
-      RETURNING id, name, transport_mode, is_active, created_at, updated_at
+      RETURNING id, name, transport_mode, tracking_carrier_code, is_active, created_at, updated_at
     `;
     return rows[0] as CarrierRecord;
   } catch (err: any) {
@@ -81,4 +83,74 @@ export async function createCarrier(
     }
     throw err;
   }
+}
+
+/** All carriers, active or not, alphabetical (settings screen). */
+export async function getAllCarriers(): Promise<CarrierRecord[]> {
+  await ensureReferenceSchema();
+  const sql = getDb();
+
+  const rows = await sql`
+    SELECT id, name, transport_mode, tracking_carrier_code, is_active, created_at, updated_at
+    FROM shipment_carriers
+    ORDER BY LOWER(name) ASC
+  `;
+
+  return rows as unknown as CarrierRecord[];
+}
+
+/**
+ * Updates a carrier. `name` must already be trimmed and validated.
+ * Returns null when the carrier does not exist. Throws DuplicateReferenceError
+ * when the new name collides (case-insensitive) with another carrier.
+ * Existing shipments keep the carrier name they were saved with.
+ */
+export async function updateCarrier(
+  id: string,
+  changes: {
+    name: string;
+    transport_mode: CarrierTransportMode;
+    tracking_carrier_code: string | null;
+    is_active: boolean;
+  }
+): Promise<CarrierRecord | null> {
+  await ensureReferenceSchema();
+  const sql = getDb();
+
+  const existing = await findCarrierByName(changes.name);
+  if (existing && existing.id !== id) {
+    throw new DuplicateReferenceError(existing);
+  }
+
+  try {
+    const rows = await sql`
+      UPDATE shipment_carriers
+      SET
+        name = ${changes.name},
+        transport_mode = ${changes.transport_mode},
+        tracking_carrier_code = ${changes.tracking_carrier_code},
+        is_active = ${changes.is_active},
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id, name, transport_mode, tracking_carrier_code, is_active, created_at, updated_at
+    `;
+    return (rows[0] as CarrierRecord) ?? null;
+  } catch (err: any) {
+    if (err?.code === '23505') {
+      const raced = await findCarrierByName(changes.name);
+      if (raced) throw new DuplicateReferenceError(raced);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Tracking connector linked to the carrier saved on a shipment (shipments.carrier
+ * is free text, matched case-insensitively). Null when unknown or not linked.
+ */
+export async function getTrackingCodeForCarrierName(name: string | null | undefined): Promise<string | null> {
+  if (!name || !name.trim()) return null;
+  await ensureReferenceSchema();
+  const carrier = await findCarrierByName(name);
+  return carrier?.tracking_carrier_code ?? null;
 }

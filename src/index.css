@@ -1,1 +1,5 @@
 @import "tailwindcss";
+
+/* Dark mode follows the .dark class set on <html> by the theme toggle
+   (Tailwind v4 defaults to the OS preference otherwise). */
+@custom-variant dark (&:where(.dark, .dark *));

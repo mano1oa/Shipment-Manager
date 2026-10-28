@@ -65,19 +65,22 @@ contrôle côté API.
 | Action | SUPPLY_CHAIN | SOURCING | DIRECTION |
 |---|:---:|:---:|:---:|
 | Consulter le tableau de bord, utiliser l'assistant IA | ✅ | ✅ | ✅ |
-| Voir les listes Aérien / Maritime | ✅ | ✅ | ❌ (voir §9) |
+| Voir les listes Aérien / Maritime et les fiches (lecture) | ✅ | ✅ | ✅ |
 | Colis à suivre (DIGI) : consulter, synchroniser Odoo, importer Excel, saisir / modifier | ✅ | ✅ | ❌ |
 | Colis à suivre (DIGI) : supprimer une facture | ✅ | ❌ | ❌ |
 | Créer / modifier une expédition | ✅ | ✅ | ❌ |
 | Supprimer une expédition | ✅ | ❌ | ❌ |
-| Ajouter un transporteur / fournisseur à la liste | ✅ | ✅ | ❌ |
+| Ajouter un transporteur à la liste | ✅ | ❌ | ❌ |
+| Ajouter un fournisseur à la liste | ✅ | ✅ | ❌ |
 | Numéros de suivi et événements (ajout, correction) | ✅ | ✅ | ❌ |
 | Voir et résoudre / réactiver les alertes | ✅ | ✅ | ❌ |
 | Envoyer une relance Google Chat | ✅ | ✅ | ❌ |
 | Synchroniser le suivi d'une expédition | ✅ | ✅ | ❌ |
 | Synchroniser tout le suivi | ✅ | ❌ | ❌ |
-| Analyses & SLAs | ✅ | ❌ | ❌ |
-| Utilisateurs, administration base, purge | ✅ | ❌ | ❌ |
+| Analyses & SLAs (onglet du tableau de bord) | ✅ | ❌ | ✅ |
+| Paramètres : utilisateurs, transporteurs (modifier / désactiver), intégrations, base, purge | ✅ | ❌ | ❌ |
+| Changer son propre mot de passe (profil) | ✅ | ✅ | ✅ |
+| Réinitialiser le mot de passe d'un autre utilisateur | ✅ | ❌ | ❌ |
 
 Protections sur les comptes :
 
@@ -91,16 +94,33 @@ Protections sur les comptes :
 
 | Menu | Rôles | Contenu |
 |---|---|---|
-| Tableau de bord | tous | Indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides |
-| Suivi Aérien | SC, Sourcing | Liste des expéditions `Air`, filtres, **édition directe** du statut, de la date de scan Orly, de la Réf FA, de la réception Mada et des remarques ; export CSV ; « Générer réclamation » (colis Perdu Orly) |
-| Suivi Maritime | SC, Sourcing | Liste des expéditions `Sea` et, pour chacune, le tableau des livraisons au quai de Rouen |
+| Tableau de bord & KPI | tous | Onglet « Vue d'ensemble » : indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides. Onglet « Analyses & SLAs » (SC, Direction) : respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
+| Suivi Aérien | SC, Sourcing, Direction (lecture) | Liste des expéditions `Air`, filtres, **édition directe** du statut, de la date de scan Orly, de la Réf FA, de la réception Mada et des remarques ; export CSV ; « Générer réclamation » (colis Perdu Orly) |
+| Suivi Maritime | SC, Sourcing, Direction (lecture) | Liste des expéditions `Sea` et, pour chacune, le tableau des livraisons au quai de Rouen |
 | Colis à suivre (DIGI) | SC, Sourcing | Factures DIGI LOGISTIC à destination de NextHope avec leurs lignes de produits ; synchronisation Odoo, import Excel, saisie manuelle (voir §7 bis) |
 | Centre d'Alertes | SC, Sourcing | Alertes calculées, message de relance pré-rédigé, envoi Google Chat, résolution partagée |
-| Analyses & SLAs | SC | Respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
-| Assistant IA | tous | Questions sur les expéditions, synthèse automatique (limité à 40 requêtes par heure et par utilisateur) |
-| Administration & N8N | SC | État de la base, initialisation du schéma, purge, test Google Chat |
-| Script Démo & Livrables | SC | Contenu de démonstration hérité du prototype (voir §9) |
-| Paramètres | SC | Gestion des utilisateurs |
+| Paramètres | SC | Quatre rubriques : **Utilisateurs & accès** (comptes, rôles, activation) ; **Transporteurs** (créer, renommer, changer le mode, relier à un connecteur de suivi, désactiver ; état des connecteurs) ; **Intégrations** (N8N & webhook Google Chat, liens Google Sheets, seuils d'alerte) ; **Base de données** (état Neon, initialisation du schéma, purge) |
+
+En plus des menus :
+
+- **Shipment AI** : bulle de chat en bas à droite, disponible sur tous les écrans
+  (aussi via le bouton « Shipment AI » de la barre du haut). La conversation est
+  conservée en changeant d'écran. Limité à 40 requêtes par heure et par utilisateur.
+- **Profil** (nom en haut à droite) : changer son mot de passe (12 caractères
+  minimum, les autres sessions sont déconnectées), basculer le thème clair /
+  sombre, se déconnecter.
+- **Valeur (€)** d'une expédition : montant de la facture DIGI LOGISTIC liée
+  (Réf FA DIGI-NXT ou N° de facture identique au nom Odoo, à la facture de
+  vente ou à la référence de la facture DIGI ; casse, espaces et tirets
+  ignorés). Sans facture liée : la « Valeur marchandise » saisie sur
+  l'expédition (`cost_eur`). Cette même valeur sert dans les listes, les KPI du
+  tableau de bord (valeur en transit, valeur Perdu Orly), la réclamation et
+  l'export CSV.
+- **Connecteur de suivi** : chaque transporteur de la liste peut être relié à
+  un connecteur (DHL, FedEx, UPS…) dans Paramètres › Transporteurs. Quand le
+  format d'un numéro de suivi n'est pas reconnu, le connecteur du transporteur
+  de l'expédition est utilisé. L'activation du suivi automatique d'un
+  connecteur se fait côté serveur (lecture seule dans l'application).
 
 **Fiche expédition** (clic sur une ligne) : informations générales, dates
 calculées (départ Madagascar, ETA Mada), pilotage opérationnel (statuts,
@@ -134,7 +154,7 @@ flowchart TD
 | # | Étape | Qui | Où dans l'application | Manuel / auto |
 |---|---|---|---|---|
 | 1 | Créer l'expédition : mode, transporteur, fournisseur, réf. commande/PO, n° de suivi, réf. FA DIGI-NXT, statuts de départ, ETA, poids, coût | Sourcing (à la commande) ou Supply Chain | Bouton « Nouvelle expédition » | **Manuel** |
-| 2 | Ajouter un transporteur ou un fournisseur absent de la liste | Sourcing / Supply Chain | Dans le formulaire : « + Ajouter… » | **Manuel** |
+| 2 | Ajouter un transporteur ou un fournisseur absent de la liste | Supply Chain (transporteur), Sourcing / Supply Chain (fournisseur) | Dans le formulaire : « + Ajouter… » ; transporteurs aussi dans Paramètres | **Manuel** |
 | 3 | Rattacher les numéros de suivi | Automatique à la création (champ n° de suivi), puis ajout manuel si besoin | Fiche → Suivi transporteur | **Auto** à la création, **manuel** ensuite |
 | 4 | Suivre la livraison jusqu'à Orly | Supply Chain | Fiche → Suivi transporteur | **Manuel** pour l'instant (ajout d'événements) ; **auto** dès qu'un fournisseur de suivi est branché (§7) |
 | 5 | Point hebdomadaire avec Antoine (MIDEX, Orly) : ce qui est reçu, ce qui manque | Supply Chain | Liste Aérien + fiche | **Manuel** — Antoine n'a pas de compte ; ses confirmations sont saisies par Supply Chain |
@@ -324,11 +344,7 @@ validation.
 4. **Statut douane et priorité** ne sont modifiables qu'à la création.
 5. **« Livré Orly »** est proposé à la création mais absent des listes de
    modification.
-6. **Direction** ne voit que le tableau de bord et l'assistant, alors que la
-   matrice des droits prévoit la consultation des expéditions et des analyses.
-7. **« Script Démo & Livrables »** contient du contenu de démonstration avec
-   des chiffres fictifs : à retirer.
-8. Les **statuts Antoine** de l'application ne correspondent pas encore à ceux
+6. Les **statuts Antoine** de l'application ne correspondent pas encore à ceux
    du fichier Excel (« A recevoir », « OK (Reçu et expédié) », « Déjà reçu
    Mada, à refacturer (REGUL) », « Avis de recherche »).
 
@@ -408,7 +424,7 @@ Node.js 20+ et une base Neon PostgreSQL.
 | `CRON_SECRET` | Obligatoire pour les crons quotidiens (suivi transporteur, factures DIGI) |
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY` | Connexion en lecture à Odoo DIGI LOGISTIC (API JSON-RPC ; clé API de l'utilisateur) |
 | `ODOO_DEST_PARTNER_ID` / `ODOO_DEST_PARTNER_NAME` | Entité de destination filtrée : identifiant du partenaire, sinon nom (« NextHope » par défaut) |
-| `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Administration (consultation, aucune synchronisation) |
+| `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Paramètres › Intégrations (consultation, aucune synchronisation) |
 | `NODE_ENV` | `production` en production (cookie `Secure`) |
 
 Ne jamais exposer ces valeurs via une variable `VITE_*`. Le fichier `.env` est

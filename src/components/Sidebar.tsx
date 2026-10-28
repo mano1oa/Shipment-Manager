@@ -4,27 +4,20 @@ import {
   Plane,
   Ship,
   AlertTriangle,
-  BarChart3,
-  Bot,
   Settings,
-  FileText,
   PlusCircle,
   Database,
-  ShieldAlert,
   ReceiptText,
 } from 'lucide-react';
 import { UserRole } from '../types';
 
+// The AI assistant is a floating bubble (not a tab); analytics live in the dashboard tabs.
 export type NavTab =
   | 'dashboard'
   | 'air'
   | 'sea'
   | 'digi'
   | 'alerts'
-  | 'analytics'
-  | 'assistant'
-  | 'admin'
-  | 'deliverables'
   | 'settings';
 
 interface SidebarProps {
@@ -47,7 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const navItems = [
     {
       id: 'dashboard' as NavTab,
-      label: 'Tableau de bord',
+      label: 'Tableau de bord & KPI',
       icon: LayoutDashboard,
       badge: null,
       allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
@@ -57,14 +50,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Suivi Aérien',
       icon: Plane,
       badge: 'Air',
-      allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
+      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
     },
     {
       id: 'sea' as NavTab,
       label: 'Suivi Maritime',
       icon: Ship,
       badge: 'Sea',
-      allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
+      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
     },
     {
       id: 'digi' as NavTab,
@@ -82,44 +75,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
     },
     {
-      id: 'analytics' as NavTab,
-      label: 'Analyses & SLAs',
-      icon: BarChart3,
-      badge: null,
-      allowedRoles: ['supply_chain'] as UserRole[],
-    },
-    {
-      id: 'assistant' as NavTab,
-      label: 'Assistant IA',
-      icon: Bot,
-      badge: 'Gemini',
-      badgeColor: 'bg-[#A91869] text-white',
-      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
-    },
-    {
-      id: 'admin' as NavTab,
-      label: 'Administration & N8N',
-      icon: Settings,
-      badge: null,
-      allowedRoles: ['supply_chain'] as UserRole[],
-    },
-    {
-      id: 'deliverables' as NavTab,
-      label: 'Script Démo & Livrables',
-      icon: FileText,
-      badge: 'Projet',
-      badgeColor: 'bg-[#643288] text-white',
-      allowedRoles: ['supply_chain'] as UserRole[],
-    },
-  
-      {
       id: 'settings' as NavTab,
       label: 'Paramètres',
       icon: Settings,
       badge: null,
       allowedRoles: ['supply_chain'] as UserRole[],
     },
-    ];
+  ];
 
   const visibleNavItems = navItems.filter((item) =>
     item.allowedRoles.includes(currentRole)
@@ -159,8 +121,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {currentRole === 'supply_chain'
                 ? 'Supply Chain'
                 : currentRole === 'sourcing'
-                ? 'Sourcing (Lecture seule)'
-                : 'Direction'}
+                ? 'Sourcing'
+                : 'Direction (Lecture seule)'}
             </span>
           </div>
         </div>

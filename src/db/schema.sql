@@ -128,6 +128,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_carriers_name_unique_ci
     ON shipment_carriers (LOWER(TRIM(name)));
 CREATE INDEX IF NOT EXISTS idx_shipment_carriers_active
     ON shipment_carriers (is_active);
+-- Connecteur de suivi lié (code transporteur, ex. 'DHL') ; NULL = non relié
+ALTER TABLE shipment_carriers
+    ADD COLUMN IF NOT EXISTS tracking_carrier_code VARCHAR(20);
 
 CREATE TABLE IF NOT EXISTS shipment_suppliers (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

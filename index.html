@@ -7,6 +7,15 @@
     <meta name="description" content="Application de suivi des expéditions aériennes et maritimes avec assistant IA et automatisation Supply Chain." />
     <meta property="og:title" content="Shipment Manager" />
     <meta property="og:description" content="Application de suivi des expéditions aériennes et maritimes avec assistant IA et automatisation Supply Chain." />
+    <script>
+      // Apply the saved theme before the first paint (no light flash in dark mode)
+      try {
+        if (localStorage.getItem('shipment_manager_theme') === 'dark') {
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = 'dark';
+        }
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

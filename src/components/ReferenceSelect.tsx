@@ -19,7 +19,8 @@ interface ReferenceSelectProps {
   options: ReferenceOption[];
   value: string;
   onChange: (name: string) => void;
-  onCreate: (name: string, mode?: ReferenceTransportMode) => Promise<ReferenceCreateResult>;
+  /** Inline creation; omitted when the current role may not create entries. */
+  onCreate?: (name: string, mode?: ReferenceTransportMode) => Promise<ReferenceCreateResult>;
   withModeChoice?: boolean;
   required?: boolean;
   loading?: boolean;
@@ -76,6 +77,7 @@ export const ReferenceSelect: React.FC<ReferenceSelectProps> = ({
     setSubmitting(true);
     setCreateError(null);
     try {
+      if (!onCreate) return;
       const result = await onCreate(trimmed, withModeChoice ? (newMode as ReferenceTransportMode) : undefined);
       if (result.ok) {
         resetCreate();
@@ -114,7 +116,7 @@ export const ReferenceSelect: React.FC<ReferenceSelectProps> = ({
               {opt.name}
             </option>
           ))}
-          <option value={CREATE_VALUE}>+ Ajouter un {entityLabel}…</option>
+          {onCreate && <option value={CREATE_VALUE}>+ Ajouter un {entityLabel}…</option>}
         </select>
       ) : (
         <div className="mt-1 space-y-2 rounded-xl border border-[#643288]/30 bg-purple-50/40 p-2.5 dark:border-purple-900/60 dark:bg-slate-800">

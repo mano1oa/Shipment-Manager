@@ -278,6 +278,11 @@ export async function initReferenceSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_shipment_carriers_active
       ON shipment_carriers (is_active);
   `;
+  // Link to a tracking connector (CARRIER_CODES, e.g. 'DHL'); NULL = not linked
+  await sql`
+    ALTER TABLE shipment_carriers
+      ADD COLUMN IF NOT EXISTS tracking_carrier_code VARCHAR(20);
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS shipment_suppliers (

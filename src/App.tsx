@@ -8,11 +8,11 @@ import { ShipmentsView } from './components/ShipmentsView';
 import { ShipmentDetailModal } from './components/ShipmentDetailModal';
 import { AlertsCenterView } from './components/AlertsCenterView';
 import { AnalyticsView } from './components/AnalyticsView';
-import { AIAssistantView } from './components/AIAssistantView';
-import { AdminView } from './components/AdminView';
-import { DeliverablesView } from './components/DeliverablesView';
-import { SettingsUsersView } from './components/SettingsUsersView';
+import { AIAssistantBubble } from './components/AIAssistantBubble';
+import { SettingsView } from './components/SettingsView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
+import { apiJson } from './components/digiApi';
+import { buildDigiValueLookup, DigiInvoiceForValue } from './lib/digiShipmentValue';
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus } from './types';
@@ -21,7 +21,7 @@ type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTra
 type ReferenceSupplier = { id: string; name: string };
 type ShipmentPriority = Shipment['priority'];
 type CustomsStatus = Shipment['customs_status'];
-import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle, LayoutDashboard, BarChart3 } from 'lucide-react';
 
 type AuthUser = {
   id: string;
@@ -42,13 +42,21 @@ export default function App() {
   const [shipmentsError, setShipmentsError] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  // Dashboard & KPI: overview / analytics sub-tabs
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'analytics'>('overview');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const currentRole: UserRole =
   authUser?.role === 'SUPPLY_CHAIN'
     ? 'supply_chain'
     : authUser?.role === 'SOURCING'
       ? 'sourcing'
-      : 'direction';  const [darkMode, setDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem('shipment_manager_theme') === 'dark';
+      : 'direction';
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('shipment_manager_theme') === 'dark';
+    } catch {
+      return false;
+    }
   });
   const [globalSearch, setGlobalSearch] = useState('');
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
@@ -310,16 +318,37 @@ useEffect(() => {
     }
   };
 
-  // Dark mode class toggle
+  // Dark mode class toggle (the Tailwind `dark:` variant is bound to this class in index.css)
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('shipment_manager_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('shipment_manager_theme', 'light');
+    document.documentElement.classList.toggle('dark', darkMode);
+    document.documentElement.style.colorScheme = darkMode ? 'dark' : 'light';
+    try {
+      localStorage.setItem('shipment_manager_theme', darkMode ? 'dark' : 'light');
+    } catch {
+      // storage unavailable: the theme still applies for this session
     }
   }, [darkMode]);
+
+  // Shipment value = amount of the linked DIGI LOGISTIC invoice, else cost_eur
+  // (the value entered on the shipment). Reloaded when opening the dashboard or
+  // the Air / Sea lists so a fresh Odoo sync shows up.
+  const [digiValues, setDigiValues] = useState<DigiInvoiceForValue[]>([]);
+
+  useEffect(() => {
+    if (!authUser || (activeTab !== 'dashboard' && activeTab !== 'air' && activeTab !== 'sea')) return;
+    let cancelled = false;
+    apiJson<{ values: DigiInvoiceForValue[] }>('/api/digi-invoices/values')
+      .then((data) => {
+        if (!cancelled) setDigiValues(data.values || []);
+      })
+      .catch((err) => console.error('[DIGI] Unable to load invoice values:', err));
+    return () => {
+      cancelled = true;
+    };
+  }, [authUser?.id, activeTab]);
+
+  const digiValueFor = useMemo(() => buildDigiValueLookup(digiValues), [digiValues]);
+  const shipmentValue = (s: Shipment) => digiValueFor(s)?.amount ?? (s.cost_eur || 0);
 
   // Resolved alerts: shared state persisted in Neon (GET /api/alerts/resolved).
   // Other users' changes appear on reload or when the Alerts tab is opened.
@@ -360,10 +389,10 @@ useEffect(() => {
     }
   }, [activeTab]);
 
-  // Evaluate rules against current shipments
+  // Evaluate rules against current shipments (claim messages use the effective value)
   const { shipmentsWithAlerts, allAlerts } = useMemo(() => {
-    return evaluateShipmentRules(shipments);
-  }, [shipments]);
+    return evaluateShipmentRules(shipments, shipmentValue);
+  }, [shipments, digiValueFor]);
 
   // Combine alerts with resolved status from state
   const allAlertsWithResolved = useMemo(() => {
@@ -407,11 +436,11 @@ useEffect(() => {
 
     const totalValueInTransit = shipmentsWithAlerts
       .filter((s) => s.global_status === 'Reçu et expédié')
-      .reduce((sum, s) => sum + (s.cost_eur || 0), 0);
+      .reduce((sum, s) => sum + shipmentValue(s), 0);
 
     const totalValuePerduOrly = shipmentsWithAlerts
       .filter((s) => s.global_status === 'Perdu Orly')
-      .reduce((sum, s) => sum + (s.cost_eur || 0), 0);
+      .reduce((sum, s) => sum + shipmentValue(s), 0);
 
     return {
       totalShipments: total,
@@ -427,7 +456,7 @@ useEffect(() => {
       totalValueInTransit,
       totalValuePerduOrly,
     };
-  }, [shipmentsWithAlerts, allAlerts]);
+  }, [shipmentsWithAlerts, allAlerts, digiValueFor]);
 
   async function handleLogout() {
   try {
@@ -448,6 +477,9 @@ useEffect(() => {
     setShowNewModal(false);
     setGlobalSearch('');
     setActiveTab('dashboard');
+    setDashboardTab('overview');
+    setAssistantOpen(false);
+    setDigiValues([]);
   }
 }
 
@@ -593,7 +625,7 @@ useEffect(() => {
       return;
     }
     if (costValue === null) {
-      setCreateError('Le Coût Freight doit être un nombre positif.');
+      setCreateError('La Valeur marchandise doit être un nombre positif.');
       return;
     }
 
@@ -717,12 +749,18 @@ useEffect(() => {
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
-    supply_chain: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'analytics', 'assistant', 'admin', 'deliverables','settings'],
-    sourcing: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'assistant'],
-    direction: ['dashboard', 'assistant'],
+    supply_chain: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'settings'],
+    sourcing: ['dashboard', 'air', 'sea', 'digi', 'alerts'],
+    direction: ['dashboard', 'air', 'sea'], // read only (canEdit false)
   }), []);
 
   const allowedTabs = allowedTabsByRole[currentRole];
+  // « Analyses & SLAs » sub-tab of the dashboard
+  const canViewAnalytics = currentRole === 'supply_chain' || currentRole === 'direction';
+
+  useEffect(() => {
+    if (!canViewAnalytics && dashboardTab === 'analytics') setDashboardTab('overview');
+  }, [canViewAnalytics, dashboardTab]);
 
   const navigateTab = (tab: NavTab) => {
     if (allowedTabs.includes(tab)) setActiveTab(tab);
@@ -784,7 +822,7 @@ if (!authUser) {
         onSearchChange={handleGlobalSearchChange}
         showSearch={allowedTabsByRole[currentRole].includes('air')}
         alertsCount={allAlertsWithResolved.filter((a) => !a.resolved).length}
-        onOpenAssistant={() => setActiveTab('assistant')}
+        onOpenAssistant={() => setAssistantOpen(true)}
         onOpenAlerts={() => navigateTab('alerts')}
         dbConnected={dbConnected}
         isLoadingDb={isLoadingDb}
@@ -826,18 +864,54 @@ if (!authUser) {
           )}
 
           {activeTab === 'dashboard' && (
-            <DashboardView
-              shipments={shipmentsWithAlerts}
-              alerts={allAlerts}
-              metrics={metrics}
-              allowedTabs={allowedTabs}
-              onNavigateTab={navigateTab}
-              onSelectShipment={setSelectedShipment}
-              onOpenRelanceModal={(alt) => {
-                const linked = shipmentsWithAlerts.find((s) => s.id === alt.shipment_id);
-                if (linked) setSelectedShipment(linked);
-              }}
-            />
+            <div className="space-y-6">
+              {canViewAnalytics && (
+                <div role="tablist" className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs dark:border-slate-800 dark:bg-slate-900">
+                  {([
+                    { id: 'overview', label: "Vue d'ensemble", icon: LayoutDashboard },
+                    { id: 'analytics', label: 'Analyses & SLAs', icon: BarChart3 },
+                  ] as const).map((t) => {
+                    const Icon = t.icon;
+                    const active = dashboardTab === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setDashboardTab(t.id)}
+                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition ${
+                          active
+                            ? 'bg-[#643288] text-white shadow-sm'
+                            : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4" /> {t.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {dashboardTab === 'analytics' && canViewAnalytics ? (
+                <AnalyticsView shipments={shipmentsWithAlerts} />
+              ) : (
+                <DashboardView
+                  shipments={shipmentsWithAlerts}
+                  alerts={allAlerts}
+                  metrics={metrics}
+                  allowedTabs={allowedTabs}
+                  onNavigateTab={navigateTab}
+                  onSelectShipment={setSelectedShipment}
+                  onOpenRelanceModal={(alt) => {
+                    const linked = shipmentsWithAlerts.find((s) => s.id === alt.shipment_id);
+                    if (linked) setSelectedShipment(linked);
+                  }}
+                  onOpenAssistant={() => setAssistantOpen(true)}
+                  onOpenAnalytics={canViewAnalytics ? () => setDashboardTab('analytics') : undefined}
+                />
+              )}
+            </div>
           )}
 
           {activeTab === 'air' && (
@@ -848,8 +922,9 @@ if (!authUser) {
               onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
               canEdit={canEdit}
-              onUpdateShipment={handleSaveShipment}
+              onUpdateShipment={canEdit ? handleSaveShipment : undefined}
               onNewShipment={canEdit ? () => openNewShipment('Air') : undefined}
+              digiValueFor={digiValueFor}
             />
           )}
 
@@ -861,8 +936,9 @@ if (!authUser) {
               onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
               canEdit={canEdit}
-              onUpdateShipment={handleSaveShipment}
+              onUpdateShipment={canEdit ? handleSaveShipment : undefined}
               onNewShipment={canEdit ? () => openNewShipment('Sea') : undefined}
+              digiValueFor={digiValueFor}
             />
           )}
 
@@ -879,19 +955,17 @@ if (!authUser) {
               canResolve={canEdit}
             />
           )}
-          {activeTab === 'settings' && currentRole === 'supply_chain' && (<SettingsUsersView />
-          )}
-          {activeTab === 'analytics' && <AnalyticsView shipments={shipmentsWithAlerts} />}
-
-          {activeTab === 'assistant' && (
-            <AIAssistantView shipments={shipmentsWithAlerts} alerts={allAlerts} />
-          )}
-
-          {activeTab === 'admin' && <AdminView />}
-
-          {activeTab === 'deliverables' && <DeliverablesView />}
+          {activeTab === 'settings' && currentRole === 'supply_chain' && <SettingsView currentUserId={authUser.id} />}
         </main>
       </div>
+
+      {/* Shipment AI: floating chat available on every screen */}
+      <AIAssistantBubble
+        shipments={shipmentsWithAlerts}
+        alerts={allAlerts}
+        open={assistantOpen}
+        onOpenChange={setAssistantOpen}
+      />
 
       {/* Shipment Detail Modal */}
       {selectedShipment && (
@@ -972,10 +1046,10 @@ if (!authUser) {
                   options={carriersForMode}
                   value={newCarrier}
                   onChange={setNewCarrier}
-                  onCreate={handleCreateCarrier}
+                  onCreate={currentRole === 'supply_chain' ? handleCreateCarrier : undefined}
                   loading={refLoading}
                   loadError={refCarriersError}
-                  emptyHint={`Aucun transporteur ${newMode === 'Air' ? 'aérien' : 'maritime'} enregistré : utilisez « + Ajouter un transporteur… ».`}
+                  emptyHint={`Aucun transporteur ${newMode === 'Air' ? 'aérien' : 'maritime'} enregistré : ${currentRole === 'supply_chain' ? 'utilisez « + Ajouter un transporteur… ».' : 'demandez à Supply Chain de l’ajouter.'}`}
                 />
               </div>
 
@@ -1172,7 +1246,7 @@ if (!authUser) {
 
                 <div>
                   <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Coût Freight (€)
+                    Valeur marchandise (€)
                   </label>
                   <input
                     type="number"
@@ -1259,7 +1333,7 @@ if (!authUser) {
 
       {/* Floating Notification Toast */}
       {notification && (
-        <div className="fixed bottom-5 right-5 z-50 flex items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-xs font-bold text-white shadow-2xl dark:bg-white dark:text-slate-900 animate-bounce">
+        <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-xs font-bold text-white shadow-2xl dark:bg-white dark:text-slate-900 animate-bounce">
           <CheckCircle2 className="h-4 w-4 text-emerald-400 dark:text-emerald-600" />
           {notification}
         </div>
