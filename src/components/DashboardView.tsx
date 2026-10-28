@@ -16,11 +16,14 @@ import {
   XCircle,
 } from 'lucide-react';
 import { Shipment, ShipmentAlert, MetricSummary } from '../types';
+import { formatDate } from '../lib/dateFormat';
 
 interface DashboardViewProps {
   shipments: Shipment[];
   alerts: ShipmentAlert[];
   metrics: MetricSummary;
+  /** Tabs the current role may open: shortcuts to other tabs are hidden. */
+  allowedTabs?: string[];
   onNavigateTab: (tab: any) => void;
   onSelectShipment: (shipment: Shipment) => void;
   onOpenRelanceModal: (alert: ShipmentAlert) => void;
@@ -30,10 +33,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   shipments,
   alerts,
   metrics,
+  allowedTabs,
   onNavigateTab,
   onSelectShipment,
   onOpenRelanceModal,
 }) => {
+  const canOpen = (tab: string) => !allowedTabs || allowedTabs.includes(tab);
   const criticalAlerts = alerts.filter((a) => a.severity === 'critical');
   const recentShipments = shipments.slice(0, 6);
 
@@ -65,6 +70,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="flex gap-3">
             <button
               id="dash-btn-air-tab"
+              hidden={!canOpen('air')}
               onClick={() => onNavigateTab('air')}
               className="flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/20"
             >
@@ -72,6 +78,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
             <button
               id="dash-btn-sea-tab"
+              hidden={!canOpen('sea')}
               onClick={() => onNavigateTab('sea')}
               className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-[#643288] shadow-md transition hover:bg-purple-50"
             >
@@ -113,6 +120,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               )}
               <button
                 id="dash-btn-view-all-alerts"
+                hidden={!canOpen('alerts')}
                 onClick={() => onNavigateTab('alerts')}
                 className="flex items-center gap-1 text-xs font-bold text-rose-800 hover:underline dark:text-rose-300"
               >
@@ -280,6 +288,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
             <button
               id="dash-btn-all-shipments"
+              hidden={!canOpen('air')}
               onClick={() => onNavigateTab('air')}
               className="text-xs font-bold text-[#643288] hover:underline dark:text-pink-400"
             >
@@ -352,7 +361,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       </span>
                     </td>
                     <td className="px-3 py-3 text-slate-600 dark:text-slate-400 font-mono">
-                      {shp.eta}
+                      {formatDate(shp.eta)}
                     </td>
                     <td className="px-3 py-3 text-right">
                       <button
@@ -406,6 +415,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               <button
                 id="dash-quick-btn-alerts"
+                hidden={!canOpen('alerts')}
                 onClick={() => onNavigateTab('alerts')}
                 className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-rose-400 hover:bg-rose-50/50 dark:border-slate-700 dark:bg-slate-900"
               >
@@ -427,6 +437,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               <button
                 id="dash-quick-btn-analytics"
+                hidden={!canOpen('analytics')}
                 onClick={() => onNavigateTab('analytics')}
                 className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-indigo-400 hover:bg-indigo-50/50 dark:border-slate-700 dark:bg-slate-900"
               >

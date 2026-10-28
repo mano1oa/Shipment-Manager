@@ -24,6 +24,7 @@ import { Shipment, GlobalStatus, AntoineStatus, ShipmentDocument } from '../type
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { TrackingPanel } from './TrackingPanel';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
+import { formatDate } from '../lib/dateFormat';
 
 interface ShipmentDetailModalProps {
   shipment: Shipment | null;
@@ -78,9 +79,13 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   };
 
   const handleCopyRelance = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedRelance(true);
-    setTimeout(() => setCopiedRelance(false), 2500);
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedRelance(true);
+        setTimeout(() => setCopiedRelance(false), 2500);
+      })
+      .catch(() => window.alert('Copie impossible : le navigateur a refusé l’accès au presse-papier.'));
   };
 
   const handleSendChat = async (text: string) => {
@@ -178,14 +183,16 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                               </>
                             )}
                           </button>
-                          <button
-                            onClick={() => handleSendChat(activeAlert.relance_draft!)}
-                            disabled={dispatchingChat}
-                            className="flex items-center gap-1 rounded-lg bg-[#643288] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#522870] disabled:opacity-50"
-                          >
-                            <Send className="h-3 w-3" />
-                            {dispatchingChat ? 'Envoi...' : 'Envoyer Google Chat'}
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => handleSendChat(activeAlert.relance_draft!)}
+                              disabled={dispatchingChat}
+                              className="flex items-center gap-1 rounded-lg bg-[#643288] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#522870] disabled:opacity-50"
+                            >
+                              <Send className="h-3 w-3" />
+                              {dispatchingChat ? 'Envoi...' : 'Envoyer Google Chat'}
+                            </button>
+                          )}
                         </div>
                       </div>
                       <pre className="mt-2 text-xs font-sans text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed bg-slate-50 dark:bg-slate-950 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
@@ -228,7 +235,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/50">
               <span className="text-[10px] font-bold uppercase text-slate-400">ETA / Arrivée</span>
               <div className="text-sm font-bold font-mono text-slate-900 dark:text-white mt-1">
-                {shipment.eta}
+                {formatDate(shipment.eta)}
               </div>
               <div className="text-[10px] text-slate-500">Destination: {shipment.destination}</div>
             </div>
@@ -276,7 +283,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   <div className="bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700">
                     <span className="text-[10px] font-semibold text-slate-400 block">ETD (Départ)</span>
                     <span className="font-mono font-bold text-slate-800 dark:text-slate-100 mt-0.5 block">
-                      {shipment.etd || '2026-06-12'}
+                      {formatDate(shipment.etd)}
                     </span>
                     <span className="text-[9px] text-slate-400">{shipment.port_of_loading || shipment.origin}</span>
                   </div>
@@ -284,7 +291,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   <div className="bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700">
                     <span className="text-[10px] font-semibold text-slate-400 block">ETA (Arrivée estimée)</span>
                     <span className="font-mono font-bold text-slate-800 dark:text-slate-100 mt-0.5 block">
-                      {shipment.eta}
+                      {formatDate(shipment.eta)}
                     </span>
                     <span className="text-[9px] text-slate-400">{shipment.port_of_discharge || shipment.destination}</span>
                   </div>
@@ -292,7 +299,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   <div className="bg-white dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700">
                     <span className="text-[10px] font-semibold text-slate-400 block">Date Réelle d'Arrivée</span>
                     <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400 mt-0.5 block">
-                      {actualDate || 'En cours d\'acheminement'}
+                      {formatDate(actualDate, 'En cours d\'acheminement')}
                     </span>
                     <span className="text-[9px] text-slate-400">Scan quai final</span>
                   </div>
@@ -422,7 +429,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                     />
                   ) : (
                     <div className="mt-1 font-mono font-bold text-amber-800 dark:text-amber-300 text-sm">
-                      {shipment.orly_scan_date || 'Non renseignée'}
+                      {formatDate(shipment.orly_scan_date, 'Non renseignée')}
                     </div>
                   )}
                 </div>
@@ -441,7 +448,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                     const depMada = calculateDepartureMadagascar(scanDate);
                     return depMada !== 'Non parti' ? (
                       <span className="text-emerald-600 dark:text-emerald-400">
-                        {depMada}
+                        {formatDate(depMada)}
                       </span>
                     ) : (
                       <span className="text-amber-600 dark:text-amber-400">
@@ -465,7 +472,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                     const etaMada = calculateEtaMadaSDu(scanDate);
                     return etaMada !== 'Non parti' ? (
                       <span className="text-indigo-600 dark:text-indigo-400">
-                        {etaMada}
+                        {formatDate(etaMada)}
                       </span>
                     ) : (
                       <span className="text-amber-600 dark:text-amber-400">
@@ -508,7 +515,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   />
                 ) : (
                   <div className="mt-1 font-mono font-bold text-emerald-700 dark:text-emerald-400 text-sm">
-                    {shipment.mada_receipt_date || 'En attente'}
+                    {formatDate(shipment.mada_receipt_date, 'En attente')}
                   </div>
                 )}
               </div>
@@ -562,7 +569,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                       <span className="text-xs font-bold text-slate-900 dark:text-white">
                         {step.status}
                       </span>
-                      <span className="text-[10px] font-mono text-slate-400">{step.date}</span>
+                      <span className="text-[10px] font-mono text-slate-400">{formatDate(step.date)}</span>
                     </div>
                     <div className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 flex items-center gap-1">
                       <MapPin className="h-3 w-3 text-slate-400" /> {step.location}
@@ -600,11 +607,16 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                           {doc.filename}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          Type: {doc.type} • {doc.size_kb} KB • {doc.uploaded_at}
+                          Type: {doc.type} • {doc.size_kb} KB • {formatDate(doc.uploaded_at)}
                         </div>
                       </div>
                     </div>
-                    <button className="flex items-center gap-1 text-xs font-semibold text-[#643288] hover:underline dark:text-pink-400">
+                    <button
+                      type="button"
+                      disabled
+                      title="Stockage des fichiers pas encore disponible : seules les informations du document sont enregistrées."
+                      className="flex items-center gap-1 text-xs font-semibold text-slate-400 cursor-not-allowed"
+                    >
                       <Download className="h-3.5 w-3.5" /> Télécharger
                     </button>
                   </div>

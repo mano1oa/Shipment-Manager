@@ -109,11 +109,7 @@ const amountFormat = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, 
 
 export const formatQuantity = (n: number | null) => (n === null ? '—' : numberFormat.format(n));
 export const formatAmount = (n: number | null) => (n === null ? '—' : amountFormat.format(n));
-export const formatDate = (ymd: string | null) => {
-  if (!ymd) return '—';
-  const [y, m, d] = ymd.split('-');
-  return `${d}/${m}/${y}`;
-};
+export { formatDate, formatDateTime } from '../lib/dateFormat';
 
 export const SOURCE_LABELS: Record<DigiInvoiceSource, string> = {
   odoo: 'Odoo',

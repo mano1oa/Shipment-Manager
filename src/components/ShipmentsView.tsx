@@ -25,19 +25,85 @@ import {
 import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
+import { formatDate, formatToday } from '../lib/dateFormat';
 
 interface ShipmentsViewProps {
   shipments: Shipment[];
   modeFilter: 'Air' | 'Sea' | 'all';
+  globalSearch?: string;
+  onClearGlobalSearch?: () => void;
   onSelectShipment: (shipment: Shipment) => void;
   canEdit: boolean;
   onUpdateShipment?: (updated: Shipment) => void;
   onNewShipment?: () => void;
 }
 
+/**
+ * Inline text cell: edits a local draft and saves once, on blur or Enter
+ * (saving on every keystroke sent one request per character). Escape cancels.
+ */
+const InlineTextInput: React.FC<{
+  value: string;
+  onCommit: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  className?: string;
+}> = ({ value, onCommit, disabled, placeholder, className }) => {
+  const [draft, setDraft] = useState(value);
+  const cancelled = React.useRef(false);
+  React.useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      type="text"
+      placeholder={placeholder}
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (cancelled.current) {
+          cancelled.current = false;
+          setDraft(value);
+          return;
+        }
+        if (draft !== value) onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        if (e.key === 'Escape') {
+          cancelled.current = true;
+          e.currentTarget.blur();
+        }
+      }}
+      className={className}
+    />
+  );
+};
+
+const matchesSearch = (shp: Shipment, query: string) => {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [
+    shp.tracking_no,
+    shp.order_reference,
+    shp.supplier,
+    shp.invoice_no,
+    shp.bl_awb,
+    shp.ref_fa_digi_nxt,
+    shp.container_no,
+    shp.id,
+  ].some((v) => (v || '').toLowerCase().includes(q));
+};
+
+const csvCell = (value: unknown) => {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",;\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
 export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   shipments,
   modeFilter,
+  globalSearch = '',
+  onClearGlobalSearch,
   onSelectShipment,
   canEdit,
   onUpdateShipment,
@@ -101,18 +167,8 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
         if (!isOrly || !noMadagascar || !hasHubAlert) return false;
       }
 
-      // Search Query
-      if (search.trim()) {
-        const q = search.toLowerCase();
-        const matchTracking = shp.tracking_no.toLowerCase().includes(q);
-        const matchRef = shp.order_reference.toLowerCase().includes(q);
-        const matchSupplier = shp.supplier.toLowerCase().includes(q);
-        const matchInvoice = shp.invoice_no.toLowerCase().includes(q);
-        const matchBl = shp.bl_awb.toLowerCase().includes(q);
-        const matchFa = (shp.ref_fa_digi_nxt || '').toLowerCase().includes(q);
-        if (!matchTracking && !matchRef && !matchSupplier && !matchInvoice && !matchBl && !matchFa)
-          return false;
-      }
+      // Search Query (local box + navbar search)
+      if (!matchesSearch(shp, search) || !matchesSearch(shp, globalSearch)) return false;
 
       return true;
     });
@@ -125,7 +181,16 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     onlyDelays,
     onlyOrlyOverdue,
     search,
+    globalSearch,
   ]);
+
+  const hasActiveFilters =
+    Boolean(search.trim() || globalSearch.trim()) ||
+    selectedCarrier !== 'all' ||
+    selectedGlobalStatus !== 'all' ||
+    selectedSupplier !== 'all' ||
+    onlyDelays ||
+    onlyOrlyOverdue;
 
   // Shipments flagged as "Perdu Orly" for claims
   const perduOrlyShipments = useMemo(() => {
@@ -140,7 +205,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   const handleCopyClaimText = () => {
     if (perduOrlyShipments.length === 0) return;
     let text = `TABLEAU OFFICIEL DE RÉCLAMATION COLIS PERDUS ORLY\n`;
-    text += `Date de génération: ${new Date().toLocaleDateString('fr-FR')}\n`;
+    text += `Date de génération: ${formatToday()}\n`;
     text += `Nombre de colis: ${perduOrlyShipments.length} | Valeur Totale: ${totalPerduValue.toLocaleString()} €\n\n`;
     text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transporteur | N° Suivi / LTA | Valeur (€) | Remarques\n`;
     text += `----------------------------------------------------------------------------------------------------\n`;
@@ -148,13 +213,17 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${s.cost_eur} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
     });
 
-    navigator.clipboard.writeText(text);
-    setCopiedClaim(true);
-    setTimeout(() => setCopiedClaim(false), 3000);
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedClaim(true);
+        setTimeout(() => setCopiedClaim(false), 3000);
+      })
+      .catch(() => window.alert('Copie impossible : le navigateur a refusé l’accès au presse-papier.'));
   };
 
-  // Export CSV
-  const handleExportCSV = () => {
+  // Export CSV (UTF-8 with BOM so Excel keeps the accents)
+  const exportCSV = (list: Shipment[], filePrefix: string) => {
     const headers = [
       'ID',
       'Mode',
@@ -177,43 +246,41 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       'Remarques',
     ];
 
-    const rows = filteredShipments.map((s) => [
+    const rows = list.map((s) => [
       s.id,
       s.mode,
-      `"${s.supplier}"`,
+      s.supplier,
       s.order_reference,
       s.invoice_no,
       s.cost_eur,
       s.tracking_no,
-      s.bl_awb || '',
+      s.bl_awb,
       s.carrier,
-      `"${s.carrier_delivery_status || s.carrier_status}"`,
-      s.carrier_status_date || '',
-      `"${s.orly_shipment_status || ''}"`,
-      `"${s.global_status}"`,
-      s.orly_scan_date || '',
-      `"${s.ref_fa_digi_nxt || ''}"`,
-      calculateDepartureMadagascar(s.orly_scan_date),
-      calculateEtaMadaSDu(s.orly_scan_date),
-      s.mada_receipt_date || '',
-      `"${s.remarks || ''}"`,
+      s.carrier_delivery_status || s.carrier_status,
+      formatDate(s.carrier_status_date, ''),
+      s.orly_shipment_status,
+      s.global_status,
+      formatDate(s.orly_scan_date, ''),
+      s.ref_fa_digi_nxt,
+      formatDate(calculateDepartureMadagascar(s.orly_scan_date)),
+      formatDate(calculateEtaMadaSDu(s.orly_scan_date)),
+      formatDate(s.mada_receipt_date, ''),
+      s.remarks,
     ]);
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = [headers, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `export_expeditions_${modeFilter}_${new Date().toISOString().split('T')[0]}.csv`
-    );
+    link.href = url;
+    link.download = `${filePrefix}_${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
+
+  const handleExportCSV = () => exportCSV(filteredShipments, `export_expeditions_${modeFilter}`);
 
   return (
     <div className="space-y-4">
@@ -365,6 +432,22 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             </label>
           </div>
         </div>
+        {globalSearch.trim() && (
+          <div className="mt-3 flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+            <span>
+              Recherche globale : <strong className="font-mono">{globalSearch}</strong>
+            </span>
+            {onClearGlobalSearch && (
+              <button
+                type="button"
+                onClick={onClearGlobalSearch}
+                className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-0.5 font-semibold hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-700"
+              >
+                <X className="h-3 w-3" /> Effacer
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Table */}
@@ -421,10 +504,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                       </div>
                       <div className="text-center">
                         <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                          Aucune expédition enregistrée
+                          {hasActiveFilters ? 'Aucun résultat' : 'Aucune expédition enregistrée'}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">
-                          {search || selectedCarrier !== 'all' || selectedGlobalStatus !== 'all' || selectedSupplier !== 'all'
+                          {hasActiveFilters
                             ? 'Aucun résultat ne correspond à vos filtres actuels.'
                             : 'Commencez par ajouter une nouvelle expédition pour initialiser le suivi.'}
                         </p>
@@ -525,7 +608,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                             {/* 2. Date statut transporteur */}
                             <td className="px-3 py-3 font-mono text-slate-700 dark:text-slate-300">
-                              {shp.carrier_status_date || shp.updated_at || '—'}
+                              {formatDate(shp.carrier_status_date || shp.updated_at)}
                             </td>
                           </>
                         )}
@@ -534,6 +617,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                           <select
                             value={shp.global_status}
+                            disabled={!canEdit}
                             onChange={(e) => {
                               if (onUpdateShipment) {
                                 onUpdateShipment({
@@ -572,6 +656,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             <input
                               type="date"
                               value={shp.orly_scan_date || ''}
+                              disabled={!canEdit}
                               onChange={(e) => {
                                 const newDate = e.target.value;
                                 if (onUpdateShipment) {
@@ -593,15 +678,15 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                         {/* Ref FA (DIGI - NXT) : Format texte */}
                         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="text"
+                          <InlineTextInput
                             placeholder="Ref FA..."
                             value={shp.ref_fa_digi_nxt || ''}
-                            onChange={(e) => {
+                            disabled={!canEdit}
+                            onCommit={(value) => {
                               if (onUpdateShipment) {
                                 onUpdateShipment({
                                   ...shp,
-                                  ref_fa_digi_nxt: e.target.value,
+                                  ref_fa_digi_nxt: value.trim(),
                                   updated_at: new Date().toISOString().split('T')[0],
                                 });
                               }
@@ -617,7 +702,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             const isParti = depMada && depMada !== 'Non parti';
                             return isParti ? (
                               <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                                {depMada}
+                                {formatDate(depMada)}
                               </span>
                             ) : (
                               <span className="text-amber-600 dark:text-amber-400 font-bold">
@@ -634,7 +719,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             const isParti = etaMada && etaMada !== 'Non parti';
                             return isParti ? (
                               <span className="text-indigo-600 dark:text-indigo-400 font-medium">
-                                {etaMada}
+                                {formatDate(etaMada)}
                               </span>
                             ) : (
                               <span className="text-amber-600 dark:text-amber-400 font-bold">
@@ -649,6 +734,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                           <input
                             type="date"
                             value={shp.mada_receipt_date || ''}
+                            disabled={!canEdit}
                             onChange={(e) => {
                               if (onUpdateShipment) {
                                 onUpdateShipment({
@@ -677,15 +763,15 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                         {/* Remarques */}
                         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="text"
+                          <InlineTextInput
                             placeholder="Remarques..."
                             value={shp.remarks || ''}
-                            onChange={(e) => {
+                            disabled={!canEdit}
+                            onCommit={(value) => {
                               if (onUpdateShipment) {
                                 onUpdateShipment({
                                   ...shp,
-                                  remarks: e.target.value,
+                                  remarks: value,
                                   updated_at: new Date().toISOString().split('T')[0],
                                 });
                               }
@@ -820,7 +906,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                     Bordereau Récapitulatif des Envois non Reçus
                   </h3>
                   <span className="text-xs text-slate-500 font-mono">
-                    Date: {new Date().toLocaleDateString('fr-FR')}
+                    Date: {formatToday()}
                   </span>
                 </div>
 
@@ -900,7 +986,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleExportCSV}
+                  onClick={() => exportCSV(perduOrlyShipments, 'bordereau_reclamation_perdu_orly')}
                   disabled={perduOrlyShipments.length === 0}
                   className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50"
                 >

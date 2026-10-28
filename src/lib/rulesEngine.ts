@@ -1,4 +1,5 @@
 import { Shipment, ShipmentAlert } from '../types';
+import { formatDate } from './dateFormat';
 
 /**
  * Calculates Departure Madagascar ("DEPART MADA"):
@@ -250,11 +251,11 @@ Bloqué aux douanes d'origine ou d'arrivée. Documents complémentaires requis.
           severity: 'warning',
           rule_code: 'R4_CARRIER_ETA_OVERDUE',
           title: 'Retard de Livraison ETA',
-          reason: `L’ETA (${shipment.eta}) est dépassée de ${overdueDays} jour(s) sans livraison confirmée.`,
+          reason: `L’ETA (${formatDate(shipment.eta)}) est dépassée de ${overdueDays} jour(s) sans livraison confirmée.`,
           created_at: today,
           resolved: false,
           suggested_action: 'Vérifier la position exacte via l’API du transporteur et avertir le client final.',
-          relance_draft: `📢 *Avis de Retard Transporteur*\n📌 Ref: ${shipment.order_reference} (${shipment.carrier})\nETA initiale: ${shipment.eta} dépassée de ${overdueDays}j. Statut actuel: ${shipment.carrier_last_location}.`,
+          relance_draft: `📢 *Avis de Retard Transporteur*\n📌 Ref: ${shipment.order_reference} (${shipment.carrier})\nETA initiale: ${formatDate(shipment.eta)} dépassée de ${overdueDays}j. Statut actuel: ${shipment.carrier_last_location}.`,
         });
       }
     }

@@ -219,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           Base Données & API
         </div>
         <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-          Google Sheets Sync Active • Connecteurs Express v4.21
+          Neon PostgreSQL • Odoo DIGI LOGISTIC
         </p>
       </div>
     </aside>
