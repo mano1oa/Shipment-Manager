@@ -15,7 +15,10 @@ export interface DigiInvoiceLine {
 export interface DigiInvoice {
   id: string;
   source: DigiInvoiceSource;
+  /** Seller on the invoice (marketplace vendor for Amazon orders). */
   supplier_name: string | null;
+  /** Supplier for tracking: AMAZON when there is an Amazon order. */
+  supplier_display: string | null;
   dest_partner_name: string | null;
   ref: string | null;
   invoice_date: string | null;

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { getDb } from './neon.js';
 import { ensureNeonSchema } from './shipments.js';
-import { isServiceLabel, mergeServiceLines } from '../lib/digiInvoices.js';
+import { isServiceLabel, mergeServiceLines, trackingSupplierName } from '../lib/digiInvoices.js';
 import type { DigiInvoiceInput, DigiInvoiceLineInput } from '../lib/digiInvoices.js';
 
 /**
@@ -48,6 +48,8 @@ export interface DigiInvoiceRecord {
   id: string;
   source: DigiInvoiceSource;
   supplier_name: string | null;
+  /** AMAZON for an Amazon order, else supplier_name (see trackingSupplierName). */
+  supplier_display: string | null;
   dest_partner_name: string | null;
   ref: string | null;
   invoice_date: string | null;
@@ -248,6 +250,7 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     id: row.id,
     source: row.source,
     supplier_name: row.supplier_name,
+    supplier_display: trackingSupplierName(row.supplier_name, row.amazon_order_ref),
     dest_partner_name: row.dest_partner_name,
     ref: row.ref,
     invoice_date: row.invoice_date,

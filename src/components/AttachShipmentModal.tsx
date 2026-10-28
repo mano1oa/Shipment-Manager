@@ -19,7 +19,7 @@ const MAX_SHOWN = 50;
  */
 export const AttachShipmentModal: React.FC<Props> = ({ invoice, shipments, onClose, onConfirm }) => {
   // Same supplier first, then most recent
-  const [search, setSearch] = useState(invoice.supplier_name || '');
+  const [search, setSearch] = useState(invoice.supplier_display || '');
   const [selected, setSelected] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +58,7 @@ export const AttachShipmentModal: React.FC<Props> = ({ invoice, shipments, onClo
               <Link2 className="h-4 w-4 text-slate-400" /> Rattacher à une expédition
             </h2>
             <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-              Facture {invoice.ref || invoice.odoo_move_name} · {invoice.supplier_name || '—'} ·{' '}
+              Facture {invoice.ref || invoice.odoo_move_name} · {invoice.supplier_display || '—'} ·{' '}
               {formatAmount(invoice.amount_total)} €
               {invoice.shipment_id && invoice.shipment_exists && <> · actuellement dans {invoice.shipment_id}</>}
             </p>

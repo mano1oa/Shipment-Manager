@@ -99,6 +99,23 @@ export function mergeServiceLines(lines: DigiInvoiceLineInput[]): DigiInvoiceLin
 /** Default destination entity on DIGI LOGISTIC. */
 export const DEFAULT_DEST_PARTNER_NAME = 'NextHope';
 
+/** Supplier shown for every invoice of an Amazon order. */
+export const AMAZON_SUPPLIER = 'AMAZON';
+
+/**
+ * Supplier used for tracking (lists, grouping, shipments): an invoice with an
+ * Amazon order number was bought on Amazon, even when the seller is a
+ * marketplace vendor, so its supplier is AMAZON. The invoice keeps the real
+ * seller (supplier_name), which stays the key against duplicates.
+ */
+export function trackingSupplierName(
+  supplierName: string | null | undefined,
+  amazonOrderRef: string | null | undefined
+): string | null {
+  if (amazonOrderRef?.trim()) return AMAZON_SUPPLIER;
+  return supplierName?.trim() || null;
+}
+
 // ---------------------------------------------------------------------------
 // Value parsing
 // ---------------------------------------------------------------------------

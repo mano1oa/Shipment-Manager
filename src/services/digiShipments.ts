@@ -2,6 +2,7 @@ import { getShipmentByIdFromNeon, upsertShipmentInNeon } from '../db/shipments.j
 import { InvoiceForShipment, claimInvoiceForShipment, releaseInvoiceClaim } from '../db/digiInvoices.js';
 import { writeAuditLog, AuditActor } from '../db/audit.js';
 import { Shipment } from '../types.js';
+import { trackingSupplierName } from '../lib/digiInvoices.js';
 
 /**
  * Shipment of a DIGI invoice, created on request only ("Créer l'expédition",
@@ -25,7 +26,7 @@ function buildShipment(id: string, invoice: InvoiceForShipment): Shipment {
   return {
     id,
     mode: 'Air',
-    supplier: invoice.supplier_name || '',
+    supplier: trackingSupplierName(invoice.supplier_name, invoice.amazon_order_ref) || '',
     order_reference: invoice.amazon_order_ref || invoice.ref || invoice.odoo_move_name || '',
     invoice_no: invoice.ref || '',
     bl_awb: '',
@@ -55,7 +56,7 @@ function buildShipment(id: string, invoice: InvoiceForShipment): Shipment {
         location: '',
         status: 'Création',
         details: `Créée depuis la facture DIGI ${invoiceLabel}${
-          invoice.supplier_name ? ` (${invoice.supplier_name})` : ''
+          invoice.supplier_name ? ` (vendeur : ${invoice.supplier_name})` : ''
         }`,
       },
     ],

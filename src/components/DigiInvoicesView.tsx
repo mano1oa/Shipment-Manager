@@ -70,7 +70,7 @@ const TRACKING_FILTER_LABELS: Record<TrackingFilter, string> = {
 };
 
 const NO_SUPPLIER = '— Sans fournisseur —';
-const supplierOf = (inv: DigiInvoice) => inv.supplier_name?.trim() || NO_SUPPLIER;
+const supplierOf = (inv: DigiInvoice) => inv.supplier_display || NO_SUPPLIER;
 
 const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   odoo: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
@@ -283,6 +283,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       if (!q) return true;
       return [
         inv.supplier_name,
+        inv.supplier_display,
         inv.ref,
         inv.amazon_order_ref,
         inv.sale_move_ref,
@@ -520,7 +521,12 @@ export const DigiInvoicesView: React.FC<Props> = ({
             {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
           </td>
           <td className="px-3 py-3 font-bold text-slate-800 dark:text-slate-100">
-            {inv.supplier_name || '—'}
+            {inv.supplier_display || '—'}
+            {inv.supplier_name && inv.supplier_display !== inv.supplier_name && (
+              <div className="text-[10px] font-normal text-slate-400" title="Vendeur indiqué sur la facture">
+                Vendeur : {inv.supplier_name}
+              </div>
+            )}
           </td>
           <td className="px-3 py-3">
             <div className="font-semibold">{inv.ref || '—'}</div>

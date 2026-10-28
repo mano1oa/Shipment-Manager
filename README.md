@@ -313,7 +313,7 @@ créée reprend :
 
 - mode **Aérien** par défaut (modifiable dans la fiche), statut global « En
   livraison vers Orly », statut Antoine « En attente Antoine » ;
-- fournisseur, commande (commande Amazon, sinon référence), n° de facture et
+- fournisseur (AMAZON si commande Amazon), commande (commande Amazon, sinon référence), n° de facture et
   Réf FA DIGI-NXT (facture vente) repris de la facture ; transporteur, LTA et
   ETA restent à saisir ;
 - **valeur de l'expédition = total de ses factures**, lignes de services comprises (le coût saisi à la main
@@ -332,6 +332,14 @@ expédier : factures ne contenant que des frais, ou classées à la main en
 services (travail manuel). Une facture classée en services est détachée de son
 expédition (qui reste à supprimer si besoin) ; elle peut être remise dans les
 factures à traiter (onglet « À traiter »).
+
+**Fournisseur AMAZON.** Toute facture qui porte un n° de commande Amazon a
+pour fournisseur **AMAZON**, quel que soit le vendeur (Amazon ou vendeur
+marketplace) : pour le suivi, ce sont des articles commandés sur la
+plateforme Amazon. Cela vaut pour la liste, le regroupement, le filtre et
+l'expédition créée. Le vendeur réel reste enregistré et affiché sous le nom
+(« Vendeur : … ») ; il sert toujours à repérer les doublons (même vendeur et
+même référence).
 
 **Affichage.** Les factures sont groupées par fournisseur (sous-total et
 nombre de factures sans expédition par fournisseur ; un clic replie le
