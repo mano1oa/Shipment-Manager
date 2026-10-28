@@ -66,6 +66,8 @@ export async function initParcelSchema(): Promise<void> {
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS packing_info VARCHAR(500);`;
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS volume_m3 NUMERIC(12, 3);`;
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(40);`;
+  // Lost parcels already announced on Google Chat (daily summary)
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS loss_notified_at TIMESTAMPTZ;`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS parcel_invoices (
@@ -117,6 +119,10 @@ export async function initParcelSchema(): Promise<void> {
   // After the conversion (which fills the NULLs): new DIGI invoices start unsorted
   await sql`ALTER TABLE digi_invoices ALTER COLUMN triage SET DEFAULT 'to_sort';`;
   await runOnce('parcel_rouen_v1', convertSeaDeliveries);
+  // Losses known before the daily summary existed are not announced again
+  await runOnce('parcel_loss_notified_v1', async () => {
+    await sql`UPDATE parcels SET loss_notified_at = NOW() WHERE status = 'lost' AND loss_notified_at IS NULL`;
+  });
 }
 
 /**

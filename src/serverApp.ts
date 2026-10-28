@@ -126,6 +126,7 @@ import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiIn
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
 import { createShipmentForInvoice } from './services/digiShipments.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
+import { runParcelLossCheck } from './services/parcelLossNotifier.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
 const ODOO_SYNC_TIME_BUDGET_MS = 240_000;
@@ -535,9 +536,20 @@ export function createServerApp(): Express {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
+    // Same daily run (8 h, Madagascar): lost parcels + Google Chat summary.
+    // Independent of Odoo: a failure here never blocks the invoices sync.
+    let parcelLosses: Record<string, unknown> | null = null;
+    try {
+      parcelLosses = await runParcelLossCheck();
+      console.log('[Parcels Cron]', JSON.stringify(parcelLosses));
+    } catch (err: any) {
+      console.error('[Parcels Cron] Failed:', err);
+      parcelLosses = { error: 'Parcel loss check failed' };
+    }
+
     if (!isOdooConfigured()) {
       console.log('[DIGI Cron] Odoo is not configured: nothing to sync.');
-      return res.json({ success: true, skipped: 'ODOO_NOT_CONFIGURED' });
+      return res.json({ success: true, skipped: 'ODOO_NOT_CONFIGURED', parcel_losses: parcelLosses });
     }
 
     try {
@@ -548,7 +560,7 @@ export function createServerApp(): Express {
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
       console.log('[DIGI Cron]', JSON.stringify(result));
-      return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result });
+      return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result, parcel_losses: parcelLosses });
     } catch (err: any) {
       console.error('[DIGI Cron] Failed:', err);
       return res.status(500).json({ success: false, error: 'DIGI invoices sync failed' });

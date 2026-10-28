@@ -315,6 +315,8 @@ export async function setParcelStatus(
   await sql`
     UPDATE parcels SET
       status = ${status},
+      -- leaving "lost": a new loss later is announced again
+      loss_notified_at = CASE WHEN ${status} = 'lost' THEN loss_notified_at ELSE NULL END,
       received_at = CASE
         WHEN ${status} = 'received' THEN COALESCE(${receivedAt}::date, received_at, CURRENT_DATE)
         WHEN ${keepsReception} THEN received_at
@@ -366,6 +368,41 @@ export async function markOverdueParcelsLost(settings: TrackingSettings): Promis
     RETURNING id
   `;
   return rows.length;
+}
+
+export interface LostParcelToNotify {
+  id: string;
+  tracking_number: string | null;
+  supplier_name: string | null;
+  carrier_name: string | null;
+  destination: ParcelDestination;
+  expected_delivery: string | null;
+  invoice_refs: string[];
+}
+
+/** Lost parcels not announced on Google Chat yet. */
+export async function listLostParcelsToNotify(): Promise<LostParcelToNotify[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT p.id, p.tracking_number, p.supplier_name, p.carrier_name, p.destination,
+      TO_CHAR(p.expected_delivery, 'YYYY-MM-DD') AS expected_delivery,
+      COALESCE(
+        (SELECT array_agg(COALESCE(i.ref, '—') ORDER BY i.ref) FROM parcel_invoices pi
+         JOIN digi_invoices i ON i.id = pi.invoice_id WHERE pi.parcel_id = p.id),
+        '{}'
+      ) AS invoice_refs
+    FROM parcels p
+    WHERE p.status = 'lost' AND p.loss_notified_at IS NULL
+    ORDER BY p.supplier_name NULLS LAST, p.tracking_number
+  `;
+  return rows as unknown as LostParcelToNotify[];
+}
+
+export async function markLossesNotified(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const sql = getDb();
+  await sql`UPDATE parcels SET loss_notified_at = NOW() WHERE id = ANY(${ids}::uuid[])`;
 }
 
 export interface LateTriageInvoice {
