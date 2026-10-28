@@ -20,7 +20,7 @@ relances.
 5. [Statuts : qui les change et quand](#5-statuts--qui-les-change-et-quand)
 6. [Alertes](#6-alertes)
 7. [Suivi transporteur](#7-suivi-transporteur)
-   - [Colis à suivre : factures DIGI LOGISTIC](#7-bis-colis-à-suivre--factures-digi-logistic)
+   - [Factures DIGI LOGISTIC](#7-bis-factures-digi-logistic)
 8. [Ce qui est automatique et ce qui est manuel](#8-ce-qui-est-automatique-et-ce-qui-est-manuel)
 9. [Points d'attention connus](#9-points-dattention-connus)
 10. [Données, API et sécurité](#10-données-api-et-sécurité)
@@ -66,8 +66,8 @@ contrôle côté API.
 |---|:---:|:---:|:---:|
 | Consulter le tableau de bord, utiliser l'assistant IA | ✅ | ✅ | ✅ |
 | Voir les listes Aérien / Maritime et les fiches (lecture) | ✅ | ✅ | ✅ |
-| Colis à suivre (DIGI) : consulter, synchroniser Odoo, importer Excel, saisir / modifier | ✅ | ✅ | ❌ |
-| Colis à suivre (DIGI) : supprimer une facture | ✅ | ❌ | ❌ |
+| Factures DIGI : consulter, synchroniser Odoo, importer Excel, saisir / modifier | ✅ | ✅ | ❌ |
+| Factures DIGI : supprimer une facture | ✅ | ❌ | ❌ |
 | Créer / modifier une expédition | ✅ | ✅ | ❌ |
 | Supprimer une expédition | ✅ | ❌ | ❌ |
 | Ajouter un transporteur à la liste | ✅ | ❌ | ❌ |
@@ -97,7 +97,7 @@ Protections sur les comptes :
 | Tableau de bord & KPI | tous | Onglet « Vue d'ensemble » : indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides. Onglet « Analyses & SLAs » (SC, Direction) : respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
 | Suivi Aérien | SC, Sourcing, Direction (lecture) | Liste des expéditions `Air`, filtres, **édition directe** du statut, de la date de scan Orly, de la Réf FA, de la réception Mada et des remarques ; export CSV ; « Générer réclamation » (colis Perdu Orly) |
 | Suivi Maritime | SC, Sourcing, Direction (lecture) | Liste des expéditions `Sea` et, pour chacune, le tableau des livraisons au quai de Rouen |
-| Colis à suivre (DIGI) | SC, Sourcing | Factures DIGI LOGISTIC à destination de NextHope avec leurs lignes de produits ; synchronisation Odoo, import Excel, saisie manuelle (voir §7 bis) |
+| Factures DIGI | SC, Sourcing | Factures DIGI LOGISTIC à destination de NextHope avec leurs lignes de produits et leur expédition ; synchronisation Odoo, import Excel, saisie manuelle ; sélection multiple, regroupement et filtre par fournisseur (voir §7 bis) |
 | Centre d'Alertes | SC, Sourcing | Alertes calculées, message de relance pré-rédigé, envoi Google Chat, résolution partagée |
 | Paramètres | SC | Quatre rubriques : **Utilisateurs & accès** (comptes, rôles, activation) ; **Transporteurs** (créer, renommer, changer le mode, relier à un connecteur de suivi, désactiver ; état des connecteurs) ; **Intégrations** (N8N & webhook Google Chat, liens Google Sheets, seuils d'alerte) ; **Base de données** (état Neon, initialisation du schéma, purge) |
 
@@ -109,10 +109,11 @@ En plus des menus :
 - **Profil** (nom en haut à droite) : changer son mot de passe (12 caractères
   minimum, les autres sessions sont déconnectées), basculer le thème clair /
   sombre, se déconnecter.
-- **Valeur (€)** d'une expédition : montant de la facture DIGI LOGISTIC liée
-  (Réf FA DIGI-NXT ou N° de facture identique au nom Odoo, à la facture de
-  vente ou à la référence de la facture DIGI ; casse, espaces et tirets
-  ignorés). Sans facture liée : la « Valeur marchandise » saisie sur
+- **Valeur (€)** d'une expédition : total des factures DIGI LOGISTIC
+  rattachées à l'expédition. Pour une ancienne expédition sans facture
+  rattachée : la facture DIGI dont le nom Odoo, la facture de vente ou la
+  référence est identique à la Réf FA DIGI-NXT ou au N° de facture (casse,
+  espaces et tirets ignorés). Sinon : la « Valeur marchandise » saisie sur
   l'expédition (`cost_eur`). Cette même valeur sert dans les listes, les KPI du
   tableau de bord (valeur en transit, valeur Perdu Orly), la réclamation et
   l'export CSV.
@@ -242,9 +243,10 @@ UPS, DHL et FedEx. Une fois un fournisseur branché :
 
 ---
 
-## 7 bis. Colis à suivre : factures DIGI LOGISTIC
+## 7 bis. Factures DIGI LOGISTIC
 
-La liste des colis à suivre vient des factures de la base Odoo **DIGI
+Le menu « Factures DIGI » (anciennement « Colis à suivre », renommé pour ne
+pas le confondre avec le suivi aérien et maritime) liste les factures de la base Odoo **DIGI
 LOGISTIC** dont l'**entité de destination est NextHope**, pour disposer des
 lignes de produits de chaque facture.
 
@@ -330,6 +332,26 @@ expédier : factures ne contenant que des frais, ou classées à la main en
 services (travail manuel). Une facture classée en services est détachée de son
 expédition (qui reste à supprimer si besoin) ; elle peut être remise dans les
 factures à expédier.
+
+**Affichage.** Les factures sont groupées par fournisseur (sous-total et
+nombre de factures sans expédition par fournisseur ; un clic replie le
+groupe ; case « Grouper par fournisseur » pour revenir à une liste simple).
+Filtres : recherche libre, fournisseur, source et, dans « À expédier », état
+du suivi — « Sans expédition », « Expédition sans n° de suivi » (ni n° de
+suivi ni LTA / BL sur l'expédition), « Expédition suivie ».
+
+**Sélection multiple.** Des cases à cocher par facture, par fournisseur et
+pour toute la liste affichée ouvrent une barre d'actions :
+
+- « Créer les expéditions » : une expédition par facture ;
+- « Grouper en une expédition » : une seule expédition pour toutes les
+  factures sélectionnées (envoi groupé) ;
+- « Pas d'expédition — services » : classe les factures en services
+  (« Remettre à expédier » dans l'onglet Services) ;
+- « Supprimer » (Supply Chain ; pas les factures encore présentes dans Odoo).
+
+Seules les factures concernées par une action sont traitées (le nombre est
+indiqué sur le bouton) ; celles en échec sont listées avec la raison.
 
 Toutes ces actions sont tracées dans le journal d'audit.
 
@@ -529,4 +551,4 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
 | 3 | Alertes résolues partagées dans Neon ; protections sur la gestion des utilisateurs ; journal d'audit complet |
 | 4 | Plus aucun détail technique dans les réponses d'erreur ; limitation des connexions et de l'IA ; onglet Alertes ouvert à SOURCING |
 | 5 | Base du suivi transporteur : plusieurs numéros par expédition, historique d'événements, détection du transporteur, cron quotidien sécurisé |
-| 6 | Colis à suivre : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main ; une expédition créée par facture, lignes de frais fusionnées, onglet Services ; fiche expédition simplifiée |
+| 6 | Factures DIGI (ex-« Colis à suivre ») : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main ; une expédition créée par facture, lignes de frais fusionnées, onglet Services ; fiche expédition simplifiée |
