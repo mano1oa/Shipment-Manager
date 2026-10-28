@@ -1,22 +1,16 @@
 import React from 'react';
 import {
-  Ship,
-  Plane,
   Bot,
   Bell,
   Search,
-  User,
   Sun,
   Moon,
   Zap,
-  CheckCircle2,
-  AlertTriangle,
   RefreshCw,
   Database,
-  Layers,
-  LogOut,
 } from 'lucide-react';
 import { UserRole } from '../types';
+import { UserProfileMenu } from './UserProfileMenu';
 
 interface NavbarProps {
   currentRole: UserRole;
@@ -59,6 +53,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   isLoadingDb = false,
   onRefreshDb,
 }) => {
+  const roleLabel =
+    currentRole === 'supply_chain' ? 'Supply Chain' : currentRole === 'sourcing' ? 'Sourcing' : 'Direction';
+
   return (
     <header
       id="main-navbar"
@@ -194,15 +191,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           {isLoadingDb && <RefreshCw className="h-2.5 w-2.5 animate-spin" />}
         </div>
 
-        {/* Role Switcher */}
-        <div className="rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
-          {currentRole === 'supply_chain'
-              ? 'Supply Chain'
-              : currentRole === 'sourcing'
-              ? 'Sourcing'
-              : 'Direction'}
-        </div>
-
         {/* AI Assistant Quick Trigger */}
         <button
           id="nav-btn-ai-assistant"
@@ -238,35 +226,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
         </button>
 
-          <div className="flex items-center gap-2 border-l border-slate-200 pl-3 dark:border-slate-700">
-  <div className="hidden h-8 w-8 lg:flex items-center justify-center rounded-full bg-[#643288]/10 text-[#643288] dark:bg-[#643288]/30 dark:text-purple-200">
-    <User className="h-4 w-4" />
-  </div>
-
-  <div className="hidden max-w-[160px] lg:block">
-    <p className="truncate text-xs font-semibold text-slate-900 dark:text-white">
-      {authUser.display_name}
-    </p>
-
-    <p className="truncate text-[10px] text-slate-500 dark:text-slate-400">
-      {currentRole === 'supply_chain'
-        ? 'Supply Chain'
-        : currentRole === 'sourcing'
-          ? 'Sourcing'
-          : 'Direction'}
-    </p>
-  </div>
-
-  <button
-    type="button"
-    onClick={onLogout}
-    title="Se déconnecter"
-    className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:bg-red-50 hover:text-red-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-red-950 dark:hover:text-red-300"
-  >
-    <LogOut className="h-4 w-4" />
-  </button>
-</div>
-
+        {/* User profile menu: password change, theme, sign-out */}
+        <UserProfileMenu
+          user={authUser}
+          roleLabel={roleLabel}
+          darkMode={darkMode}
+          onToggleDarkMode={onToggleDarkMode}
+          onLogout={onLogout}
+        />
       </div>
     </header>
   );

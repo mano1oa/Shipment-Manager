@@ -8,7 +8,7 @@ interface Props {
   destination: string;
   maxInvoices: number;
   onClose: () => void;
-  onImported: () => void;
+  onImported: (result: DigiImportResult) => void;
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -103,8 +103,9 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
     setImporting(true);
     setError(null);
     try {
-      setResult(await importDigiInvoices(parsed.invoices, fileName));
-      onImported();
+      const imported = await importDigiInvoices(parsed.invoices, fileName);
+      setResult(imported);
+      onImported(imported);
     } catch (err: any) {
       setError(err.message);
     } finally {

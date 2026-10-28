@@ -13,6 +13,12 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Wrench,
+  PackageCheck,
+  Link2,
+  PlusCircle,
+  Layers,
+  X,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -28,14 +34,43 @@ import {
   formatDateTime,
   formatQuantity,
   syncDigiOdoo,
+  createShipmentFromInvoice,
+  setInvoiceServices,
+  isServicesInvoice,
+  assignInvoiceShipment,
 } from './digiApi';
+import { AttachShipmentModal } from './AttachShipmentModal';
+import { Shipment } from '../types';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DigiImportModal } from './DigiImportModal';
 import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
 
 interface Props {
   canDelete: boolean;
+  /** Opens a shipment's detail (shipment created from an invoice). */
+  onOpenShipment: (shipmentId: string) => void;
+  /** Shipments were created: the app reloads its shipment lists. */
+  onShipmentsChanged: () => void;
+  /** Existing shipments, to attach an invoice to one of them. */
+  shipments: Shipment[];
+  /** Deletes a shipment left without invoices (SUPPLY_CHAIN only). */
+  onDeleteShipment?: (shipmentId: string) => Promise<void> | void;
 }
+
+type Section = 'to_ship' | 'services';
+
+/** Where the invoice stands on the way to a tracked shipment. */
+type TrackingFilter = 'all' | 'no_shipment' | 'no_tracking' | 'tracked';
+
+const TRACKING_FILTER_LABELS: Record<TrackingFilter, string> = {
+  all: 'Tous les suivis',
+  no_shipment: 'Sans expédition',
+  no_tracking: 'Expédition sans n° de suivi ni LTA / BL',
+  tracked: 'Expédition suivie',
+};
+
+const NO_SUPPLIER = '— Sans fournisseur —';
+const supplierOf = (inv: DigiInvoice) => inv.supplier_display || NO_SUPPLIER;
 
 const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   odoo: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
@@ -43,7 +78,13 @@ const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   manual: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
-export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
+export const DigiInvoicesView: React.FC<Props> = ({
+  canDelete,
+  onOpenShipment,
+  onShipmentsChanged,
+  shipments,
+  onDeleteShipment,
+}) => {
   const [config, setConfig] = useState<DigiConfig | null>(null);
   const [invoices, setInvoices] = useState<DigiInvoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +94,16 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
 
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | DigiInvoiceSource>('all');
+  const [section, setSection] = useState<Section>('to_ship');
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState<DigiInvoice | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [supplierFilter, setSupplierFilter] = useState('all');
+  const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>('all');
+  const [groupBySupplier, setGroupBySupplier] = useState(true);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<DigiInvoice | 'new' | null>(null);
   const [showImport, setShowImport] = useState(false);
@@ -117,6 +167,77 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
     }
   };
 
+  const replaceInvoice = (updated: DigiInvoice) =>
+    setInvoices((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+
+  const handleCreateShipment = async (inv: DigiInvoice) => {
+    setBusyId(inv.id);
+    setError(null);
+    try {
+      const { invoice, shipment } = await createShipmentFromInvoice(inv.id);
+      replaceInvoice(invoice);
+      onShipmentsChanged();
+      setMessage(`Expédition ${shipment.id} créée.`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleAssign = async (inv: DigiInvoice, shipmentId: string | null) => {
+    const r = await assignInvoiceShipment(inv.id, shipmentId);
+    replaceInvoice(r.invoice);
+    setAttaching(null);
+    onShipmentsChanged();
+    setMessage(
+      shipmentId
+        ? `Facture ${inv.ref ?? ''} rattachée à l'expédition ${shipmentId}.`
+        : `Facture ${inv.ref ?? ''} détachée de ${r.previous_shipment_id}.`
+    );
+    const emptied = r.previous_shipment_empty ? r.previous_shipment_id : null;
+    if (emptied) {
+      if (
+        onDeleteShipment &&
+        window.confirm(`L'expédition ${emptied} n'a plus aucune facture. La supprimer ?`)
+      ) {
+        await onDeleteShipment(emptied);
+      } else if (!onDeleteShipment) {
+        setMessage(`Facture rattachée. L'expédition ${emptied} n'a plus de facture : demandez à Supply Chain de la supprimer si besoin.`);
+      }
+    }
+  };
+
+  const handleToggleServices = async (inv: DigiInvoice) => {
+    const toServices = !inv.no_shipment;
+    if (
+      toServices &&
+      inv.shipment_id &&
+      inv.shipment_exists &&
+      !window.confirm(
+        `Classer la facture ${inv.ref ?? ''} en services ? Elle sera détachée de l'expédition ${inv.shipment_id}, qui reste à supprimer si elle n'a plus lieu d'être.`
+      )
+    ) {
+      return;
+    }
+    setBusyId(inv.id);
+    setError(null);
+    try {
+      const { invoice, detached_shipment_id } = await setInvoiceServices(inv.id, toServices);
+      replaceInvoice(invoice);
+      if (detached_shipment_id) onShipmentsChanged();
+      setMessage(
+        toServices
+          ? `Facture ${inv.ref ?? ''} classée en services (pas d'expédition).`
+          : `Facture ${inv.ref ?? ''} remise dans les factures à traiter.`
+      );
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggle = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
@@ -125,13 +246,44 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
       return next;
     });
 
+  const shipmentById = useMemo(() => new Map(shipments.map((s) => [s.id, s])), [shipments]);
+
+  /** none = no shipment yet; untracked = shipment without tracking / LTA number. */
+  const trackingState = (inv: DigiInvoice): 'none' | 'untracked' | 'tracked' => {
+    if (!(inv.shipment_id && inv.shipment_exists)) return 'none';
+    const s = shipmentById.get(inv.shipment_id);
+    return s && (s.tracking_no?.trim() || s.bl_awb?.trim()) ? 'tracked' : 'untracked';
+  };
+
+  const canCreateShipment = (inv: DigiInvoice) =>
+    inv.has_items && !isServicesInvoice(inv) && !(inv.shipment_id && inv.shipment_exists);
+  const isDeletable = (inv: DigiInvoice) => canDelete && (inv.source !== 'odoo' || inv.odoo_missing);
+
+  const sectionInvoices = useMemo(
+    () => invoices.filter((inv) => (section === 'services') === isServicesInvoice(inv)),
+    [invoices, section]
+  );
+
+  const suppliers = useMemo(
+    () => Array.from(new Set<string>(sectionInvoices.map(supplierOf))).sort((a, b) => a.localeCompare(b, 'fr')),
+    [sectionInvoices]
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return invoices.filter((inv) => {
+    return sectionInvoices.filter((inv) => {
       if (sourceFilter !== 'all' && inv.source !== sourceFilter) return false;
+      if (supplierFilter !== 'all' && supplierOf(inv) !== supplierFilter) return false;
+      if (section === 'to_ship' && trackingFilter !== 'all') {
+        const state = trackingState(inv);
+        if (trackingFilter === 'no_shipment' && state !== 'none') return false;
+        if (trackingFilter === 'no_tracking' && state !== 'untracked') return false;
+        if (trackingFilter === 'tracked' && state !== 'tracked') return false;
+      }
       if (!q) return true;
       return [
         inv.supplier_name,
+        inv.supplier_display,
         inv.ref,
         inv.amazon_order_ref,
         inv.sale_move_ref,
@@ -139,12 +291,384 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
         ...inv.lines.map((l) => l.name),
       ].some((v) => v && v.toLowerCase().includes(q));
     });
-  }, [invoices, search, sourceFilter]);
+  }, [sectionInvoices, search, sourceFilter, supplierFilter, trackingFilter, section, shipmentById]);
+
+  const groups = useMemo(() => {
+    const bySupplier = new Map<string, DigiInvoice[]>();
+    for (const inv of filtered) {
+      const key = supplierOf(inv);
+      bySupplier.set(key, [...(bySupplier.get(key) || []), inv]);
+    }
+    return Array.from(bySupplier.entries()).sort(([a], [b]) => a.localeCompare(b, 'fr'));
+  }, [filtered]);
+
+  const servicesCount = useMemo(() => invoices.filter(isServicesInvoice).length, [invoices]);
+
+  // A supplier picked in one tab may not exist in the other
+  useEffect(() => {
+    if (supplierFilter !== 'all' && !suppliers.includes(supplierFilter)) setSupplierFilter('all');
+  }, [suppliers, supplierFilter]);
+
+  // ---- Multiple selection (only the invoices currently shown count) ----
+  useEffect(() => setSelected(new Set()), [section]);
+
+  const selectedInvoices = useMemo(() => filtered.filter((i) => selected.has(i.id)), [filtered, selected]);
+  const selectedTotal = selectedInvoices.reduce((sum, i) => sum + (i.amount_total || 0), 0);
+
+  const setSelection = (ids: string[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
+      return next;
+    });
+
+  const selectionState = (list: DigiInvoice[]): boolean | 'mixed' => {
+    const n = list.filter((i) => selected.has(i.id)).length;
+    return n === 0 ? false : n === list.length ? true : 'mixed';
+  };
+
+  const toShipNow = selectedInvoices.filter(canCreateShipment);
+  const toServices = selectedInvoices.filter((i) => !i.no_shipment && section === 'to_ship');
+  const backToShip = selectedInvoices.filter((i) => i.no_shipment);
+  const toDelete = selectedInvoices.filter(isDeletable);
+
+  /** Runs one request per invoice, in sequence, and reports what failed. */
+  const runBulk = async (
+    label: string,
+    list: DigiInvoice[],
+    action: (inv: DigiInvoice) => Promise<void>
+  ): Promise<number> => {
+    setError(null);
+    setMessage(null);
+    const failures: string[] = [];
+    let done = 0;
+    for (let index = 0; index < list.length; index++) {
+      const inv = list[index];
+      setBulkProgress(`${label} : ${index + 1} / ${list.length}…`);
+      try {
+        await action(inv);
+        done++;
+        setSelection([inv.id], false);
+      } catch (err: any) {
+        failures.push(`${inv.ref || inv.odoo_move_name || inv.id} (${err.message})`);
+      }
+    }
+    setBulkProgress(null);
+    if (failures.length > 0) {
+      setError(`${failures.length} facture(s) non traitée(s) : ${failures.join(' ; ')}`);
+    }
+    return done;
+  };
+
+  const handleBulkCreate = async () => {
+    if (!window.confirm(`Créer ${toShipNow.length} expédition(s), une par facture ?`)) return;
+    const created: string[] = [];
+    await runBulk('Création des expéditions', toShipNow, async (inv) => {
+      const { invoice, shipment } = await createShipmentFromInvoice(inv.id);
+      replaceInvoice(invoice);
+      created.push(shipment.id);
+    });
+    if (created.length > 0) {
+      onShipmentsChanged();
+      setMessage(`${created.length} expédition(s) créée(s) : ${created.join(', ')}.`);
+    }
+  };
+
+  const handleBulkGroup = async () => {
+    const supplierNames = Array.from(new Set(toShipNow.map(supplierOf)));
+    if (
+      !window.confirm(
+        `Créer UNE expédition pour ces ${toShipNow.length} factures (envoi groupé)` +
+          (supplierNames.length > 1 ? `, de ${supplierNames.length} fournisseurs différents` : '') +
+          ' ?'
+      )
+    ) {
+      return;
+    }
+    const [first, ...others] = toShipNow;
+    setError(null);
+    setMessage(null);
+    setBulkProgress('Envoi groupé : création de l\'expédition…');
+    let shipmentId: string;
+    try {
+      const { invoice, shipment } = await createShipmentFromInvoice(first.id);
+      replaceInvoice(invoice);
+      setSelection([first.id], false);
+      shipmentId = shipment.id;
+    } catch (err: any) {
+      setBulkProgress(null);
+      setError(err.message);
+      return;
+    }
+    const attached = await runBulk('Envoi groupé : rattachement', others, async (inv) => {
+      const r = await assignInvoiceShipment(inv.id, shipmentId);
+      replaceInvoice(r.invoice);
+    });
+    onShipmentsChanged();
+    setMessage(`Expédition ${shipmentId} créée avec ${attached + 1} facture(s).`);
+  };
+
+  const handleBulkServices = async (noShipment: boolean) => {
+    const list = noShipment ? toServices : backToShip;
+    const withShipment = list.filter((i) => i.shipment_id && i.shipment_exists);
+    const question = noShipment
+      ? `Classer ${list.length} facture(s) en services (pas d'expédition) ?` +
+        (withShipment.length > 0
+          ? ` ${withShipment.length} seront détachées de leur expédition, qui reste à supprimer si elle n'a plus lieu d'être.`
+          : '')
+      : `Remettre ${list.length} facture(s) dans les factures à traiter ?`;
+    if (!window.confirm(question)) return;
+    let detached = false;
+    const done = await runBulk(noShipment ? 'Classement en services' : 'Remise à traiter', list, async (inv) => {
+      const r = await setInvoiceServices(inv.id, noShipment);
+      replaceInvoice(r.invoice);
+      if (r.detached_shipment_id) detached = true;
+    });
+    if (detached) onShipmentsChanged();
+    if (done > 0) {
+      setMessage(
+        noShipment
+          ? `${done} facture(s) classée(s) en services.`
+          : `${done} facture(s) remise(s) dans les factures à traiter.`
+      );
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (!window.confirm(`Supprimer définitivement ${toDelete.length} facture(s) ?`)) return;
+    const done = await runBulk('Suppression', toDelete, async (inv) => {
+      await deleteDigiInvoice(inv.id);
+      setInvoices((prev) => prev.filter((i) => i.id !== inv.id));
+    });
+    if (done > 0) setMessage(`${done} facture(s) supprimée(s).`);
+  };
 
   const lastSync = config?.last_sync ?? null;
 
+  const renderShipmentCell = (inv: DigiInvoice) => {
+    if (inv.shipment_id && inv.shipment_exists) {
+      return (
+        <button
+          onClick={() => onOpenShipment(inv.shipment_id!)}
+          className="text-left font-mono font-semibold text-[#643288] hover:underline dark:text-purple-300"
+          title={inv.shipment_global_status || undefined}
+        >
+          {inv.shipment_id}
+          <span className="ml-1 font-sans text-[10px] font-normal text-slate-400">{inv.shipment_mode}</span>
+          {trackingState(inv) === 'untracked' && (
+            <span className="mt-0.5 block w-fit rounded-full bg-amber-100 px-1.5 py-0.5 font-sans text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+              Sans suivi ni LTA / BL
+            </span>
+          )}
+        </button>
+      );
+    }
+    if (isServicesInvoice(inv)) return <span className="text-slate-400">Service</span>;
+    if (!inv.has_items) return <span className="text-slate-400">—</span>;
+    return createShipmentButton(inv);
+  };
+
+  /** Creates the shipment of an invoice that has none (old, draft, deleted, detached). */
+  const createShipmentButton = (inv: DigiInvoice) => {
+    const isDraft = Boolean(inv.odoo_state && inv.odoo_state !== 'posted');
+    return (
+      <button
+        onClick={() => handleCreateShipment(inv)}
+        disabled={busyId === inv.id}
+        title={
+          isDraft
+            ? 'Brouillon Odoo : vous pouvez déjà créer l\'expédition si la marchandise est commandée.'
+            : 'Créer une expédition à partir de cette facture'
+        }
+        className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#522870] disabled:opacity-50"
+      >
+        {busyId === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <PlusCircle className="h-3 w-3" />}
+        {inv.shipment_id ? 'Recréer l\'expédition' : 'Créer l\'expédition'}
+      </button>
+    );
+  };
+
   const button =
     'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-bold shadow-sm transition disabled:opacity-50';
+  const bulkButton =
+    'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40';
+  const selectClass =
+    'rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+
+  const renderInvoice = (inv: DigiInvoice) => {
+    const isOpen = expanded.has(inv.id);
+    const editable = inv.source !== 'odoo';
+    const deletable = isDeletable(inv);
+    const isSelected = selected.has(inv.id);
+    return (
+      <React.Fragment key={inv.id}>
+        <tr
+          onClick={() => toggle(inv.id)}
+          className={`cursor-pointer transition ${
+            isSelected
+              ? 'bg-purple-50/70 hover:bg-purple-50 dark:bg-purple-950/30 dark:hover:bg-purple-950/40'
+              : 'hover:bg-slate-50/90 dark:hover:bg-slate-700/40'
+          }`}
+        >
+          <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+            <SelectBox
+              state={isSelected}
+              label={`Sélectionner la facture ${inv.ref || inv.odoo_move_name || ''}`}
+              onChange={(on) => setSelection([inv.id], on)}
+            />
+          </td>
+          <td className="px-3 py-3 text-slate-400">
+            {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </td>
+          <td className="px-3 py-3 font-bold text-slate-800 dark:text-slate-100">
+            {inv.supplier_display || '—'}
+            {inv.supplier_name && inv.supplier_display !== inv.supplier_name && (
+              <div className="text-[10px] font-normal text-slate-400" title="Vendeur indiqué sur la facture">
+                Vendeur : {inv.supplier_name}
+              </div>
+            )}
+          </td>
+          <td className="px-3 py-3">
+            <div className="font-semibold">{inv.ref || '—'}</div>
+            {inv.odoo_move_name && (
+              <div className="text-[10px] text-slate-400">Odoo : {inv.odoo_move_name}</div>
+            )}
+          </td>
+          <td className="px-3 py-3">{formatDate(inv.invoice_date)}</td>
+          <td className="px-3 py-3 font-mono">{inv.amazon_order_ref || '—'}</td>
+          <td className="px-3 py-3">{inv.sale_move_ref || '—'}</td>
+          <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+            {renderShipmentCell(inv)}
+          </td>
+          <td className="px-3 py-3 text-right">{inv.lines.length}</td>
+          <td className="px-3 py-3 text-right font-semibold">{formatAmount(inv.amount_total)}</td>
+          <td className="px-3 py-3">
+            <div className="flex flex-wrap gap-1">
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_BADGES[inv.source]}`}>
+                {SOURCE_LABELS[inv.source]}
+              </span>
+              {inv.odoo_state && inv.odoo_state !== 'posted' && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  {ODOO_STATE_LABELS[inv.odoo_state] || inv.odoo_state}
+                </span>
+              )}
+              {inv.odoo_missing && (
+                <span
+                  title="Cette facture n'est plus renvoyée par Odoo pour cette destination"
+                  className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                >
+                  Absente d'Odoo
+                </span>
+              )}
+            </div>
+          </td>
+          <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-end gap-1">
+              {inv.has_items && !inv.no_shipment && (
+                <button
+                  onClick={() => setAttaching(inv)}
+                  title="Rattacher à une expédition existante (envoi groupé)"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
+                >
+                  <Link2 className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={() => handleToggleServices(inv)}
+                disabled={busyId === inv.id}
+                title={inv.no_shipment ? 'Remettre dans les factures à traiter' : 'Classer en services (pas d\'expédition)'}
+                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+              >
+                {inv.no_shipment ? <PackageCheck className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
+              </button>
+              {editable && (
+                <button
+                  onClick={() => setEditing(inv)}
+                  title="Modifier"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+              )}
+              {deletable && (
+                <button
+                  onClick={() => handleDelete(inv)}
+                  title="Supprimer"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </td>
+        </tr>
+        {isOpen && (
+          <tr className="bg-slate-50/60 dark:bg-slate-900/40">
+            <td colSpan={2} />
+            <td colSpan={10} className="px-3 py-3">
+              {inv.has_items && !isServicesInvoice(inv) && !(inv.shipment_id && inv.shipment_exists) && (
+                <div className="mb-3 flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-800">
+                  <span className="flex-1 text-slate-600 dark:text-slate-300">
+                    {inv.shipment_id
+                      ? `L'expédition ${inv.shipment_id} de cette facture a été supprimée.`
+                      : 'Cette facture n\'a pas encore d\'expédition.'}
+                  </span>
+                  {createShipmentButton(inv)}
+                  <button
+                    onClick={() => setAttaching(inv)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#643288] hover:text-[#643288] dark:border-slate-600 dark:text-slate-200"
+                  >
+                    <Link2 className="h-3 w-3" /> Rattacher à une expédition existante
+                  </button>
+                </div>
+              )}
+              {inv.lines.length === 0 ? (
+                <p className="text-slate-500">Aucune ligne de facture.</p>
+              ) : (
+                <table className="w-full rounded-xl border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-800">
+                  <thead className="text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2">Libellé</th>
+                      <th className="px-3 py-2 text-right">Quantité</th>
+                      <th className="px-3 py-2 text-right">Prix</th>
+                      <th className="px-3 py-2 text-right">Sous-total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                    {inv.lines.map((line) => (
+                      <tr key={line.id} className={line.is_service ? 'text-slate-400' : ''}>
+                        <td className="px-3 py-2 whitespace-pre-line">
+                          {line.is_service && (
+                            <span className="mr-2 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-700 dark:text-slate-300">
+                              Service
+                            </span>
+                          )}
+                          {line.name}
+                        </td>
+                        <td className="px-3 py-2 text-right">{formatQuantity(line.quantity)}</td>
+                        <td className="px-3 py-2 text-right">{formatAmount(line.price_unit)}</td>
+                        <td className="px-3 py-2 text-right font-semibold">
+                          {formatAmount(line.price_subtotal)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <p className="mt-2 text-[10px] text-slate-400">
+                {inv.source === 'odoo'
+                  ? 'Facture Odoo : modifiable uniquement dans Odoo, puis resynchronisée.'
+                  : `Ajoutée par ${inv.created_by_email || '—'} le ${formatDate(inv.created_at)}` +
+                    (inv.updated_by_email && inv.updated_at !== inv.created_at
+                      ? ` · modifiée par ${inv.updated_by_email} le ${formatDate(inv.updated_at)}`
+                      : '')}
+              </p>
+            </td>
+          </tr>
+        )}
+      </React.Fragment>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -152,11 +676,14 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900 dark:text-white">
-            <ReceiptText className="h-6 w-6 text-[#643288]" /> Colis à suivre — Factures DIGI
+            <ReceiptText className="h-6 w-6 text-[#643288]" /> Factures DIGI
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Factures DIGI LOGISTIC dont l'entité de destination est <strong>{destination}</strong>, avec leurs lignes de
-            produits. Sources : Odoo, import Excel, saisie manuelle.
+            produits. Sources : Odoo, import Excel, saisie manuelle. Aucune expédition n'est créée automatiquement, car une
+            facture peut ne contenir que des services : cochez les factures de marchandises puis « Créer les
+            expéditions », et classez les autres en services. Le suivi des colis se fait ensuite dans Suivi Aérien /
+            Maritime.
           </p>
           {config?.odoo_configured && (
             <p className="mt-0.5 text-[11px] text-slate-400">
@@ -227,9 +754,37 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
         </div>
       )}
 
+      {/* Sections */}
+      <div className="flex gap-1 rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
+        {(
+          [
+            ['to_ship', 'À traiter', invoices.length - servicesCount],
+            ['services', 'Services (non expédiés)', servicesCount],
+          ] as [Section, string, number][]
+        ).map(([key, label, count]) => (
+          <button
+            key={key}
+            onClick={() => setSection(key)}
+            className={`rounded-lg px-3 py-1.5 transition ${
+              section === key
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+            }`}
+          >
+            {label} <span className="ml-1 text-slate-400">{count}</span>
+          </button>
+        ))}
+      </div>
+      {section === 'services' && (
+        <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Factures sans article à expédier (frais DEEE, RCP, port… ou classées à la main) : traitement manuel, aucune
+          expédition n'est créée.
+        </p>
+      )}
+
       {/* Filters */}
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs sm:flex-row sm:items-center dark:border-slate-800 dark:bg-slate-800">
-        <div className="relative flex-1">
+      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:flex-wrap lg:items-center dark:border-slate-800 dark:bg-slate-800">
+        <div className="relative min-w-[16rem] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
@@ -239,9 +794,36 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
           />
         </div>
         <select
+          value={supplierFilter}
+          onChange={(e) => setSupplierFilter(e.target.value)}
+          className={`max-w-[16rem] ${selectClass}`}
+          title="Filtrer par fournisseur"
+        >
+          <option value="all">Tous les fournisseurs ({suppliers.length})</option>
+          {suppliers.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        {section === 'to_ship' && (
+          <select
+            value={trackingFilter}
+            onChange={(e) => setTrackingFilter(e.target.value as TrackingFilter)}
+            className={selectClass}
+            title="Où en est l'expédition de la facture"
+          >
+            {(Object.keys(TRACKING_FILTER_LABELS) as TrackingFilter[]).map((k) => (
+              <option key={k} value={k}>
+                {TRACKING_FILTER_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        )}
+        <select
           value={sourceFilter}
           onChange={(e) => setSourceFilter(e.target.value as typeof sourceFilter)}
-          className="rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          className={selectClass}
         >
           <option value="all">Toutes les sources</option>
           {(Object.keys(SOURCE_LABELS) as DigiInvoiceSource[]).map((s) => (
@@ -250,10 +832,95 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
             </option>
           ))}
         </select>
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <input
+            type="checkbox"
+            checked={groupBySupplier}
+            onChange={(e) => setGroupBySupplier(e.target.checked)}
+            className="h-4 w-4 accent-[#643288]"
+          />
+          Grouper par fournisseur
+        </label>
         <span className="text-xs font-semibold text-slate-500">
           {filtered.length} facture(s) · {filtered.reduce((n, i) => n + i.lines.length, 0)} ligne(s)
         </span>
       </div>
+
+      {/* Actions on the selected invoices */}
+      {(selectedInvoices.length > 0 || bulkProgress) && (
+        <div className="sticky top-20 z-10 flex flex-col gap-3 rounded-2xl border border-[#643288]/40 bg-purple-50 p-3 shadow-md lg:flex-row lg:items-center dark:border-purple-800 dark:bg-slate-900">
+          <div className="flex flex-1 items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-100">
+            {bulkProgress ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-[#643288]" /> {bulkProgress}
+              </>
+            ) : (
+              <>
+                {selectedInvoices.length} facture(s) sélectionnée(s) · {formatAmount(selectedTotal)} €
+                <button
+                  onClick={() => setSelected(new Set())}
+                  title="Tout désélectionner"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-white hover:text-slate-700 dark:hover:bg-slate-800"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+          {!bulkProgress && (
+            <div className="flex flex-wrap gap-2">
+              {section === 'to_ship' && (
+                <>
+                  <button
+                    onClick={handleBulkCreate}
+                    disabled={toShipNow.length === 0}
+                    title="Une expédition par facture (factures avec articles et sans expédition)"
+                    className={`${bulkButton} bg-[#643288] text-white hover:bg-[#522870]`}
+                  >
+                    <PlusCircle className="h-3.5 w-3.5" /> Créer les expéditions ({toShipNow.length})
+                  </button>
+                  <button
+                    onClick={handleBulkGroup}
+                    disabled={toShipNow.length < 2}
+                    title="Une seule expédition pour toutes les factures sélectionnées sans expédition (envoi groupé)"
+                    className={`${bulkButton} border border-[#643288] bg-white text-[#643288] hover:bg-purple-50 dark:bg-slate-800 dark:text-purple-300`}
+                  >
+                    <Layers className="h-3.5 w-3.5" /> Grouper en une expédition ({toShipNow.length})
+                  </button>
+                  <button
+                    onClick={() => handleBulkServices(true)}
+                    disabled={toServices.length === 0}
+                    title="Factures de services : aucune expédition"
+                    className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
+                  >
+                    <Wrench className="h-3.5 w-3.5" /> Pas d'expédition — services ({toServices.length})
+                  </button>
+                </>
+              )}
+              {section === 'services' && (
+                <button
+                  onClick={() => handleBulkServices(false)}
+                  disabled={backToShip.length === 0}
+                  title="Seules les factures classées à la main peuvent revenir ; celles qui ne contiennent que des frais restent en services."
+                  className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
+                >
+                  <PackageCheck className="h-3.5 w-3.5" /> Remettre à traiter ({backToShip.length})
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={toDelete.length === 0}
+                  title="Les factures Odoo encore présentes dans Odoo ne se suppriment pas ici"
+                  className={`${bulkButton} border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-800 dark:text-rose-300`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Supprimer ({toDelete.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-800">
@@ -261,13 +928,20 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
               <tr>
+                <th className="w-8 px-3 py-3">
+                  <SelectBox
+                    state={filtered.length > 0 && selectionState(filtered)}
+                    label="Sélectionner toutes les factures affichées"
+                    onChange={(on) => setSelection(filtered.map((i) => i.id), on)}
+                  />
+                </th>
                 <th className="w-8 px-3 py-3" />
                 <th className="px-3 py-3 font-semibold">Fournisseur</th>
                 <th className="px-3 py-3 font-semibold">Réf. facture</th>
                 <th className="px-3 py-3 font-semibold">Date de facturation</th>
                 <th className="px-3 py-3 font-semibold">Commande Amazon</th>
                 <th className="px-3 py-3 font-semibold">Facture vente</th>
-                <th className="px-3 py-3 font-semibold">Destination</th>
+                <th className="px-3 py-3 font-semibold">Expédition</th>
                 <th className="px-3 py-3 text-right font-semibold">Lignes</th>
                 <th className="px-3 py-3 text-right font-semibold">Total</th>
                 <th className="px-3 py-3 font-semibold">Source</th>
@@ -277,134 +951,68 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {loading ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                     {invoices.length === 0
                       ? 'Aucune facture DIGI enregistrée : synchronisez Odoo, importez un fichier Excel ou saisissez une facture.'
                       : 'Aucune facture ne correspond à vos filtres.'}
                   </td>
                 </tr>
-              ) : (
-                filtered.map((inv) => {
-                  const isOpen = expanded.has(inv.id);
-                  const editable = inv.source !== 'odoo';
-                  const deletable = canDelete && (inv.source !== 'odoo' || inv.odoo_missing);
+              ) : groupBySupplier ? (
+                groups.map(([supplier, list]) => {
+                  const collapsed = collapsedGroups.has(supplier);
+                  const state = selectionState(list);
+                  const withoutShipment = list.filter(canCreateShipment).length;
                   return (
-                    <React.Fragment key={inv.id}>
+                    <React.Fragment key={`group-${supplier}`}>
                       <tr
-                        onClick={() => toggle(inv.id)}
-                        className="cursor-pointer transition hover:bg-slate-50/90 dark:hover:bg-slate-700/40"
+                        onClick={() =>
+                          setCollapsedGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(supplier)) next.delete(supplier);
+                            else next.add(supplier);
+                            return next;
+                          })
+                        }
+                        className="cursor-pointer bg-slate-100/80 hover:bg-slate-100 dark:bg-slate-900/70 dark:hover:bg-slate-900"
                       >
-                        <td className="px-3 py-3 text-slate-400">
-                          {isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                          <SelectBox
+                            state={state}
+                            label={`Sélectionner les factures de ${supplier}`}
+                            onChange={(on) => setSelection(list.map((i) => i.id), on)}
+                          />
                         </td>
-                        <td className="px-3 py-3 font-bold text-slate-800 dark:text-slate-100">
-                          {inv.supplier_name || '—'}
+                        <td className="px-3 py-2 text-slate-400">
+                          {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                         </td>
-                        <td className="px-3 py-3">
-                          <div className="font-semibold">{inv.ref || '—'}</div>
-                          {inv.odoo_move_name && (
-                            <div className="text-[10px] text-slate-400">Odoo : {inv.odoo_move_name}</div>
-                          )}
-                        </td>
-                        <td className="px-3 py-3">{formatDate(inv.invoice_date)}</td>
-                        <td className="px-3 py-3 font-mono">{inv.amazon_order_ref || '—'}</td>
-                        <td className="px-3 py-3">{inv.sale_move_ref || '—'}</td>
-                        <td className="px-3 py-3">{inv.dest_partner_name || '—'}</td>
-                        <td className="px-3 py-3 text-right">{inv.lines.length}</td>
-                        <td className="px-3 py-3 text-right font-semibold">{formatAmount(inv.amount_total)}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap gap-1">
-                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_BADGES[inv.source]}`}>
-                              {SOURCE_LABELS[inv.source]}
-                            </span>
-                            {inv.odoo_state && inv.odoo_state !== 'posted' && (
-                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                {ODOO_STATE_LABELS[inv.odoo_state] || inv.odoo_state}
+                        <td colSpan={7} className="px-3 py-2 font-extrabold text-slate-900 dark:text-white">
+                          {supplier}
+                          <span className="ml-2 text-[11px] font-semibold text-slate-500">
+                            {list.length} facture(s)
+                            {section === 'to_ship' && withoutShipment > 0 && (
+                              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                {withoutShipment} sans expédition
                               </span>
                             )}
-                            {inv.odoo_missing && (
-                              <span
-                                title="Cette facture n'est plus renvoyée par Odoo pour cette destination"
-                                className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300"
-                              >
-                                Absente d'Odoo
-                              </span>
-                            )}
-                          </div>
+                          </span>
                         </td>
-                        <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                          <div className="flex justify-end gap-1">
-                            {editable && (
-                              <button
-                                onClick={() => setEditing(inv)}
-                                title="Modifier"
-                                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </button>
-                            )}
-                            {deletable && (
-                              <button
-                                onClick={() => handleDelete(inv)}
-                                title="Supprimer"
-                                className="rounded-lg p-1.5 text-slate-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            )}
-                          </div>
+                        <td className="px-3 py-2 text-right font-bold text-slate-900 dark:text-white">
+                          {formatAmount(list.reduce((sum, i) => sum + (i.amount_total || 0), 0))}
                         </td>
+                        <td colSpan={2} />
                       </tr>
-                      {isOpen && (
-                        <tr className="bg-slate-50/60 dark:bg-slate-900/40">
-                          <td />
-                          <td colSpan={10} className="px-3 py-3">
-                            {inv.lines.length === 0 ? (
-                              <p className="text-slate-500">Aucune ligne de facture.</p>
-                            ) : (
-                              <table className="w-full rounded-xl border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-800">
-                                <thead className="text-[10px] uppercase tracking-wider text-slate-500">
-                                  <tr>
-                                    <th className="px-3 py-2">Libellé</th>
-                                    <th className="px-3 py-2 text-right">Quantité</th>
-                                    <th className="px-3 py-2 text-right">Prix</th>
-                                    <th className="px-3 py-2 text-right">Sous-total</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                                  {inv.lines.map((line) => (
-                                    <tr key={line.id}>
-                                      <td className="px-3 py-2 whitespace-pre-line">{line.name}</td>
-                                      <td className="px-3 py-2 text-right">{formatQuantity(line.quantity)}</td>
-                                      <td className="px-3 py-2 text-right">{formatAmount(line.price_unit)}</td>
-                                      <td className="px-3 py-2 text-right font-semibold">
-                                        {formatAmount(line.price_subtotal)}
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            )}
-                            <p className="mt-2 text-[10px] text-slate-400">
-                              {inv.source === 'odoo'
-                                ? 'Facture Odoo : modifiable uniquement dans Odoo, puis resynchronisée.'
-                                : `Ajoutée par ${inv.created_by_email || '—'} le ${formatDate(inv.created_at)}` +
-                                  (inv.updated_by_email && inv.updated_at !== inv.created_at
-                                    ? ` · modifiée par ${inv.updated_by_email} le ${formatDate(inv.updated_at)}`
-                                    : '')}
-                            </p>
-                          </td>
-                        </tr>
-                      )}
+                      {!collapsed && list.map(renderInvoice)}
                     </React.Fragment>
                   );
                 })
+              ) : (
+                filtered.map(renderInvoice)
               )}
             </tbody>
           </table>
@@ -426,6 +1034,15 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
         />
       )}
 
+      {attaching && (
+        <AttachShipmentModal
+          invoice={attaching}
+          shipments={shipments}
+          onClose={() => setAttaching(null)}
+          onConfirm={(shipmentId) => handleAssign(attaching, shipmentId)}
+        />
+      )}
+
       {showImport && (
         <DigiImportModal
           destination={destination}
@@ -439,3 +1056,22 @@ export const DigiInvoicesView: React.FC<Props> = ({ canDelete }) => {
     </div>
   );
 };
+
+/** Checkbox that can show a partial selection (some invoices of a group). */
+const SelectBox: React.FC<{ state: boolean | 'mixed'; label: string; onChange: (on: boolean) => void }> = ({
+  state,
+  label,
+  onChange,
+}) => (
+  <input
+    type="checkbox"
+    aria-label={label}
+    title={label}
+    checked={state === true}
+    ref={(el) => {
+      if (el) el.indeterminate = state === 'mixed';
+    }}
+    onChange={() => onChange(state !== true)}
+    className="h-4 w-4 cursor-pointer accent-[#643288]"
+  />
+);

@@ -235,3 +235,64 @@ export async function updateUserStatus(
     previous: { role: before.role, is_active: before.is_active },
   };
 }
+
+export const PASSWORD_MIN_LENGTH = 12;
+
+export type PasswordChangeResult =
+  | { ok: true; reason?: undefined }
+  | { ok: false; reason: 'NOT_FOUND' | 'INVALID_CURRENT' };
+
+/**
+ * Changes the user's own password after checking the current one.
+ * `newPassword` must already be validated (length, differs from current).
+ */
+export async function changeUserPassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<PasswordChangeResult> {
+  const sql = getDb();
+
+  const rows = await sql`
+    SELECT password_hash FROM users WHERE id = ${userId} AND is_active = TRUE LIMIT 1
+  `;
+  const row = rows[0] as { password_hash: string } | undefined;
+  if (!row) return { ok: false, reason: 'NOT_FOUND' };
+
+  const valid = await bcrypt.compare(currentPassword, row.password_hash);
+  if (!valid) return { ok: false, reason: 'INVALID_CURRENT' };
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  await sql`
+    UPDATE users
+    SET
+      password_hash = ${passwordHash},
+      updated_at = NOW()
+    WHERE id = ${userId}
+  `;
+
+  return { ok: true };
+}
+
+/**
+ * Sets a new password for another user (SUPPLY_CHAIN reset of a forgotten
+ * password) and signs that user out everywhere. Returns false when not found.
+ * `newPassword` must already be validated.
+ */
+export async function resetUserPassword(userId: string, newPassword: string): Promise<boolean> {
+  const sql = getDb();
+
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  const rows = await sql`
+    UPDATE users
+    SET
+      password_hash = ${passwordHash},
+      updated_at = NOW()
+    WHERE id = ${userId}
+    RETURNING id
+  `;
+  if (!rows[0]) return false;
+
+  await sql`DELETE FROM user_sessions WHERE user_id = ${userId}`;
+  return true;
+}

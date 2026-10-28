@@ -104,8 +104,13 @@ export function calculateDaysBetween(fromDateStr: string, toDateStr?: string): n
 
 /**
  * Evaluates business rules against a list of shipments and returns generated alerts.
+ * `valueOf` gives the shipment value shown in claim messages (linked DIGI invoice
+ * amount, else cost_eur); defaults to cost_eur.
  */
-export function evaluateShipmentRules(shipments: Shipment[]): {
+export function evaluateShipmentRules(
+  shipments: Shipment[],
+  valueOf: (s: Shipment) => number = (s) => s.cost_eur || 0
+): {
   shipmentsWithAlerts: Shipment[];
   allAlerts: ShipmentAlert[];
 } {
@@ -156,12 +161,13 @@ export function evaluateShipmentRules(shipments: Shipment[]): {
     if (shipment.global_status === 'Perdu Orly') {
       const alertId = `ALT-LOST-${shipment.id}`;
       const faValue = shipment.ref_fa_digi_nxt || shipment.invoice_no || 'N/A';
+      const shipmentValue = valueOf(shipment);
       const relanceMsg = `🚨 COLIS MANQUANT A LA RECEPTION - PERDU ORLY
 👉 Veuillez transmettre le dossier de réclamation pour indemnisation.
 - Réf FA: ${faValue} / Commande : ${shipment.order_reference || 'N/A'}
 - Fournisseur: ${shipment.supplier || 'N/A'} / Transporteur: ${shipment.carrier || 'N/A'}
 - N° Suivi: ${shipment.tracking_no || 'N/A'}
-- Valeur: ${shipment.cost_eur ? shipment.cost_eur + ' €' : 'N/A'}`;
+- Valeur: ${shipmentValue ? shipmentValue.toLocaleString('fr-FR') + ' €' : 'N/A'}`;
 
       alerts.push({
         id: alertId,

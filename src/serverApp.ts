@@ -22,17 +22,24 @@ import {
   listUsers,
   updateUserRole,
   updateUserStatus,
+  changeUserPassword,
+  resetUserPassword,
+  PASSWORD_MIN_LENGTH,
 } from './db/users.js';
 
 import {
   createSession,
   getSessionUser,
   deleteSession,
+  deleteOtherSessions,
 } from './db/sessions.js';
 
 import {
   getActiveCarriers,
+  getAllCarriers,
   createCarrier,
+  updateCarrier,
+  getTrackingCodeForCarrierName,
   DuplicateReferenceError,
   CARRIER_TRANSPORT_MODES,
   CARRIER_NAME_MAX_LENGTH,
@@ -46,6 +53,7 @@ import {
 } from './db/suppliers.js';
 
 import { writeAuditLog } from './db/audit.js';
+import { ANTOINE_STATUSES } from './types.js';
 
 import {
   listDigiInvoices,
@@ -55,11 +63,17 @@ import {
   deleteDigiInvoice,
   importDigiInvoices,
   getLastOdooSyncRun,
+  getInvoiceForShipment,
+  getInvoiceTotalsByShipment,
+  listDigiInvoicesForShipment,
+  setInvoiceNoShipment,
+  assignInvoiceToShipment,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
 } from './db/digiInvoices.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
+import { createShipmentForInvoice } from './services/digiShipments.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
@@ -107,6 +121,8 @@ const LOGIN_WINDOW_SECONDS = 15 * 60;
 const AI_USER_LIMIT = 40; // Gemini calls per user (chat + analysis)
 const AI_WINDOW_SECONDS = 60 * 60;
 const AI_PROMPT_MAX_LENGTH = 4000;
+const PASSWORD_CHANGE_LIMIT = 10; // password change attempts per user
+const PASSWORD_CHANGE_WINDOW_SECONDS = 15 * 60;
 
 function sendTooManyRequests(res: any, retryAfterSeconds: number, message: string) {
   const retryAfter = Math.max(1, Math.ceil(retryAfterSeconds || 60));
@@ -477,7 +493,7 @@ export function createServerApp(): Express {
       const startedAt = Date.now();
       const result = await runDigiOdooSync({
         trigger: 'cron',
-        actorEmail: null,
+        actor: null,
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
       console.log('[DIGI Cron]', JSON.stringify(result));
@@ -489,6 +505,67 @@ export function createServerApp(): Express {
   });
 
     app.use('/api', requireAuth);
+
+  // Own password change (any role). The user's other sessions are signed out.
+  app.post('/api/auth/change-password', async (req: any, res) => {
+    const { currentPassword, newPassword } = req.body || {};
+
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: 'Mot de passe actuel et nouveau mot de passe requis.' });
+    }
+    if (newPassword.length < PASSWORD_MIN_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `Le nouveau mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères.`,
+      });
+    }
+    if (newPassword.length > 200) {
+      return res.status(400).json({ success: false, error: 'Le nouveau mot de passe est trop long.' });
+    }
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ success: false, error: 'Le nouveau mot de passe doit être différent de l’actuel.' });
+    }
+
+    try {
+      const limit = await consumeRateLimit(
+        `password-change:user:${req.user.id}`,
+        PASSWORD_CHANGE_LIMIT,
+        PASSWORD_CHANGE_WINDOW_SECONDS
+      );
+      if (!limit.allowed) {
+        return sendTooManyRequests(
+          res,
+          limit.retryAfterSeconds,
+          'Trop de tentatives de changement de mot de passe. Veuillez réessayer plus tard.'
+        );
+      }
+
+      const result = await changeUserPassword(req.user.id, currentPassword, newPassword);
+      if (!result.ok) {
+        return res.status(result.reason === 'INVALID_CURRENT' ? 400 : 404).json({
+          success: false,
+          error: result.reason === 'INVALID_CURRENT' ? 'Le mot de passe actuel est incorrect.' : 'Utilisateur introuvable.',
+        });
+      }
+
+      const token = getCookie(req, 'shipment_session');
+      if (token) {
+        await deleteOtherSessions(req.user.id, token);
+      }
+
+      await writeAuditLog({
+        entityType: 'USER',
+        entityId: req.user.id,
+        action: 'CHANGE_PASSWORD',
+        actor: req.user,
+      });
+
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Change password error:', error);
+      return res.status(500).json({ success: false, error: 'Impossible de changer le mot de passe.' });
+    }
+  });
 
     // Liste des utilisateurs (accessible uniquement aux rôles SUPPLY_CHAIN)
     app.get(
@@ -592,7 +669,55 @@ app.post(
   }
 );
 
-// Modifier le rôle 
+// Réinitialiser le mot de passe d'un autre utilisateur (mot de passe oublié).
+// Son propre mot de passe se change depuis le profil (mot de passe actuel exigé).
+app.put(
+  '/api/admin/users/:id/password',
+  requireRole('SUPPLY_CHAIN'),
+  async (req: any, res) => {
+    const { password } = req.body || {};
+
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Utilisateur introuvable.' });
+    }
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Pour votre propre compte, utilisez « Changer le mot de passe » dans votre profil.',
+      });
+    }
+    if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `Le mot de passe doit contenir au moins ${PASSWORD_MIN_LENGTH} caractères.`,
+      });
+    }
+    if (password.length > 200) {
+      return res.status(400).json({ success: false, error: 'Le mot de passe est trop long.' });
+    }
+
+    try {
+      const found = await resetUserPassword(req.params.id, password);
+      if (!found) {
+        return res.status(404).json({ success: false, error: 'Utilisateur introuvable.' });
+      }
+
+      await writeAuditLog({
+        entityType: 'USER',
+        entityId: req.params.id,
+        action: 'RESET_PASSWORD',
+        actor: req.user,
+      });
+
+      return res.json({ success: true });
+    } catch (error) {
+      console.error('Reset password error:', error);
+      return res.status(500).json({ success: false, error: 'Impossible de réinitialiser le mot de passe.' });
+    }
+  }
+);
+
+// Modifier le rôle
 
 app.put(
   '/api/admin/users/:id/role',
@@ -991,11 +1116,18 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           return res.status(404).json({ success: false, error: 'Expédition introuvable' });
         }
 
+        // Unrecognised number format: fall back to the connector linked to the shipment's carrier
+        let carrierCode = requestedCarrier || detected.carrier;
+        if (carrierCode === 'UNKNOWN') {
+          const linked = await getTrackingCodeForCarrierName(shipment.carrier);
+          if (linked && isCarrierCode(linked)) carrierCode = linked;
+        }
+
         const record = await addTrackingNumber({
           shipmentId: req.params.id,
           number: detected.number,
           rawInput: detected.raw,
-          carrier: requestedCarrier || detected.carrier,
+          carrier: carrierCode,
         });
 
         await writeAuditLog({
@@ -1311,9 +1443,10 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  // Creation reserved to SUPPLY_CHAIN (they also edit carriers in Settings)
   app.post(
     '/api/reference/carriers',
-    requireRole('SUPPLY_CHAIN', 'SOURCING'),
+    requireRole('SUPPLY_CHAIN'),
     async (req: any, res) => {
       const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
       const transportMode = req.body?.transport_mode;
@@ -1359,6 +1492,87 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
     }
   );
+
+  // Settings: full carrier list (inactive included) and edition. SUPPLY_CHAIN only.
+  app.get('/api/reference/carriers/all', requireRole('SUPPLY_CHAIN'), async (_req, res) => {
+    try {
+      const carriers = await getAllCarriers();
+      return res.json({ success: true, carriers });
+    } catch (err: any) {
+      console.error('[Reference] List all carriers error:', err);
+      return res.status(500).json({ success: false, error: 'Unable to load carriers' });
+    }
+  });
+
+  app.put('/api/reference/carriers/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const id = String(req.params.id || '');
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    const transportMode = req.body?.transport_mode;
+    const isActive = req.body?.is_active;
+    const trackingCode = req.body?.tracking_carrier_code ?? null;
+
+    if (!UUID_RE.test(id)) {
+      return res.status(404).json({ success: false, error: 'Transporteur introuvable.' });
+    }
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Le nom du transporteur est obligatoire.' });
+    }
+    if (name.length > CARRIER_NAME_MAX_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        error: `Le nom du transporteur ne doit pas dépasser ${CARRIER_NAME_MAX_LENGTH} caractères.`,
+      });
+    }
+    if (!CARRIER_TRANSPORT_MODES.includes(transportMode)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le mode du transporteur est obligatoire (Air, Sea ou BOTH).',
+      });
+    }
+    if (typeof isActive !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'Le statut actif/inactif est obligatoire.' });
+    }
+    if (trackingCode !== null && (!isCarrierCode(trackingCode) || trackingCode === 'UNKNOWN')) {
+      return res.status(400).json({ success: false, error: 'Connecteur de suivi invalide.' });
+    }
+
+    try {
+      const carrier = await updateCarrier(id, {
+        name,
+        transport_mode: transportMode,
+        tracking_carrier_code: trackingCode,
+        is_active: isActive,
+      });
+      if (!carrier) {
+        return res.status(404).json({ success: false, error: 'Transporteur introuvable.' });
+      }
+
+      await writeAuditLog({
+        entityType: 'CARRIER',
+        entityId: carrier.id,
+        action: 'UPDATE_CARRIER',
+        actor: req.user,
+        details: {
+          name: carrier.name,
+          transport_mode: carrier.transport_mode,
+          tracking_carrier_code: carrier.tracking_carrier_code,
+          is_active: carrier.is_active,
+        },
+      });
+
+      return res.json({ success: true, carrier });
+    } catch (err: any) {
+      if (err instanceof DuplicateReferenceError) {
+        return res.status(409).json({
+          success: false,
+          error: `Le transporteur « ${err.existing.name} » existe déjà.`,
+          existing: err.existing,
+        });
+      }
+      console.error('[Reference] Update carrier error:', err);
+      return res.status(500).json({ success: false, error: 'Unable to update carrier' });
+    }
+  });
 
   app.get('/api/reference/suppliers', async (_req, res) => {
     try {
@@ -1434,6 +1648,27 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       import_max_invoices: DIGI_IMPORT_MAX_INVOICES,
       last_sync: lastRun,
     });
+  });
+
+  // Shipment values only (references + total), for every role: the lists and the
+  // dashboard KPIs show the linked invoice amount as the shipment value.
+  app.get('/api/digi-invoices/values', async (_req, res) => {
+    try {
+      const invoices = await listDigiInvoices();
+      return res.json({
+        success: true,
+        values: invoices.map((inv) => ({
+          ref: inv.ref,
+          odoo_move_name: inv.odoo_move_name,
+          sale_move_ref: inv.sale_move_ref,
+          odoo_missing: inv.odoo_missing,
+          amount_total: inv.amount_total,
+        })),
+      });
+    } catch (err: any) {
+      console.error('[DIGI] List invoice values error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les valeurs DIGI' });
+    }
   });
 
   app.get('/api/digi-invoices', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (_req, res) => {
@@ -1513,6 +1748,103 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     } catch (err: any) {
       console.error('[DIGI] Import error:', err);
       return res.status(500).json({ success: false, error: 'Échec de l\'import des factures' });
+    }
+  });
+
+  // Shipment by hand: old invoice, deleted shipment, Odoo draft…
+  app.post('/api/digi-invoices/:id/create-shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    try {
+      const invoice = await getInvoiceForShipment(req.params.id);
+      if (!invoice) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      const shipment = await createShipmentForInvoice(invoice, req.user);
+      if (!shipment) {
+        return res.status(409).json({
+          success: false,
+          error: 'Cette facture a déjà une expédition, ou elle est classée en services.',
+        });
+      }
+      return res.status(201).json({ success: true, shipment, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[DIGI] Create shipment error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de créer l\'expédition' });
+    }
+  });
+
+  // Services only (nothing to ship, manual work) ↔ to ship
+  app.patch('/api/digi-invoices/:id/services', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    const noShipment = req.body?.no_shipment;
+    if (typeof noShipment !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'no_shipment doit être un booléen.' });
+    }
+    try {
+      const outcome = await setInvoiceNoShipment(req.params.id, noShipment);
+      if (!outcome) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: noShipment ? 'MARK_DIGI_INVOICE_SERVICES' : 'UNMARK_DIGI_INVOICE_SERVICES',
+        actor: req.user,
+        details: { detached_shipment_id: outcome.previous_shipment_id },
+      });
+      return res.json({
+        success: true,
+        detached_shipment_id: outcome.previous_shipment_id,
+        invoice: await getDigiInvoice(req.params.id),
+      });
+    } catch (err: any) {
+      console.error('[DIGI] Services flag error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  // Group invoices: attach to an existing shipment, or detach (shipment_id null)
+  app.patch('/api/digi-invoices/:id/shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) {
+      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    }
+    const target = req.body?.shipment_id;
+    if (target !== null && (typeof target !== 'string' || !target.trim() || target.length > 50)) {
+      return res.status(400).json({ success: false, error: 'Expédition invalide.' });
+    }
+    try {
+      if (target !== null && !(await getShipmentByIdFromNeon(target))) {
+        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+      }
+      const outcome = await assignInvoiceToShipment(req.params.id, target);
+      if (!outcome) {
+        return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: target ? 'ATTACH_DIGI_INVOICE_TO_SHIPMENT' : 'DETACH_DIGI_INVOICE_FROM_SHIPMENT',
+        actor: req.user,
+        details: { from: outcome.previous_shipment_id, to: target },
+      });
+      return res.json({ success: true, ...outcome, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[DIGI] Assign shipment error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de rattacher la facture' });
+    }
+  });
+
+  app.get('/api/shipments/:id/digi-invoices', async (req, res) => {
+    try {
+      const invoices = await listDigiInvoicesForShipment(req.params.id);
+      return res.json({ success: true, invoices });
+    } catch (err: any) {
+      console.error('[DIGI] Shipment invoices error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les factures de l\'expédition' });
     }
   });
 
@@ -1609,7 +1941,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       const startedAt = Date.now();
       const result = await runDigiOdooSync({
         trigger: 'manual',
-        actorEmail: req.user.email,
+        actor: req.user,
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
       await writeAuditLog({
@@ -1691,6 +2023,17 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         });
       }
       const shipments = await getShipmentsFromNeon();
+      // Value of each shipment = total of its DIGI invoices
+      try {
+        const totals = await getInvoiceTotalsByShipment();
+        for (const shipment of shipments as any[]) {
+          const t = totals.get(shipment.id);
+          shipment.digi_invoice_count = t?.count ?? 0;
+          shipment.digi_invoice_total = t?.total ?? null;
+        }
+      } catch (totalsErr) {
+        console.error('[DIGI] Could not compute shipment values:', totalsErr);
+      }
       res.json({
         success: true,
         count: shipments.length,
@@ -1739,7 +2082,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!requiredText(data.supplier)) missing.push('supplier');
       if (!requiredText(data.order_reference)) missing.push('order_reference');
       if (!requiredText(data.global_status)) missing.push('global_status');
-      if (!['Confirmé', 'En attente Antoine', 'Transmis transitaire', 'A vérifier'].includes(data.antoine_status)) {
+      if (!ANTOINE_STATUSES.includes(data.antoine_status)) {
         missing.push('antoine_status');
       }
       if (!['Haute', 'Moyenne', 'Basse'].includes(data.priority)) missing.push('priority');
@@ -1766,7 +2109,12 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       // Attach the tracking number(s) typed in the creation form
       if (typeof data.tracking_no === 'string' && data.tracking_no.trim()) {
         try {
-          await addTrackingNumbersFromText(saved.id, data.tracking_no);
+          const linkedCode = await getTrackingCodeForCarrierName(saved.carrier);
+          await addTrackingNumbersFromText(
+            saved.id,
+            data.tracking_no,
+            linkedCode && isCarrierCode(linkedCode) ? linkedCode : undefined
+          );
         } catch (trackingErr) {
           // The shipment is saved; numbers can still be added from its detail view.
           console.error('[Tracking] Could not attach tracking numbers at creation:', trackingErr);
@@ -1815,7 +2163,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       // Record which fields changed (names only: values may be large JSON)
       const changedFields = Object.keys(req.body || {}).filter(
         (key) =>
-          !['id', 'updated_at', 'created_at', 'alerts'].includes(key) &&
+          !['id', 'updated_at', 'created_at', 'alerts', 'digi_invoice_count', 'digi_invoice_total'].includes(key) &&
           JSON.stringify((req.body as any)[key] ?? null) !==
             JSON.stringify((previous as any)[key] ?? null)
       );

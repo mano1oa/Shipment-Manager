@@ -20,7 +20,7 @@ relances.
 5. [Statuts : qui les change et quand](#5-statuts--qui-les-change-et-quand)
 6. [Alertes](#6-alertes)
 7. [Suivi transporteur](#7-suivi-transporteur)
-   - [Colis à suivre : factures DIGI LOGISTIC](#7-bis-colis-à-suivre--factures-digi-logistic)
+   - [Factures DIGI LOGISTIC](#7-bis-factures-digi-logistic)
 8. [Ce qui est automatique et ce qui est manuel](#8-ce-qui-est-automatique-et-ce-qui-est-manuel)
 9. [Points d'attention connus](#9-points-dattention-connus)
 10. [Données, API et sécurité](#10-données-api-et-sécurité)
@@ -65,19 +65,22 @@ contrôle côté API.
 | Action | SUPPLY_CHAIN | SOURCING | DIRECTION |
 |---|:---:|:---:|:---:|
 | Consulter le tableau de bord, utiliser l'assistant IA | ✅ | ✅ | ✅ |
-| Voir les listes Aérien / Maritime | ✅ | ✅ | ❌ (voir §9) |
-| Colis à suivre (DIGI) : consulter, synchroniser Odoo, importer Excel, saisir / modifier | ✅ | ✅ | ❌ |
-| Colis à suivre (DIGI) : supprimer une facture | ✅ | ❌ | ❌ |
+| Voir les listes Aérien / Maritime et les fiches (lecture) | ✅ | ✅ | ✅ |
+| Factures DIGI : consulter, synchroniser Odoo, importer Excel, saisir / modifier | ✅ | ✅ | ❌ |
+| Factures DIGI : supprimer une facture | ✅ | ❌ | ❌ |
 | Créer / modifier une expédition | ✅ | ✅ | ❌ |
 | Supprimer une expédition | ✅ | ❌ | ❌ |
-| Ajouter un transporteur / fournisseur à la liste | ✅ | ✅ | ❌ |
+| Ajouter un transporteur à la liste | ✅ | ❌ | ❌ |
+| Ajouter un fournisseur à la liste | ✅ | ✅ | ❌ |
 | Numéros de suivi et événements (ajout, correction) | ✅ | ✅ | ❌ |
 | Voir et résoudre / réactiver les alertes | ✅ | ✅ | ❌ |
 | Envoyer une relance Google Chat | ✅ | ✅ | ❌ |
 | Synchroniser le suivi d'une expédition | ✅ | ✅ | ❌ |
 | Synchroniser tout le suivi | ✅ | ❌ | ❌ |
-| Analyses & SLAs | ✅ | ❌ | ❌ |
-| Utilisateurs, administration base, purge | ✅ | ❌ | ❌ |
+| Analyses & SLAs (onglet du tableau de bord) | ✅ | ❌ | ✅ |
+| Paramètres : utilisateurs, transporteurs (modifier / désactiver), intégrations, base, purge | ✅ | ❌ | ❌ |
+| Changer son propre mot de passe (profil) | ✅ | ✅ | ✅ |
+| Réinitialiser le mot de passe d'un autre utilisateur | ✅ | ❌ | ❌ |
 
 Protections sur les comptes :
 
@@ -91,21 +94,43 @@ Protections sur les comptes :
 
 | Menu | Rôles | Contenu |
 |---|---|---|
-| Tableau de bord | tous | Indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides |
-| Suivi Aérien | SC, Sourcing | Liste des expéditions `Air`, filtres, **édition directe** du statut, de la date de scan Orly, de la Réf FA, de la réception Mada et des remarques ; export CSV ; « Générer réclamation » (colis Perdu Orly) |
-| Suivi Maritime | SC, Sourcing | Liste des expéditions `Sea` et, pour chacune, le tableau des livraisons au quai de Rouen |
-| Colis à suivre (DIGI) | SC, Sourcing | Factures DIGI LOGISTIC à destination de NextHope avec leurs lignes de produits ; synchronisation Odoo, import Excel, saisie manuelle (voir §7 bis) |
+| Tableau de bord & KPI | tous | Onglet « Vue d'ensemble » : indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides. Onglet « Analyses & SLAs » (SC, Direction) : respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
+| Suivi Aérien | SC, Sourcing, Direction (lecture) | Liste des expéditions `Air`, filtres, **édition directe** du statut, de la date de scan Orly, de la Réf FA, de la réception Mada et des remarques ; export CSV ; « Générer réclamation » (colis Perdu Orly) |
+| Suivi Maritime | SC, Sourcing, Direction (lecture) | Liste des expéditions `Sea` et, pour chacune, le tableau des livraisons au quai de Rouen |
+| Factures DIGI | SC, Sourcing | Factures DIGI LOGISTIC à destination de NextHope avec leurs lignes de produits et leur expédition ; synchronisation Odoo, import Excel, saisie manuelle ; sélection multiple, regroupement et filtre par fournisseur (voir §7 bis) |
 | Centre d'Alertes | SC, Sourcing | Alertes calculées, message de relance pré-rédigé, envoi Google Chat, résolution partagée |
-| Analyses & SLAs | SC | Respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
-| Assistant IA | tous | Questions sur les expéditions, synthèse automatique (limité à 40 requêtes par heure et par utilisateur) |
-| Administration & N8N | SC | État de la base, initialisation du schéma, purge, test Google Chat |
-| Script Démo & Livrables | SC | Contenu de démonstration hérité du prototype (voir §9) |
-| Paramètres | SC | Gestion des utilisateurs |
+| Paramètres | SC | Quatre rubriques : **Utilisateurs & accès** (comptes, rôles, activation) ; **Transporteurs** (créer, renommer, changer le mode, relier à un connecteur de suivi, désactiver ; état des connecteurs) ; **Intégrations** (N8N & webhook Google Chat, liens Google Sheets, seuils d'alerte) ; **Base de données** (état Neon, initialisation du schéma, purge) |
 
-**Fiche expédition** (clic sur une ligne) : informations générales, dates
-calculées (départ Madagascar, ETA Mada), pilotage opérationnel (statuts,
-remarques), **Suivi transporteur** (numéros et historique), livraisons
-maritimes, historique de l'expédition, documents.
+En plus des menus :
+
+- **Shipment AI** : bulle de chat en bas à droite, disponible sur tous les écrans
+  (aussi via le bouton « Shipment AI » de la barre du haut). La conversation est
+  conservée en changeant d'écran. Limité à 40 requêtes par heure et par utilisateur.
+- **Profil** (nom en haut à droite) : changer son mot de passe (12 caractères
+  minimum, les autres sessions sont déconnectées), basculer le thème clair /
+  sombre, se déconnecter.
+- **Valeur (€)** d'une expédition : total des factures DIGI LOGISTIC
+  rattachées à l'expédition. Pour une ancienne expédition sans facture
+  rattachée : la facture DIGI dont le nom Odoo, la facture de vente ou la
+  référence est identique à la Réf FA DIGI-NXT ou au N° de facture (casse,
+  espaces et tirets ignorés). Sinon : la « Valeur marchandise » saisie sur
+  l'expédition (`cost_eur`). Cette même valeur sert dans les listes, les KPI du
+  tableau de bord (valeur en transit, valeur Perdu Orly), la réclamation et
+  l'export CSV.
+- **Connecteur de suivi** : chaque transporteur de la liste peut être relié à
+  un connecteur (DHL, FedEx, UPS…) dans Paramètres › Transporteurs. Quand le
+  format d'un numéro de suivi n'est pas reconnu, le connecteur du transporteur
+  de l'expédition est utilisé. L'activation du suivi automatique d'un
+  connecteur se fait côté serveur (lecture seule dans l'application).
+
+**Fiche expédition** (clic sur une ligne), dans cet ordre : informations
+principales (transporteur, LTA — ou BL et conteneur en maritime —, ETA, valeur
+calculée à partir des factures DIGI), suivi transporteur (numéros et
+historique), lignes de factures, suivi Orly → Madagascar (statut global,
+statut du colis à Orly / Antoine, scan Orly, départ et ETA Mada calculés,
+réception Mada, réf FA, douane, remarques), délais ETD / ETA, livraisons
+maritimes, historique, documents. Le bouton « Modifier » rend tous ces champs
+modifiables, y compris le mode aérien / maritime.
 
 ---
 
@@ -134,7 +159,7 @@ flowchart TD
 | # | Étape | Qui | Où dans l'application | Manuel / auto |
 |---|---|---|---|---|
 | 1 | Créer l'expédition : mode, transporteur, fournisseur, réf. commande/PO, n° de suivi, réf. FA DIGI-NXT, statuts de départ, ETA, poids, coût | Sourcing (à la commande) ou Supply Chain | Bouton « Nouvelle expédition » | **Manuel** |
-| 2 | Ajouter un transporteur ou un fournisseur absent de la liste | Sourcing / Supply Chain | Dans le formulaire : « + Ajouter… » | **Manuel** |
+| 2 | Ajouter un transporteur ou un fournisseur absent de la liste | Supply Chain (transporteur), Sourcing / Supply Chain (fournisseur) | Dans le formulaire : « + Ajouter… » ; transporteurs aussi dans Paramètres | **Manuel** |
 | 3 | Rattacher les numéros de suivi | Automatique à la création (champ n° de suivi), puis ajout manuel si besoin | Fiche → Suivi transporteur | **Auto** à la création, **manuel** ensuite |
 | 4 | Suivre la livraison jusqu'à Orly | Supply Chain | Fiche → Suivi transporteur | **Manuel** pour l'instant (ajout d'événements) ; **auto** dès qu'un fournisseur de suivi est branché (§7) |
 | 5 | Point hebdomadaire avec Antoine (MIDEX, Orly) : ce qui est reçu, ce qui manque | Supply Chain | Liste Aérien + fiche | **Manuel** — Antoine n'a pas de compte ; ses confirmations sont saisies par Supply Chain |
@@ -154,7 +179,7 @@ Une expédition porte plusieurs statuts, chacun avec son rôle.
 | Champ | Valeurs | Quand / par qui | Manuel / auto |
 |---|---|---|---|
 | **Statut global** (statut Orly → Mada) | Attente confirmation transitaire · En livraison vers Orly · Reçu et expédié · Bloqué douane · Perdu Orly · Livré entrepôt | Choisi à la création, puis modifié au fil de l'eau par Supply Chain (liste ou fiche) | **Manuel**, sauf « Perdu Orly » qui peut être **déduit automatiquement** (voir §6 et §9) |
-| **Statut Antoine** | En attente Antoine · Confirmé · Transmis transitaire · A vérifier | Après chaque point avec Antoine | **Manuel** (fiche) |
+| **Statut du colis à Orly** (Antoine) | En attente Antoine (= à recevoir : réception à Orly pas encore confirmée) · Reçu et expédié vers Mada · Avis de recherche (reçu par Antoine mais pas arrivé à Madagascar). Les anciennes valeurs (Confirmé, Transmis transitaire, A vérifier) restent affichées sur les expéditions qui les portent | Après chaque point avec Antoine | **Manuel** (fiche) |
 | **Statut douane** | Non Requis · En cours · Dédouané · Bloqué Douane | Choisi à la création | **Manuel**, et seulement à la création aujourd'hui (§9) |
 | **Priorité** | Haute · Moyenne · Basse | Choisie à la création | **Manuel**, seulement à la création (§9) |
 | **Date de scan Orly** | date | Quand Antoine confirme la réception | **Manuel** |
@@ -218,9 +243,10 @@ UPS, DHL et FedEx. Une fois un fournisseur branché :
 
 ---
 
-## 7 bis. Colis à suivre : factures DIGI LOGISTIC
+## 7 bis. Factures DIGI LOGISTIC
 
-La liste des colis à suivre vient des factures de la base Odoo **DIGI
+Le menu « Factures DIGI » (anciennement « Colis à suivre », renommé pour ne
+pas le confondre avec le suivi aérien et maritime) liste les factures de la base Odoo **DIGI
 LOGISTIC** dont l'**entité de destination est NextHope**, pour disposer des
 lignes de produits de chaque facture.
 
@@ -271,6 +297,70 @@ Trois façons d'alimenter la liste :
    ignorées ; une facture déjà connue n'est jamais écrasée.
 3. **Saisie manuelle**, avec ses lignes ; modifiable ensuite.
 
+**Lignes de frais.** Les lignes dont le code produit est `[DEEE]`, `[RCP]` ou
+`[FRDP]` (frais de port) ne sont pas des articles à suivre : elles sont
+fusionnées en une seule ligne « [SERVICES] … — services, non expédiés »
+(quantité 1, prix = somme des frais), quelle que soit la source. Le total de
+la facture reste égal au total Odoo.
+
+**Création des expéditions : à la demande uniquement.** Aucune expédition
+n'est créée automatiquement, car les factures importées contiennent aussi des
+services. On coche les factures de marchandises puis « Créer les expéditions »
+(une par facture) ou « Grouper en une expédition », ou on utilise le bouton
+« Créer l'expédition » d'une facture (brouillons Odoo compris). Les factures
+de services se classent avec « Pas d'expédition — services » (classement à la main ; seuls les frais [DEEE], [RCP], [FRDP] sont reconnus automatiquement). Les nouvelles factures arrivent dans l'onglet « À traiter ». L'expédition
+créée reprend :
+
+- mode **Aérien** par défaut (modifiable dans la fiche), statut global « En
+  livraison vers Orly », statut Antoine « En attente Antoine » ;
+- fournisseur (AMAZON si commande Amazon), commande (commande Amazon, sinon référence), n° de facture et
+  Réf FA DIGI-NXT (facture vente) repris de la facture ; transporteur, LTA et
+  ETA restent à saisir ;
+- **valeur de l'expédition = total de ses factures**, lignes de services comprises (le coût saisi à la main
+  ne sert plus que pour les anciennes expéditions sans facture) ;
+- le bouton devient « Recréer l'expédition » si l'expédition a été supprimée.
+
+**Envoi groupé.** Plusieurs factures peuvent voyager dans la même expédition :
+bouton « Rattacher à une expédition existante » sur la facture (recherche par
+n° d'expédition, fournisseur, commande, LTA). La valeur de l'expédition est la
+somme de toutes ses factures. Si l'expédition quittée n'a plus aucune facture,
+l'application propose de la supprimer (Supply Chain). Une facture peut aussi
+être détachée ; elle repasse alors « Sans expédition ».
+
+**Services (non expédiés).** Onglet à part pour les factures sans article à
+expédier : factures ne contenant que des frais, ou classées à la main en
+services (travail manuel). Une facture classée en services est détachée de son
+expédition (qui reste à supprimer si besoin) ; elle peut être remise dans les
+factures à traiter (onglet « À traiter »).
+
+**Fournisseur AMAZON.** Toute facture qui porte un n° de commande Amazon a
+pour fournisseur **AMAZON**, quel que soit le vendeur (Amazon ou vendeur
+marketplace) : pour le suivi, ce sont des articles commandés sur la
+plateforme Amazon. Cela vaut pour la liste, le regroupement, le filtre et
+l'expédition créée. Le vendeur réel reste enregistré et affiché sous le nom
+(« Vendeur : … ») ; il sert toujours à repérer les doublons (même vendeur et
+même référence).
+
+**Affichage.** Les factures sont groupées par fournisseur (sous-total et
+nombre de factures sans expédition par fournisseur ; un clic replie le
+groupe ; case « Grouper par fournisseur » pour revenir à une liste simple).
+Filtres : recherche libre, fournisseur, source et, dans « À traiter », état
+du suivi — « Sans expédition », « Expédition sans n° de suivi ni LTA / BL » (ni n° de
+suivi ni LTA / BL sur l'expédition), « Expédition suivie ».
+
+**Sélection multiple.** Des cases à cocher par facture, par fournisseur et
+pour toute la liste affichée ouvrent une barre d'actions :
+
+- « Créer les expéditions » : une expédition par facture ;
+- « Grouper en une expédition » : une seule expédition pour toutes les
+  factures sélectionnées (envoi groupé) ;
+- « Pas d'expédition — services » : classe les factures en services
+  (« Remettre à traiter » dans l'onglet Services) ;
+- « Supprimer » (Supply Chain ; pas les factures encore présentes dans Odoo).
+
+Seules les factures concernées par une action sont traitées (le nombre est
+indiqué sur le bouton) ; celles en échec sont listées avec la raison.
+
 Toutes ces actions sont tracées dans le journal d'audit.
 
 ---
@@ -286,11 +376,13 @@ Toutes ces actions sont tracées dans le journal d'audit.
 - Rattachement des numéros de suivi saisis à la création, avec détection du transporteur.
 - Statut d'un numéro de suivi recalculé à chaque nouvel événement.
 - Journal d'audit de toutes les actions sensibles.
+- Valeur d'une expédition calculée depuis ses factures DIGI.
+- Fusion des lignes de frais DEEE / RCP / FRDP en une ligne de services.
 - Récupération quotidienne des factures DIGI → NextHope depuis Odoo (cron), et à la demande avec « Synchroniser Odoo ».
 
 **Manuel aujourd'hui**
 
-- Création et modification des expéditions, statut global, statut Antoine.
+- Création et modification des expéditions (y compris depuis les factures DIGI, à la demande), statut global, statut Antoine.
 - Dates de scan Orly et de réception Madagascar.
 - Événements de suivi transporteur, jusqu'au branchement des API gratuites.
 - Livraisons maritimes (quai de Rouen) et suivi des conteneurs.
@@ -301,7 +393,6 @@ Toutes ces actions sont tracées dans le journal d'audit.
 - Synchronisation Google Sheets (bouton retiré : elle n'existait qu'en simulation).
 - Stockage réel des documents (les documents ne sont que des métadonnées).
 - Intégrations Amazon Business, MIDEX.
-- Lien automatique entre une facture DIGI et une expédition.
 
 ---
 
@@ -321,16 +412,12 @@ validation.
 3. **L'alerte « colis en attente » (10 jours) vise large.** Elle se déclenche
    aussi pour des expéditions « Livré entrepôt » et pour le maritime, dès que
    la fiche n'a pas été modifiée depuis 10 jours.
-4. **Statut douane et priorité** ne sont modifiables qu'à la création.
+4. **La priorité** n'est modifiable qu'à la création (le statut douane se
+   modifie dans la fiche).
 5. **« Livré Orly »** est proposé à la création mais absent des listes de
    modification.
-6. **Direction** ne voit que le tableau de bord et l'assistant, alors que la
-   matrice des droits prévoit la consultation des expéditions et des analyses.
-7. **« Script Démo & Livrables »** contient du contenu de démonstration avec
-   des chiffres fictifs : à retirer.
-8. Les **statuts Antoine** de l'application ne correspondent pas encore à ceux
-   du fichier Excel (« A recevoir », « OK (Reçu et expédié) », « Déjà reçu
-   Mada, à refacturer (REGUL) », « Avis de recherche »).
+6. Le statut du colis à Orly « Déjà reçu Mada, à refacturer (REGUL) » du
+   fichier Excel n'existe pas encore dans l'application.
 
 ---
 
@@ -370,7 +457,8 @@ documente le schéma.
 | `POST /api/tracking/sync/:shipmentId` | SC, Sourcing |
 | `POST /api/tracking/sync-all` | SC |
 | `GET /api/cron/update-tracking`, `GET /api/cron/sync-digi-invoices` | Vercel Cron (`Authorization: Bearer CRON_SECRET`) |
-| `GET /api/digi-invoices`, `GET /api/digi-invoices/config`, `POST /api/digi-invoices`, `PUT /api/digi-invoices/:id`, `POST /api/digi-invoices/import`, `POST /api/digi-invoices/sync-odoo` | SC, Sourcing |
+| `GET /api/digi-invoices`, `GET /api/digi-invoices/config`, `POST /api/digi-invoices`, `PUT /api/digi-invoices/:id`, `POST /api/digi-invoices/import`, `POST /api/digi-invoices/sync-odoo`, `POST /api/digi-invoices/:id/create-shipment`, `PATCH /api/digi-invoices/:id/services`, `PATCH /api/digi-invoices/:id/shipment` | SC, Sourcing |
+| `GET /api/shipments/:id/digi-invoices` | connecté |
 | `DELETE /api/digi-invoices/:id` | SC (factures Excel / manuelles, ou Odoo « Absente d'Odoo ») |
 | `GET /api/alerts/resolved`, `POST` / `DELETE /api/alerts/:alertId/resolve` | lecture : connecté ; action : SC, Sourcing |
 | `POST /api/google-chat-webhook` | SC, Sourcing |
@@ -408,7 +496,7 @@ Node.js 20+ et une base Neon PostgreSQL.
 | `CRON_SECRET` | Obligatoire pour les crons quotidiens (suivi transporteur, factures DIGI) |
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY` | Connexion en lecture à Odoo DIGI LOGISTIC (API JSON-RPC ; clé API de l'utilisateur) |
 | `ODOO_DEST_PARTNER_ID` / `ODOO_DEST_PARTNER_NAME` | Entité de destination filtrée : identifiant du partenaire, sinon nom (« NextHope » par défaut) |
-| `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Administration (consultation, aucune synchronisation) |
+| `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Paramètres › Intégrations (consultation, aucune synchronisation) |
 | `NODE_ENV` | `production` en production (cookie `Secure`) |
 
 Ne jamais exposer ces valeurs via une variable `VITE_*`. Le fichier `.env` est
@@ -457,8 +545,7 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
    (vol groupé ORYA) ou en conteneur.
 7. Module Incidents (colis à retracer), historique des ETA maritimes, coûts par
    envoi groupé.
-8. Stockage réel des documents ; intégration MIDEX ; rattachement des
-   factures DIGI aux expéditions.
+8. Stockage réel des documents ; intégration MIDEX.
 
 ---
 
@@ -471,4 +558,4 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
 | 3 | Alertes résolues partagées dans Neon ; protections sur la gestion des utilisateurs ; journal d'audit complet |
 | 4 | Plus aucun détail technique dans les réponses d'erreur ; limitation des connexions et de l'IA ; onglet Alertes ouvert à SOURCING |
 | 5 | Base du suivi transporteur : plusieurs numéros par expédition, historique d'événements, détection du transporteur, cron quotidien sécurisé |
-| 6 | Colis à suivre : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main |
+| 6 | Factures DIGI (ex-« Colis à suivre ») : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main ; création des expéditions depuis les factures (à la demande), lignes de frais fusionnées, onglet Services ; fiche expédition simplifiée |

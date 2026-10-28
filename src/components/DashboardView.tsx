@@ -27,6 +27,10 @@ interface DashboardViewProps {
   onNavigateTab: (tab: any) => void;
   onSelectShipment: (shipment: Shipment) => void;
   onOpenRelanceModal: (alert: ShipmentAlert) => void;
+  /** Opens the floating AI assistant. */
+  onOpenAssistant: () => void;
+  /** Opens the « Analyses & SLAs » tab; hidden when undefined (role not allowed). */
+  onOpenAnalytics?: () => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -37,6 +41,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigateTab,
   onSelectShipment,
   onOpenRelanceModal,
+  onOpenAssistant,
+  onOpenAnalytics,
 }) => {
   const canOpen = (tab: string) => !allowedTabs || allowedTabs.includes(tab);
   const criticalAlerts = alerts.filter((a) => a.severity === 'critical');
@@ -394,7 +400,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="mt-4 space-y-2.5">
               <button
                 id="dash-quick-btn-assistant"
-                onClick={() => onNavigateTab('assistant')}
+                onClick={onOpenAssistant}
                 className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-[#643288] hover:bg-purple-50/50 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-[#643288]"
               >
                 <div className="flex items-center gap-3">
@@ -437,8 +443,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
               <button
                 id="dash-quick-btn-analytics"
-                hidden={!canOpen('analytics')}
-                onClick={() => onNavigateTab('analytics')}
+                hidden={!onOpenAnalytics}
+                onClick={onOpenAnalytics}
                 className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-indigo-400 hover:bg-indigo-50/50 dark:border-slate-700 dark:bg-slate-900"
               >
                 <div className="flex items-center gap-3">

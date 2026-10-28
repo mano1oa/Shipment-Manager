@@ -7,8 +7,9 @@ import {
   upsertOdooInvoice,
   OdooInvoiceInput,
 } from '../../db/digiInvoices.js';
-import { DEFAULT_DEST_PARTNER_NAME } from '../../lib/digiInvoices.js';
+import { DEFAULT_DEST_PARTNER_NAME, isServiceLabel, mergeServiceLines } from '../../lib/digiInvoices.js';
 import type { DigiInvoiceLineInput } from '../../lib/digiInvoices.js';
+import type { AuditActor } from '../../db/audit.js';
 
 /**
  * Pulls the DIGI LOGISTIC invoices addressed to NextHope from Odoo.
@@ -93,9 +94,15 @@ function toInvoice(move: any, linesById: Map<number, any>): OdooInvoiceInput {
     const line = linesById.get(lineId);
     if (!line) continue;
     if (line.display_type === 'line_section' || line.display_type === 'line_note') continue;
+    const productName = m2o(line.product_id).name;
+    // Odoo can leave the label empty: fall back to the product name.
+    let name = text(line.name) || productName || '(sans libellé dans Odoo)';
+    // Fee product ([DEEE], [RCP], [FRDP]) with an edited label: keep its code
+    const feeCode = isServiceLabel(productName) ? /^\s*(\[[^\]]+\])/.exec(productName as string)?.[1] : null;
+    if (feeCode && !isServiceLabel(name)) name = `${feeCode} ${name}`;
     lines.push({
-      // Odoo can leave the label empty: fall back to the product name.
-      name: text(line.name) || m2o(line.product_id).name || '(sans libellé dans Odoo)',
+      name,
+      is_service: Boolean(feeCode),
       quantity: amount(line.quantity),
       price_unit: amount(line.price_unit),
       price_subtotal: amount(line.price_subtotal),
@@ -117,7 +124,7 @@ function toInvoice(move: any, linesById: Map<number, any>): OdooInvoiceInput {
     amazon_order_ref: text(move.num_cmd_amz),
     sale_move_ref: sale.name,
     sale_move_odoo_id: sale.id,
-    lines,
+    lines: mergeServiceLines(lines),
   };
 }
 
@@ -196,15 +203,16 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
  */
 export async function runDigiOdooSync(params: {
   trigger: 'manual' | 'cron';
-  actorEmail: string | null;
+  actor: AuditActor | null;
   timeBudgetMs: number;
 }): Promise<DigiOdooSyncResult> {
   const startedAt = new Date().toISOString();
+  const actorEmail = params.actor?.email ?? null;
   try {
     const result = await syncDigiInvoicesFromOdoo({ timeBudgetMs: params.timeBudgetMs });
     await recordOdooSyncRun({
       trigger: params.trigger,
-      actor_email: params.actorEmail,
+      actor_email: actorEmail,
       started_at: startedAt,
       success: true,
       result: { ...result },
@@ -214,7 +222,7 @@ export async function runDigiOdooSync(params: {
   } catch (err: any) {
     await recordOdooSyncRun({
       trigger: params.trigger,
-      actor_email: params.actorEmail,
+      actor_email: actorEmail,
       started_at: startedAt,
       success: false,
       result: null,

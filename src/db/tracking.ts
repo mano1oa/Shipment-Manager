@@ -249,11 +249,13 @@ export async function addTrackingNumber(params: {
 
 /**
  * Attaches every number found in a free-text field (used at shipment creation).
- * Entries that are clearly not tracking numbers are skipped.
+ * Entries that are clearly not tracking numbers are skipped. `fallbackCarrier`
+ * (the connector linked to the shipment's carrier) replaces an UNKNOWN detection.
  */
 export async function addTrackingNumbersFromText(
   shipmentId: string,
-  text: string
+  text: string,
+  fallbackCarrier?: CarrierCode
 ): Promise<TrackingNumberRecord[]> {
   const added: TrackingNumberRecord[] = [];
   for (const part of splitTrackingInput(text)) {
@@ -265,7 +267,7 @@ export async function addTrackingNumbersFromText(
           shipmentId,
           number: detected.number,
           rawInput: detected.raw,
-          carrier: detected.carrier,
+          carrier: detected.carrier === 'UNKNOWN' && fallbackCarrier ? fallbackCarrier : detected.carrier,
         })
       );
     } catch (err) {

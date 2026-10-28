@@ -26,6 +26,9 @@ import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 import { formatDate, formatToday } from '../lib/dateFormat';
+import type { DigiValueMatch } from '../lib/digiShipmentValue';
+
+const digiAmountFormat = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 interface ShipmentsViewProps {
   shipments: Shipment[];
@@ -36,6 +39,8 @@ interface ShipmentsViewProps {
   canEdit: boolean;
   onUpdateShipment?: (updated: Shipment) => void;
   onNewShipment?: () => void;
+  /** Value from the linked DIGI LOGISTIC invoice (matched on Ref FA / invoice n°). */
+  digiValueFor?: (shipment: Shipment) => DigiValueMatch | null;
 }
 
 /**
@@ -108,6 +113,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   canEdit,
   onUpdateShipment,
   onNewShipment,
+  digiValueFor,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCarrier, setSelectedCarrier] = useState('all');
@@ -115,6 +121,9 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   const [selectedSupplier, setSelectedSupplier] = useState('all');
   const [onlyDelays, setOnlyDelays] = useState(false);
   const [onlyOrlyOverdue, setOnlyOrlyOverdue] = useState(false);
+  // Shipment value: linked DIGI invoice amount, else the value entered on the shipment (cost_eur)
+  const valueOf = (s: Shipment) => digiValueFor?.(s)?.amount ?? (s.cost_eur || 0);
+
   const [expandedSeaIds, setExpandedSeaIds] = useState<string[]>([]);
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [copiedClaim, setCopiedClaim] = useState(false);
@@ -198,8 +207,8 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   }, [shipments]);
 
   const totalPerduValue = useMemo(() => {
-    return perduOrlyShipments.reduce((acc, s) => acc + (s.cost_eur || 0), 0);
-  }, [perduOrlyShipments]);
+    return perduOrlyShipments.reduce((acc, s) => acc + valueOf(s), 0);
+  }, [perduOrlyShipments, digiValueFor]);
 
   // Copy Claim Table text
   const handleCopyClaimText = () => {
@@ -210,7 +219,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transporteur | N° Suivi / LTA | Valeur (€) | Remarques\n`;
     text += `----------------------------------------------------------------------------------------------------\n`;
     perduOrlyShipments.forEach((s) => {
-      text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${s.cost_eur} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
+      text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${valueOf(s)} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
     });
 
     navigator.clipboard
@@ -252,7 +261,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       s.supplier,
       s.order_reference,
       s.invoice_no,
-      s.cost_eur,
+      valueOf(s),
       s.tracking_no,
       s.bl_awb,
       s.carrier,
@@ -574,9 +583,25 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                           </div>
                         </td>
 
-                        {/* Valeur (€) */}
+                        {/* Valeur: DIGI invoice first, else the value entered on the shipment */}
                         <td className="px-3 py-3 font-mono font-bold text-slate-900 dark:text-slate-100">
-                          {shp.cost_eur ? `${shp.cost_eur.toLocaleString()} €` : '—'}
+                          {(() => {
+                            const digi = digiValueFor?.(shp);
+                            if (digi) {
+                              return (
+                                <>
+                                  <div>{digiAmountFormat.format(digi.amount)} €</div>
+                                  <div
+                                    className="font-sans text-[10px] font-medium text-indigo-600 dark:text-indigo-400"
+                                    title="Total des factures DIGI LOGISTIC → NextHope de cette expédition"
+                                  >
+                                    {digi.invoiceLabel}
+                                  </div>
+                                </>
+                              );
+                            }
+                            return shp.cost_eur ? `${shp.cost_eur.toLocaleString('fr-FR')} €` : '—';
+                          })()}
                         </td>
 
                         {/* Tracking & BL */}
@@ -952,7 +977,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                               {s.tracking_no}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono font-black text-rose-700 dark:text-rose-400">
-                              {s.cost_eur ? `${s.cost_eur.toLocaleString()} €` : '0 €'}
+                              {`${valueOf(s).toLocaleString('fr-FR')} €`}
                             </td>
                             <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">
                               {s.remarks || 'Colis non réceptionné au Hub Orly'}
