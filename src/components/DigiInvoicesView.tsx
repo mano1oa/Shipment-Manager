@@ -1205,6 +1205,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       {parcelFor && (
         <ParcelFormModal
           invoices={parcelFor}
+          canCreateCarrier={isSupplyChain}
           onClose={() => setParcelFor(null)}
           onSaved={(parcel, existed) => {
             setParcelFor(null);

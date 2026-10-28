@@ -19,7 +19,10 @@ export interface ParcelInvoiceRef {
 export interface ParcelRecord {
   id: string;
   tracking_number: string | null;
+  /** Tracking connector (detected from the number or linked to the carrier). */
   carrier: CarrierCode;
+  /** Carrier of the Settings list (Paramètres › Transporteurs). */
+  carrier_name: string | null;
   supplier_name: string | null;
   expected_delivery: string | null;
   status: ParcelStatus;
@@ -44,7 +47,7 @@ export class DuplicateParcelError extends Error {
 
 const SELECT_PARCELS = `
   SELECT
-    p.id, p.tracking_number, p.carrier, p.supplier_name,
+    p.id, p.tracking_number, p.carrier, p.carrier_name, p.supplier_name,
     TO_CHAR(p.expected_delivery, 'YYYY-MM-DD') AS expected_delivery,
     p.status, TO_CHAR(p.received_at, 'YYYY-MM-DD') AS received_at, p.received_by_email,
     p.status_changed_at, p.notes, p.legacy_shipment_id,
@@ -70,6 +73,7 @@ function mapParcelRow(row: any): ParcelRecord {
     id: row.id,
     tracking_number: row.tracking_number,
     carrier: row.carrier,
+    carrier_name: row.carrier_name ?? null,
     supplier_name: row.supplier_name,
     expected_delivery: row.expected_delivery,
     status: row.status,
@@ -164,9 +168,9 @@ export async function createParcel(
 
   try {
     const rows = await sql`
-      INSERT INTO parcels (tracking_number, carrier, supplier_name, expected_delivery, notes,
+      INSERT INTO parcels (tracking_number, carrier, carrier_name, supplier_name, expected_delivery, notes,
         created_by_email, updated_by_email)
-      VALUES (${input.tracking_number}, ${input.carrier}, ${supplierName}, ${input.expected_delivery},
+      VALUES (${input.tracking_number}, ${input.carrier}, ${input.carrier_name}, ${supplierName}, ${input.expected_delivery},
         ${input.notes}, ${actorEmail}, ${actorEmail})
       RETURNING id
     `;
@@ -199,6 +203,7 @@ export async function updateParcel(id: string, input: ParcelInput, actorEmail: s
       UPDATE parcels SET
         tracking_number = ${input.tracking_number},
         carrier = ${input.carrier},
+        carrier_name = ${input.carrier_name},
         expected_delivery = ${input.expected_delivery},
         notes = ${input.notes},
         updated_by_email = ${actorEmail},

@@ -196,6 +196,8 @@ export interface Parcel {
   id: string;
   tracking_number: string | null;
   carrier: CarrierCode;
+  /** Carrier of the Settings list (Paramètres › Transporteurs). */
+  carrier_name: string | null;
   supplier_name: string | null;
   expected_delivery: string | null;
   status: ParcelStatus;

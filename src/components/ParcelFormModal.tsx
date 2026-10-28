@@ -1,36 +1,72 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Loader2, Package, X } from 'lucide-react';
-import { CARRIER_CODES, CARRIER_LABELS, detectTrackingNumber } from '../lib/carrierDetection';
-import type { CarrierCode } from '../lib/carrierDetection';
+import { CARRIER_LABELS, detectTrackingNumber } from '../lib/carrierDetection';
+import { ReferenceSelect } from './ReferenceSelect';
+import type { ReferenceCreateResult, ReferenceTransportMode } from './ReferenceSelect';
 import { validateParcelInput } from '../lib/parcelTracking';
-import { DigiInvoice, Parcel, createParcel, inputClass, updateParcel } from './digiApi';
+import { DigiInvoice, Parcel, apiJson, createParcel, inputClass, updateParcel } from './digiApi';
+
+interface CarrierOption {
+  id: string;
+  name: string;
+  tracking_carrier_code: string | null;
+}
 
 interface Props {
   /** Invoices covered by the new parcel (one supplier). Ignored when editing. */
   invoices: DigiInvoice[];
   parcel?: Parcel | null;
+  /** Supply Chain: may add a carrier to the Settings list from the form. */
+  canCreateCarrier: boolean;
   onClose: () => void;
   /** existed: the tracking number already belonged to a parcel, now linked to these invoices. */
   onSaved: (parcel: Parcel, existed: boolean) => void;
 }
 
-export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, onClose, onSaved }) => {
+export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, canCreateCarrier, onClose, onSaved }) => {
   const [trackingNumber, setTrackingNumber] = useState(parcel?.tracking_number ?? '');
-  // '' = detected from the tracking number format
-  const [carrier, setCarrier] = useState<CarrierCode | ''>(parcel && parcel.carrier !== 'UNKNOWN' ? parcel.carrier : '');
+  // '' = from the tracking number format (carrier linked to the detected connector)
+  const [carrierName, setCarrierName] = useState(parcel?.carrier_name ?? '');
+  const [carriers, setCarriers] = useState<CarrierOption[]>([]);
+  const [carriersLoading, setCarriersLoading] = useState(true);
+  const [carriersError, setCarriersError] = useState<string | null>(null);
   const [expected, setExpected] = useState(parcel?.expected_delivery ?? '');
   const [notes, setNotes] = useState(parcel?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Carriers of Paramètres › Transporteurs (all transport modes: supplier → Orly couriers)
+  useEffect(() => {
+    apiJson<{ carriers: CarrierOption[] }>('/api/reference/carriers')
+      .then((d) => setCarriers(d.carriers))
+      .catch((err) => setCarriersError(err.message))
+      .finally(() => setCarriersLoading(false));
+  }, []);
+
+  const handleCreateCarrier = async (name: string, mode?: ReferenceTransportMode): Promise<ReferenceCreateResult> => {
+    try {
+      const { carrier } = await apiJson<{ carrier: CarrierOption }>('/api/reference/carriers', {
+        method: 'POST',
+        body: JSON.stringify({ name, transport_mode: mode }),
+      });
+      setCarriers((prev) => [...prev, carrier].sort((a, b) => a.name.localeCompare(b.name, 'fr')));
+      setCarrierName(carrier.name);
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err.message };
+    }
+  };
+
   const detected = useMemo(() => (trackingNumber.trim() ? detectTrackingNumber(trackingNumber) : null), [trackingNumber]);
+  // Carrier of the list linked to the connector recognised from the number
+  const autoCarrier = detected ? carriers.find((c) => c.tracking_carrier_code === detected.carrier)?.name ?? null : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     const { value, errors } = validateParcelInput({
       tracking_number: trackingNumber,
-      carrier: carrier || undefined,
+      carrier_name: carrierName || null,
       expected_delivery: expected || null,
       notes,
     });
@@ -119,21 +155,28 @@ export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, onClose, on
               </span>
             )}
           </label>
-          <label>
-            <span className={label}>Transporteur</span>
-            <select
-              value={carrier}
-              onChange={(e) => setCarrier(e.target.value as CarrierCode | '')}
-              className={inputClass}
-            >
-              <option value="">Selon le n° de suivi</option>
-              {CARRIER_CODES.filter((c) => c !== 'UNKNOWN').map((c) => (
-                <option key={c} value={c}>
-                  {CARRIER_LABELS[c]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div>
+            <ReferenceSelect
+              label="Transporteur"
+              entityLabel="transporteur"
+              options={carriers}
+              value={carrierName}
+              onChange={setCarrierName}
+              onCreate={canCreateCarrier ? handleCreateCarrier : undefined}
+              withModeChoice
+              loading={carriersLoading}
+              loadError={carriersError}
+              emptyOptionLabel="Selon le n° de suivi"
+              emptyHint={
+                canCreateCarrier
+                  ? 'Aucun transporteur : ajoutez-le ici ou dans Paramètres › Transporteurs.'
+                  : 'Aucun transporteur : demandez à la Supply Chain de l’ajouter dans Paramètres.'
+              }
+            />
+            {!carrierName && autoCarrier && (
+              <span className="mt-1 block text-[11px] text-slate-500">Reconnu : {autoCarrier}</span>
+            )}
+          </div>
           <label>
             <span className={label}>Livraison prévue à Orly</span>
             <input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className={inputClass} />

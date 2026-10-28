@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Camera, Loader2, Package, Pencil, Plus, Unlink } from 'lucide-react';
-import { CARRIER_LABELS } from '../lib/carrierDetection';
 import { PARCEL_STATUS_HINTS, PARCEL_STATUS_LABELS, isParcelOverdue, parcelLossDeadline } from '../lib/parcelTracking';
 import type { ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { DigiInvoice, Parcel, fetchInvoiceParcels, formatDate, unlinkParcel } from './digiApi';
@@ -105,7 +104,7 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
               return (
                 <tr key={p.id}>
                   <td className="py-1.5 pr-3 font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</td>
-                  <td className="py-1.5 pr-3">{p.carrier === 'UNKNOWN' ? '—' : CARRIER_LABELS[p.carrier]}</td>
+                  <td className="py-1.5 pr-3">{p.carrier_name || '—'}</td>
                   <td className="py-1.5 pr-3">{formatDate(p.expected_delivery)}</td>
                   <td className="py-1.5 pr-3">
                     <span
@@ -161,6 +160,7 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
         <ParcelFormModal
           invoices={[invoice]}
           parcel={form === 'new' ? null : form}
+          canCreateCarrier={isSupplyChain}
           onClose={() => setForm(null)}
           onSaved={() => {
             setForm(null);

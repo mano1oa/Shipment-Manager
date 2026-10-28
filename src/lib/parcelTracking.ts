@@ -9,7 +9,7 @@
  *   Invoice received = all its parcels received
  *   SHIPMENT Orly → Mada = received invoices grouped + Réf FA DIGI-NXT
  */
-import { CARRIER_CODES, detectTrackingNumber } from './carrierDetection.js';
+import { detectTrackingNumber } from './carrierDetection.js';
 import type { CarrierCode } from './carrierDetection.js';
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,10 @@ export function isParcelStatus(value: unknown): value is ParcelStatus {
 export interface ParcelInput {
   /** Null when not known yet (parcel created at reception in Orly). */
   tracking_number: string | null;
+  /** Tracking connector: detected from the number, or the one linked to the carrier picked. */
   carrier: CarrierCode;
+  /** Carrier of the Settings list (Paramètres › Transporteurs); null = from the number format. */
+  carrier_name: string | null;
   expected_delivery: string | null; // YYYY-MM-DD
   notes: string | null;
 }
@@ -108,7 +111,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Validates a parcel payload. The tracking number is normalised and its
- * carrier detected from the format when the carrier is not given.
+ * connector detected from its format (the server resolves the carrier name).
  */
 export function validateParcelInput(raw: any): { value: ParcelInput | null; errors: string[] } {
   const errors: string[] = [];
@@ -123,8 +126,9 @@ export function validateParcelInput(raw: any): { value: ParcelInput | null; erro
     trackingNumber = detected.number || null;
     carrier = detected.carrier;
   }
-  if (raw.carrier !== undefined && raw.carrier !== null && raw.carrier !== '') {
-    if ((CARRIER_CODES as readonly string[]).includes(raw.carrier)) carrier = raw.carrier;
+  let carrierName: string | null = null;
+  if (raw.carrier_name !== undefined && raw.carrier_name !== null && raw.carrier_name !== '') {
+    if (typeof raw.carrier_name === 'string' && raw.carrier_name.trim().length <= 100) carrierName = raw.carrier_name.trim();
     else errors.push('Transporteur invalide.');
   }
 
@@ -136,7 +140,10 @@ export function validateParcelInput(raw: any): { value: ParcelInput | null; erro
 
   const notes = typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes.trim().slice(0, 2000) : null;
   return {
-    value: errors.length === 0 ? { tracking_number: trackingNumber, carrier, expected_delivery: expected, notes } : null,
+    value:
+      errors.length === 0
+        ? { tracking_number: trackingNumber, carrier, carrier_name: carrierName, expected_delivery: expected, notes }
+        : null,
     errors,
   };
 }

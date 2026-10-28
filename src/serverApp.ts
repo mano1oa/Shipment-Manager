@@ -40,6 +40,7 @@ import {
   createCarrier,
   updateCarrier,
   getTrackingCodeForCarrierName,
+  resolveParcelCarrier,
   DuplicateReferenceError,
   CARRIER_TRANSPORT_MODES,
   CARRIER_NAME_MAX_LENGTH,
@@ -85,6 +86,7 @@ import {
   INVOICE_TRIAGES,
 } from './lib/parcelTracking.js';
 import { validateDirectInvoiceInput } from './lib/directInvoices.js';
+import type { ParcelInput } from './lib/parcelTracking.js';
 import {
   listParcelsForInvoice,
   getParcel,
@@ -2036,6 +2038,24 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   // Parcels (supplier → Orly)
   // ---------------------------------------------------------------------------
 
+  /**
+   * Carrier of a parcel from the Settings list (or from the number format).
+   * Returns false (and answers 400) when the picked carrier is unknown.
+   */
+  const applyParcelCarrier = async (value: ParcelInput, res: any): Promise<boolean> => {
+    const resolved = await resolveParcelCarrier(value.carrier_name, value.carrier);
+    if (!resolved) {
+      res.status(400).json({
+        success: false,
+        error: `Transporteur « ${value.carrier_name} » inconnu ou désactivé : ajoutez-le dans Paramètres › Transporteurs.`,
+      });
+      return false;
+    }
+    value.carrier_name = resolved.name;
+    if (resolved.trackingCode && isCarrierCode(resolved.trackingCode)) value.carrier = resolved.trackingCode;
+    return true;
+  };
+
   app.get('/api/digi-invoices/:id/parcels', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
     try {
@@ -2058,6 +2078,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     const { value, errors } = validateParcelInput(req.body);
     if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
     try {
+      if (!(await applyParcelCarrier(value, res))) return;
       const { supplier, mixed } = await commonSupplierOf(invoiceIds);
       if (mixed) {
         return res.status(400).json({ success: false, error: 'Un colis ne peut regrouper que des factures d\'un même fournisseur.' });
@@ -2099,6 +2120,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     const { value, errors } = validateParcelInput(req.body);
     if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
     try {
+      if (!(await applyParcelCarrier(value, res))) return;
       const updated = await updateParcel(req.params.id, value, req.user.email);
       if (!updated) return res.status(404).json({ success: false, error: 'Colis introuvable' });
       await writeAuditLog({

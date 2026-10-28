@@ -58,6 +58,8 @@ export async function initParcelSchema(): Promise<void> {
       WHERE tracking_number IS NOT NULL;
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_parcels_status ON parcels (status);`;
+  // Carrier of the Settings list (shipment_carriers.name); `carrier` stays the tracking connector
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS carrier_name VARCHAR(100);`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS parcel_invoices (
@@ -126,7 +128,7 @@ async function runConversion(): Promise<void> {
 
   const hasTrackingTable = (await sql`SELECT to_regclass('shipment_tracking_numbers') IS NOT NULL AS ok`)[0]?.ok;
   const shipments = await sql`
-    SELECT s.id, s.supplier, s.tracking_no, s.eta, s.global_status, s.antoine_status,
+    SELECT s.id, s.supplier, s.carrier, s.tracking_no, s.eta, s.global_status, s.antoine_status,
       s.orly_scan_date, s.mada_receipt_date,
       COALESCE((SELECT array_agg(i.id) FROM digi_invoices i WHERE i.shipment_id = s.id), '{}') AS invoice_ids
     FROM shipments s
@@ -161,9 +163,9 @@ async function runConversion(): Promise<void> {
         const detected = number ? detectTrackingNumber(number) : null;
         const tracking = detected?.number || number;
         const inserted = await sql`
-          INSERT INTO parcels (tracking_number, carrier, supplier_name, expected_delivery, status, notes,
+          INSERT INTO parcels (tracking_number, carrier, carrier_name, supplier_name, expected_delivery, status, notes,
             legacy_shipment_id, status_changed_at, created_by_email)
-          VALUES (${tracking}, ${detected?.carrier || 'UNKNOWN'}, ${s.supplier || null}, ${expected},
+          VALUES (${tracking}, ${detected?.carrier || 'UNKNOWN'}, ${s.carrier?.trim() || null}, ${s.supplier || null}, ${expected},
             ${parcelStatus}, ${note}, ${s.id}, NOW(), 'migration')
           ON CONFLICT DO NOTHING
           RETURNING id
