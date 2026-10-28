@@ -9,7 +9,6 @@ import {
 } from '../../db/digiInvoices.js';
 import { DEFAULT_DEST_PARTNER_NAME, isServiceLabel, mergeServiceLines } from '../../lib/digiInvoices.js';
 import type { DigiInvoiceLineInput } from '../../lib/digiInvoices.js';
-import { createPendingShipments, SYSTEM_ACTOR } from '../digiShipments.js';
 import type { AuditActor } from '../../db/audit.js';
 
 /**
@@ -50,7 +49,6 @@ export interface DigiOdooSyncResult {
   missing: number; // flagged as no longer present in Odoo
   cancelled_removed: number; // synced earlier, cancelled since in Odoo
   complete: boolean;
-  shipments_created?: number; // shipments created for the new invoices
 }
 
 export function getDestinationFilter(): { id: number | null; name: string } {
@@ -212,8 +210,6 @@ export async function runDigiOdooSync(params: {
   const actorEmail = params.actor?.email ?? null;
   try {
     const result = await syncDigiInvoicesFromOdoo({ timeBudgetMs: params.timeBudgetMs });
-    // Every new invoice to ship gets its shipment
-    result.shipments_created = await createPendingShipments(params.actor ?? SYSTEM_ACTOR);
     await recordOdooSyncRun({
       trigger: params.trigger,
       actor_email: actorEmail,

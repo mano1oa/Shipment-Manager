@@ -303,9 +303,13 @@ fusionnées en une seule ligne « [SERVICES] … — services, non expédiés »
 (quantité 1, prix = somme des frais), quelle que soit la source. Le total de
 la facture reste égal au total Odoo.
 
-**Une facture = une expédition.** Chaque facture contenant au moins un article
-crée automatiquement son expédition (après la synchronisation Odoo, un import
-ou une saisie) :
+**Création des expéditions : à la demande uniquement.** Aucune expédition
+n'est créée automatiquement, car les factures importées contiennent aussi des
+services. On coche les factures de marchandises puis « Créer les expéditions »
+(une par facture) ou « Grouper en une expédition », ou on utilise le bouton
+« Créer l'expédition » d'une facture (brouillons Odoo compris). Les factures
+de services se classent avec « Pas d'expédition — services ». L'expédition
+créée reprend :
 
 - mode **Aérien** par défaut (modifiable dans la fiche), statut global « En
   livraison vers Orly », statut Antoine « En attente Antoine » ;
@@ -314,18 +318,14 @@ ou une saisie) :
   ETA restent à saisir ;
 - **valeur de l'expédition = total de ses factures** (le coût saisi à la main
   ne sert plus que pour les anciennes expéditions sans facture) ;
-- pas d'expédition automatique pour : les brouillons Odoo (créée à la
-  validation), les factures datées d'avant `DIGI_AUTO_SHIPMENT_FROM`
-  (60 derniers jours par défaut, pour ne pas recréer l'historique déjà livré)
-  — bouton « Créer l'expédition » (colonne Expédition et détail de la
-  facture) dans ces cas, ou si l'expédition a été supprimée ou détachée.
+- le bouton devient « Recréer l'expédition » si l'expédition a été supprimée.
 
 **Envoi groupé.** Plusieurs factures peuvent voyager dans la même expédition :
 bouton « Rattacher à une expédition existante » sur la facture (recherche par
 n° d'expédition, fournisseur, commande, LTA). La valeur de l'expédition est la
 somme de toutes ses factures. Si l'expédition quittée n'a plus aucune facture,
 l'application propose de la supprimer (Supply Chain). Une facture peut aussi
-être détachée ; elle ne reçoit alors plus d'expédition automatiquement.
+être détachée ; elle repasse alors « Sans expédition ».
 
 **Services (non expédiés).** Onglet à part pour les factures sans article à
 expédier : factures ne contenant que des frais, ou classées à la main en
@@ -368,13 +368,13 @@ Toutes ces actions sont tracées dans le journal d'audit.
 - Rattachement des numéros de suivi saisis à la création, avec détection du transporteur.
 - Statut d'un numéro de suivi recalculé à chaque nouvel événement.
 - Journal d'audit de toutes les actions sensibles.
-- Création d'une expédition par facture DIGI, et valeur de l'expédition calculée depuis ses factures.
+- Valeur d'une expédition calculée depuis ses factures DIGI.
 - Fusion des lignes de frais DEEE / RCP / FRDP en une ligne de services.
 - Récupération quotidienne des factures DIGI → NextHope depuis Odoo (cron), et à la demande avec « Synchroniser Odoo ».
 
 **Manuel aujourd'hui**
 
-- Création et modification des expéditions, statut global, statut Antoine.
+- Création et modification des expéditions (y compris depuis les factures DIGI, à la demande), statut global, statut Antoine.
 - Dates de scan Orly et de réception Madagascar.
 - Événements de suivi transporteur, jusqu'au branchement des API gratuites.
 - Livraisons maritimes (quai de Rouen) et suivi des conteneurs.
@@ -489,7 +489,6 @@ Node.js 20+ et une base Neon PostgreSQL.
 | `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY` | Connexion en lecture à Odoo DIGI LOGISTIC (API JSON-RPC ; clé API de l'utilisateur) |
 | `ODOO_DEST_PARTNER_ID` / `ODOO_DEST_PARTNER_NAME` | Entité de destination filtrée : identifiant du partenaire, sinon nom (« NextHope » par défaut) |
 | `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Paramètres › Intégrations (consultation, aucune synchronisation) |
-| `DIGI_AUTO_SHIPMENT_FROM` | Date (AAAA-MM-JJ) à partir de laquelle les factures créent automatiquement leur expédition ; par défaut les 60 derniers jours |
 | `NODE_ENV` | `production` en production (cookie `Secure`) |
 
 Ne jamais exposer ces valeurs via une variable `VITE_*`. Le fichier `.env` est
@@ -551,4 +550,4 @@ ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-a
 | 3 | Alertes résolues partagées dans Neon ; protections sur la gestion des utilisateurs ; journal d'audit complet |
 | 4 | Plus aucun détail technique dans les réponses d'erreur ; limitation des connexions et de l'IA ; onglet Alertes ouvert à SOURCING |
 | 5 | Base du suivi transporteur : plusieurs numéros par expédition, historique d'événements, détection du transporteur, cron quotidien sécurisé |
-| 6 | Factures DIGI (ex-« Colis à suivre ») : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main ; une expédition créée par facture, lignes de frais fusionnées, onglet Services ; fiche expédition simplifiée |
+| 6 | Factures DIGI (ex-« Colis à suivre ») : factures DIGI LOGISTIC → NextHope avec leurs lignes, synchronisées depuis Odoo, importées d'Excel ou saisies à la main ; création des expéditions depuis les factures (à la demande), lignes de frais fusionnées, onglet Services ; fiche expédition simplifiée |

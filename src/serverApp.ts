@@ -73,7 +73,7 @@ import {
 } from './db/digiInvoices.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
-import { createPendingShipments, createShipmentForInvoice } from './services/digiShipments.js';
+import { createShipmentForInvoice } from './services/digiShipments.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
@@ -1696,7 +1696,6 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         actor: req.user,
         details: { supplier: value.supplier_name, ref: value.ref, lines: value.lines.length },
       });
-      await createPendingShipments(req.user);
       return res.status(201).json({ success: true, invoice: await getDigiInvoice(id) });
     } catch (err: any) {
       if (err instanceof DuplicateDigiInvoiceError) {
@@ -1732,7 +1731,6 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
     try {
       const { created, duplicates } = await importDigiInvoices(valid, req.user.email);
-      const shipmentsCreated = await createPendingShipments(req.user);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: '*',
@@ -1746,7 +1744,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           rejected: rejected.length,
         },
       });
-      return res.json({ success: true, created, duplicates, rejected, shipments_created: shipmentsCreated });
+      return res.json({ success: true, created, duplicates, rejected });
     } catch (err: any) {
       console.error('[DIGI] Import error:', err);
       return res.status(500).json({ success: false, error: 'Échec de l\'import des factures' });
@@ -1871,7 +1869,6 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         actor: req.user,
         details: { supplier: value.supplier_name, ref: value.ref, lines: value.lines.length },
       });
-      await createPendingShipments(req.user);
       return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
     } catch (err: any) {
       if (err instanceof ReadOnlyDigiInvoiceError) {

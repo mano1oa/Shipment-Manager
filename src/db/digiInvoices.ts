@@ -696,30 +696,6 @@ export interface InvoiceForShipment {
   odoo_move_name: string | null;
 }
 
-/**
- * Invoices that should get their shipment automatically: never had one, not
- * marked as services, at least one item line, posted (Odoo) or entered in the
- * app, dated on/after `fromDate` (or undated).
- */
-export async function listInvoicesNeedingShipment(fromDate: string, limit: number): Promise<InvoiceForShipment[]> {
-  await ensureDigiInvoicesSchema();
-  const sql = getDb();
-  const rows = await sql`
-    SELECT i.id, i.supplier_name, i.ref, TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
-      i.amazon_order_ref, i.sale_move_ref, i.odoo_move_name
-    FROM digi_invoices i
-    WHERE i.shipment_id IS NULL
-      AND i.shipment_created_at IS NULL
-      AND NOT i.no_shipment
-      AND (i.odoo_move_id IS NULL OR i.odoo_state = 'posted')
-      AND (i.invoice_date IS NULL OR i.invoice_date >= ${fromDate}::date)
-      AND EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id AND NOT l.is_service)
-    ORDER BY i.invoice_date ASC NULLS LAST, i.created_at ASC
-    LIMIT ${limit}
-  `;
-  return rows as InvoiceForShipment[];
-}
-
 export async function getInvoiceForShipment(id: string): Promise<InvoiceForShipment | null> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
@@ -812,7 +788,7 @@ export async function getInvoiceTotalsByShipment(): Promise<Map<string, { count:
 /**
  * Moves an invoice to an existing shipment (several invoices can travel in
  * the same shipment), or detaches it (shipmentId = null). Detached invoices
- * are never given a new shipment automatically.
+ * keep no shipment until one is created or attached.
  * Returns null when the invoice does not exist.
  */
 export async function assignInvoiceToShipment(

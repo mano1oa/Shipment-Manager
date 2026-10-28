@@ -67,7 +67,6 @@ export interface DigiOdooSyncResult {
   remaining: number;
   missing: number;
   cancelled_removed: number;
-  shipments_created?: number;
   complete: boolean;
 }
 
@@ -75,7 +74,6 @@ export interface DigiImportResult {
   created: number;
   duplicates: string[];
   rejected: { ref: string | null; errors: string[] }[];
-  shipments_created?: number;
 }
 
 export async function apiJson<T = any>(url: string, init?: RequestInit): Promise<T> {

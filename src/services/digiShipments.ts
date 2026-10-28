@@ -1,35 +1,14 @@
 import { getShipmentByIdFromNeon, upsertShipmentInNeon } from '../db/shipments.js';
-import {
-  InvoiceForShipment,
-  claimInvoiceForShipment,
-  listInvoicesNeedingShipment,
-  releaseInvoiceClaim,
-} from '../db/digiInvoices.js';
+import { InvoiceForShipment, claimInvoiceForShipment, releaseInvoiceClaim } from '../db/digiInvoices.js';
 import { writeAuditLog, AuditActor } from '../db/audit.js';
 import { Shipment } from '../types.js';
 
 /**
- * Every DIGI invoice to NextHope is goods to track: it gets its own shipment
- * automatically (air by default, changeable in the shipment).
- *
- * Not created for: invoices marked as services (manual work), invoices with
- * fee lines only, Odoo drafts (created once posted), and invoices dated before
- * DIGI_AUTO_SHIPMENT_FROM (YYYY-MM-DD; default: last 60 days) so that the
- * history already delivered does not flood the shipment lists. Those can still
- * get a shipment with the "Créer l'expédition" button.
+ * Shipment of a DIGI invoice, created on request only ("Créer l'expédition",
+ * one invoice or a selection): imported invoices also hold services, so an
+ * invoice is never assumed to be goods to ship. Air by default, changeable in
+ * the shipment.
  */
-
-const DEFAULT_LOOKBACK_DAYS = 60;
-const MAX_PER_RUN = 150;
-
-export const SYSTEM_ACTOR: AuditActor = { id: 'system', email: 'system@digi-sync', role: 'SYSTEM' };
-
-export function getAutoShipmentFromDate(): string {
-  const configured = process.env.DIGI_AUTO_SHIPMENT_FROM?.trim();
-  if (configured && /^\d{4}-\d{2}-\d{2}$/.test(configured)) return configured;
-  const d = new Date(Date.now() - DEFAULT_LOOKBACK_DAYS * 86400000);
-  return d.toISOString().slice(0, 10);
-}
 
 async function newShipmentId(): Promise<string> {
   const year = new Date().getFullYear();
@@ -75,7 +54,7 @@ function buildShipment(id: string, invoice: InvoiceForShipment): Shipment {
         date: new Date().toISOString().slice(0, 16).replace('T', ' '),
         location: '',
         status: 'Création',
-        details: `Créée automatiquement depuis la facture DIGI ${invoiceLabel}${
+        details: `Créée depuis la facture DIGI ${invoiceLabel}${
           invoice.supplier_name ? ` (${invoice.supplier_name})` : ''
         }`,
       },
@@ -112,19 +91,3 @@ export async function createShipmentForInvoice(
   }
 }
 
-/**
- * Creates the missing shipments (after an Odoo sync, an import or a manual
- * entry). Failures are logged and retried on the next run.
- */
-export async function createPendingShipments(actor: AuditActor = SYSTEM_ACTOR): Promise<number> {
-  const invoices = await listInvoicesNeedingShipment(getAutoShipmentFromDate(), MAX_PER_RUN);
-  let created = 0;
-  for (const invoice of invoices) {
-    try {
-      if (await createShipmentForInvoice(invoice, actor)) created++;
-    } catch (err: any) {
-      console.error('[DIGI] Could not create shipment for invoice', invoice.id, err?.message || err);
-    }
-  }
-  return created;
-}

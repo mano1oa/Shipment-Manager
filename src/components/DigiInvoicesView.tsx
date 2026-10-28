@@ -142,8 +142,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
       if (r.failed > 0) parts.push(`${r.failed} en échec`);
       if (r.missing > 0) parts.push(`${r.missing} absente(s) d'Odoo`);
       if (r.cancelled_removed > 0) parts.push(`${r.cancelled_removed} annulée(s) retirée(s)`);
-      if (r.shipments_created) parts.push(`${r.shipments_created} expédition(s) créée(s)`);
-      if (r.shipments_created) onShipmentsChanged();
       setMessage(
         `Synchronisation Odoo : ${parts.join(', ')}.` +
           (r.complete ? '' : ` ${r.remaining} restante(s) : relancez la synchronisation.`)
@@ -478,7 +476,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
         disabled={busyId === inv.id}
         title={
           isDraft
-            ? 'Brouillon Odoo : l\'expédition serait créée automatiquement à la validation, mais vous pouvez la créer dès maintenant.'
+            ? 'Brouillon Odoo : vous pouvez déjà créer l\'expédition si la marchandise est commandée.'
             : 'Créer une expédition à partir de cette facture'
         }
         className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#522870] disabled:opacity-50"
@@ -676,8 +674,10 @@ export const DigiInvoicesView: React.FC<Props> = ({
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Factures DIGI LOGISTIC dont l'entité de destination est <strong>{destination}</strong>, avec leurs lignes de
-            produits, et l'expédition créée pour chacune. Sources : Odoo, import Excel, saisie manuelle. Le suivi des
-            colis se fait ensuite dans Suivi Aérien / Maritime.
+            produits. Sources : Odoo, import Excel, saisie manuelle. Aucune expédition n'est créée automatiquement, car une
+            facture peut ne contenir que des services : cochez les factures de marchandises puis « Créer les
+            expéditions », et classez les autres en services. Le suivi des colis se fait ensuite dans Suivi Aérien /
+            Maritime.
           </p>
           {config?.odoo_configured && (
             <p className="mt-0.5 text-[11px] text-slate-400">
@@ -1042,9 +1042,8 @@ export const DigiInvoicesView: React.FC<Props> = ({
           destination={destination}
           maxInvoices={config?.import_max_invoices ?? 2000}
           onClose={() => setShowImport(false)}
-          onImported={(result) => {
+          onImported={() => {
             fetchDigiInvoices().then(setInvoices).catch((err) => setError(err.message));
-            if (result.shipments_created) onShipmentsChanged();
           }}
         />
       )}
