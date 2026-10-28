@@ -229,7 +229,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       setMessage(
         toServices
           ? `Facture ${inv.ref ?? ''} classée en services (pas d'expédition).`
-          : `Facture ${inv.ref ?? ''} remise dans les factures à expédier.`
+          : `Facture ${inv.ref ?? ''} remise dans les factures à traiter.`
       );
     } catch (err: any) {
       setError(err.message);
@@ -415,10 +415,10 @@ export const DigiInvoicesView: React.FC<Props> = ({
         (withShipment.length > 0
           ? ` ${withShipment.length} seront détachées de leur expédition, qui reste à supprimer si elle n'a plus lieu d'être.`
           : '')
-      : `Remettre ${list.length} facture(s) dans les factures à expédier ?`;
+      : `Remettre ${list.length} facture(s) dans les factures à traiter ?`;
     if (!window.confirm(question)) return;
     let detached = false;
-    const done = await runBulk(noShipment ? 'Classement en services' : 'Remise à expédier', list, async (inv) => {
+    const done = await runBulk(noShipment ? 'Classement en services' : 'Remise à traiter', list, async (inv) => {
       const r = await setInvoiceServices(inv.id, noShipment);
       replaceInvoice(r.invoice);
       if (r.detached_shipment_id) detached = true;
@@ -428,7 +428,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       setMessage(
         noShipment
           ? `${done} facture(s) classée(s) en services.`
-          : `${done} facture(s) remise(s) dans les factures à expédier.`
+          : `${done} facture(s) remise(s) dans les factures à traiter.`
       );
     }
   };
@@ -570,7 +570,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
               <button
                 onClick={() => handleToggleServices(inv)}
                 disabled={busyId === inv.id}
-                title={inv.no_shipment ? 'Remettre dans les factures à expédier' : 'Classer en services (pas d\'expédition)'}
+                title={inv.no_shipment ? 'Remettre dans les factures à traiter' : 'Classer en services (pas d\'expédition)'}
                 className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
               >
                 {inv.no_shipment ? <PackageCheck className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
@@ -752,7 +752,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       <div className="flex gap-1 rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
         {(
           [
-            ['to_ship', 'À expédier', invoices.length - servicesCount],
+            ['to_ship', 'À traiter', invoices.length - servicesCount],
             ['services', 'Services (non expédiés)', servicesCount],
           ] as [Section, string, number][]
         ).map(([key, label, count]) => (
@@ -898,7 +898,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   title="Seules les factures classées à la main peuvent revenir ; celles qui ne contiennent que des frais restent en services."
                   className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
                 >
-                  <PackageCheck className="h-3.5 w-3.5" /> Remettre à expédier ({backToShip.length})
+                  <PackageCheck className="h-3.5 w-3.5" /> Remettre à traiter ({backToShip.length})
                 </button>
               )}
               {canDelete && (

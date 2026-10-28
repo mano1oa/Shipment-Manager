@@ -308,7 +308,7 @@ n'est créée automatiquement, car les factures importées contiennent aussi des
 services. On coche les factures de marchandises puis « Créer les expéditions »
 (une par facture) ou « Grouper en une expédition », ou on utilise le bouton
 « Créer l'expédition » d'une facture (brouillons Odoo compris). Les factures
-de services se classent avec « Pas d'expédition — services ». L'expédition
+de services se classent avec « Pas d'expédition — services » (classement à la main ; seuls les frais [DEEE], [RCP], [FRDP] sont reconnus automatiquement). Les nouvelles factures arrivent dans l'onglet « À traiter ». L'expédition
 créée reprend :
 
 - mode **Aérien** par défaut (modifiable dans la fiche), statut global « En
@@ -316,7 +316,7 @@ créée reprend :
 - fournisseur, commande (commande Amazon, sinon référence), n° de facture et
   Réf FA DIGI-NXT (facture vente) repris de la facture ; transporteur, LTA et
   ETA restent à saisir ;
-- **valeur de l'expédition = total de ses factures** (le coût saisi à la main
+- **valeur de l'expédition = total de ses factures**, lignes de services comprises (le coût saisi à la main
   ne sert plus que pour les anciennes expéditions sans facture) ;
 - le bouton devient « Recréer l'expédition » si l'expédition a été supprimée.
 
@@ -331,12 +331,12 @@ l'application propose de la supprimer (Supply Chain). Une facture peut aussi
 expédier : factures ne contenant que des frais, ou classées à la main en
 services (travail manuel). Une facture classée en services est détachée de son
 expédition (qui reste à supprimer si besoin) ; elle peut être remise dans les
-factures à expédier.
+factures à traiter (onglet « À traiter »).
 
 **Affichage.** Les factures sont groupées par fournisseur (sous-total et
 nombre de factures sans expédition par fournisseur ; un clic replie le
 groupe ; case « Grouper par fournisseur » pour revenir à une liste simple).
-Filtres : recherche libre, fournisseur, source et, dans « À expédier », état
+Filtres : recherche libre, fournisseur, source et, dans « À traiter », état
 du suivi — « Sans expédition », « Expédition sans n° de suivi » (ni n° de
 suivi ni LTA / BL sur l'expédition), « Expédition suivie ».
 
@@ -347,7 +347,7 @@ pour toute la liste affichée ouvrent une barre d'actions :
 - « Grouper en une expédition » : une seule expédition pour toutes les
   factures sélectionnées (envoi groupé) ;
 - « Pas d'expédition — services » : classe les factures en services
-  (« Remettre à expédier » dans l'onglet Services) ;
+  (« Remettre à traiter » dans l'onglet Services) ;
 - « Supprimer » (Supply Chain ; pas les factures encore présentes dans Odoo).
 
 Seules les factures concernées par une action sont traitées (le nombre est
