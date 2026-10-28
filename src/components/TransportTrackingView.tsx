@@ -1,0 +1,113 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Package, Plane, Ship } from 'lucide-react';
+import type { TrackingSettings } from '../lib/parcelTracking';
+import { InvoiceWithoutParcel, Parcel, fetchAllParcels, fetchTrackingSettings } from './digiApi';
+import { ParcelsBoardView, parcelMatches } from './ParcelsBoardView';
+import { ShipmentsView, matchesSearch } from './ShipmentsView';
+
+type Tab = 'shipments' | 'parcels';
+
+interface Props extends Omit<React.ComponentProps<typeof ShipmentsView>, 'modeFilter'> {
+  mode: 'Air' | 'Sea';
+  onOpenShipment: (shipmentId: string) => void;
+}
+
+/**
+ * Suivi Aérien / Maritime: two tabs, the parcels on their way from the
+ * suppliers (to Orly or Rouen) and the shipments to Madagascar. The top bar
+ * search applies to both; each tab shows how many results it holds.
+ */
+export const TransportTrackingView: React.FC<Props> = ({ mode, onOpenShipment, ...shipmentsProps }) => {
+  const destination = mode === 'Air' ? 'ORLY' : 'ROUEN';
+  const hub = mode === 'Air' ? 'Orly' : 'Rouen';
+  const [tab, setTab] = useState<Tab>('shipments');
+  const [parcels, setParcels] = useState<Parcel[] | null>(null);
+  const [withoutParcel, setWithoutParcel] = useState<InvoiceWithoutParcel[]>([]);
+  const [settings, setSettings] = useState<TrackingSettings | undefined>(undefined);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError(null);
+    fetchAllParcels()
+      .then((d) => {
+        setParcels(d.parcels);
+        setWithoutParcel(d.invoices_without_parcel);
+      })
+      .catch((err) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+    fetchTrackingSettings().then(setSettings).catch(() => {});
+  }, [load]);
+
+  const search = shipmentsProps.globalSearch || '';
+  const shipmentCount = useMemo(
+    () => shipmentsProps.shipments.filter((s) => s.mode === mode && matchesSearch(s, search)).length,
+    [shipmentsProps.shipments, mode, search]
+  );
+  const parcelCount = useMemo(
+    () => (parcels || []).filter((p) => p.destination === destination && p.status === 'to_receive' && parcelMatches(p, search)).length,
+    [parcels, destination, search]
+  );
+
+  const tabs: { key: Tab; label: string; icon: React.ElementType; count: number; hint: string }[] = [
+    {
+      key: 'shipments',
+      label: mode === 'Air' ? 'Expéditions Orly → Mada' : 'Expéditions maritimes',
+      icon: mode === 'Air' ? Plane : Ship,
+      count: shipmentCount,
+      hint: search ? 'résultat(s)' : '',
+    },
+    {
+      key: 'parcels',
+      label: `Colis vers ${hub}`,
+      icon: Package,
+      count: parcelCount,
+      hint: search ? 'à recevoir trouvé(s)' : 'à recevoir',
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex w-fit gap-1 rounded-xl bg-slate-200/60 p-1 text-xs font-semibold dark:bg-slate-800">
+        {tabs.map(({ key, label, icon: Icon, count, hint }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+              tab === key
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" /> {label}
+            <span className={`ml-1 ${search && count > 0 && tab !== key ? 'font-bold text-[#643288]' : 'text-slate-400'}`}>
+              {key === 'parcels' && parcels === null ? '…' : count}
+              {hint && <span className="ml-1 font-normal">{hint}</span>}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {tab === 'shipments' ? (
+        <ShipmentsView {...(shipmentsProps as any)} modeFilter={mode} />
+      ) : (
+        <ParcelsBoardView
+          destination={destination}
+          parcels={parcels}
+          invoicesWithoutParcel={withoutParcel}
+          settings={settings}
+          loading={loading}
+          error={error}
+          onReload={load}
+          globalSearch={search}
+          onOpenShipment={onOpenShipment}
+        />
+      )}
+    </div>
+  );
+};

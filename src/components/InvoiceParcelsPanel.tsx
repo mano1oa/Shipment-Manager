@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Camera, Loader2, Package, Pencil, Plus, Unlink } from 'lucide-react';
-import { PARCEL_STATUS_HINTS, PARCEL_STATUS_LABELS, isParcelOverdue, parcelLossDeadline } from '../lib/parcelTracking';
+import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { DigiInvoice, Parcel, fetchInvoiceParcels, formatDate, unlinkParcel } from './digiApi';
 import { ParcelFormModal } from './ParcelFormModal';
@@ -108,10 +108,10 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
                   <td className="py-1.5 pr-3">{formatDate(p.expected_delivery)}</td>
                   <td className="py-1.5 pr-3">
                     <span
-                      title={PARCEL_STATUS_HINTS[p.status]}
+                      title={parcelStatusHint(p.status, p.destination)}
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}
                     >
-                      {PARCEL_STATUS_LABELS[p.status]}
+                      {parcelStatusLabel(p.status, p.destination)}
                     </span>
                     {p.status === 'received' && p.received_at && (
                       <span className="ml-1 text-[10px] text-slate-400">le {formatDate(p.received_at)}</span>

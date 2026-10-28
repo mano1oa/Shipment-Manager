@@ -3,7 +3,14 @@ import { AlertCircle, Loader2, Package, X } from 'lucide-react';
 import { CARRIER_LABELS, detectTrackingNumber } from '../lib/carrierDetection';
 import { ReferenceSelect } from './ReferenceSelect';
 import type { ReferenceCreateResult, ReferenceTransportMode } from './ReferenceSelect';
-import { validateParcelInput } from '../lib/parcelTracking';
+import {
+  DELIVERY_TYPES,
+  PARCEL_DESTINATIONS,
+  PARCEL_DESTINATION_LABELS,
+  validateParcelInput,
+} from '../lib/parcelTracking';
+import type { DeliveryType, ParcelDestination } from '../lib/parcelTracking';
+import { parseNumberValue } from '../lib/digiInvoices';
 import { DigiInvoice, Parcel, apiJson, createParcel, inputClass, updateParcel } from './digiApi';
 
 interface CarrierOption {
@@ -18,12 +25,21 @@ interface Props {
   parcel?: Parcel | null;
   /** Supply Chain: may add a carrier to the Settings list from the form. */
   canCreateCarrier: boolean;
+  /** Destination proposed for a new parcel (Orly unless opened from the sea tracking). */
+  defaultDestination?: ParcelDestination;
   onClose: () => void;
   /** existed: the tracking number already belonged to a parcel, now linked to these invoices. */
   onSaved: (parcel: Parcel, existed: boolean) => void;
 }
 
-export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, canCreateCarrier, onClose, onSaved }) => {
+export const ParcelFormModal: React.FC<Props> = ({
+  invoices,
+  parcel,
+  canCreateCarrier,
+  defaultDestination = 'ORLY',
+  onClose,
+  onSaved,
+}) => {
   const [trackingNumber, setTrackingNumber] = useState(parcel?.tracking_number ?? '');
   // '' = from the tracking number format (carrier linked to the detected connector)
   const [carrierName, setCarrierName] = useState(parcel?.carrier_name ?? '');
@@ -32,6 +48,11 @@ export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, canCreateCa
   const [carriersError, setCarriersError] = useState<string | null>(null);
   const [expected, setExpected] = useState(parcel?.expected_delivery ?? '');
   const [notes, setNotes] = useState(parcel?.notes ?? '');
+  const [destination, setDestination] = useState<ParcelDestination>(parcel?.destination ?? defaultDestination);
+  const [deliveryType, setDeliveryType] = useState<DeliveryType | ''>(parcel?.delivery_type ?? '');
+  const [packingInfo, setPackingInfo] = useState(parcel?.packing_info ?? '');
+  const [volume, setVolume] = useState(parcel?.volume_m3 != null ? String(parcel.volume_m3).replace('.', ',') : '');
+  const [description, setDescription] = useState(parcel?.description ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,11 +85,22 @@ export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, canCreateCa
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    const parsedVolume = parseNumberValue(volume);
+    if (parsedVolume === undefined) {
+      setError('Volume illisible.');
+      return;
+    }
+    const sea = destination === 'ROUEN';
     const { value, errors } = validateParcelInput({
       tracking_number: trackingNumber,
       carrier_name: carrierName || null,
       expected_delivery: expected || null,
       notes,
+      destination,
+      delivery_type: sea ? deliveryType || null : null,
+      packing_info: sea ? packingInfo : null,
+      volume_m3: sea ? parsedVolume : null,
+      description: sea ? description : null,
     });
     if (!value) {
       setError(errors.join(' '));
@@ -133,6 +165,25 @@ export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, canCreateCa
         )}
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <span className={label}>Livré par le fournisseur à</span>
+            <div className="mt-1 flex gap-2">
+              {PARCEL_DESTINATIONS.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDestination(d)}
+                  className={`flex-1 rounded-xl border px-3 py-2 font-bold transition ${
+                    destination === d
+                      ? 'border-[#643288] bg-purple-50 text-[#643288] dark:bg-purple-950/40 dark:text-purple-200'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {PARCEL_DESTINATION_LABELS[d]}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="sm:col-span-2">
             <span className={label}>N° de suivi</span>
             <input
@@ -178,9 +229,40 @@ export const ParcelFormModal: React.FC<Props> = ({ invoices, parcel, canCreateCa
             )}
           </div>
           <label>
-            <span className={label}>Livraison prévue à Orly</span>
+            <span className={label}>Livraison prévue à {destination === 'ROUEN' ? 'Rouen' : 'Orly'}</span>
             <input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className={inputClass} />
           </label>
+          {destination === 'ROUEN' && (
+            <>
+              <label>
+                <span className={label}>Type de livraison</span>
+                <select
+                  value={deliveryType}
+                  onChange={(e) => setDeliveryType(e.target.value as DeliveryType | '')}
+                  className={inputClass}
+                >
+                  <option value="">—</option>
+                  {DELIVERY_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className={label}>Volume estimé (m³)</span>
+                <input inputMode="decimal" value={volume} onChange={(e) => setVolume(e.target.value)} className={inputClass} />
+              </label>
+              <label className="sm:col-span-2">
+                <span className={label}>Colisage (nb de colis, dimensions, poids)</span>
+                <input value={packingInfo} onChange={(e) => setPackingInfo(e.target.value)} className={inputClass} />
+              </label>
+              <label className="sm:col-span-2">
+                <span className={label}>Description</span>
+                <input value={description} onChange={(e) => setDescription(e.target.value)} className={inputClass} />
+              </label>
+            </>
+          )}
           <label className="sm:col-span-2">
             <span className={label}>Remarque</span>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={inputClass} />

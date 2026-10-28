@@ -85,7 +85,7 @@ const InlineTextInput: React.FC<{
   );
 };
 
-const matchesSearch = (shp: Shipment, query: string) => {
+export const matchesSearch = (shp: Shipment, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return [

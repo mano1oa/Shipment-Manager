@@ -4,7 +4,7 @@ import LoginView from './components/LoginView';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
-import { ShipmentsView } from './components/ShipmentsView';
+import { TransportTrackingView } from './components/TransportTrackingView';
 import { ShipmentDetailModal } from './components/ShipmentDetailModal';
 import { AlertsCenterView } from './components/AlertsCenterView';
 import { AnalyticsView } from './components/AnalyticsView';
@@ -760,6 +760,12 @@ useEffect(() => {
     toastTimer.current = setTimeout(() => setNotification(null), 3500);
   };
 
+  const openShipmentById = (id: string) => {
+    const linked = shipmentsWithAlerts.find((s) => s.id === id);
+    if (linked) setSelectedShipment(linked);
+    else showToast('Expédition introuvable : rechargez la liste des expéditions.');
+  };
+
   const canEdit = currentRole === 'supply_chain' || currentRole === 'sourcing';
 
   // Role permissions mapping
@@ -929,30 +935,18 @@ if (!authUser) {
             </div>
           )}
 
-          {activeTab === 'air' && (
-            <ShipmentsView
+          {(activeTab === 'air' || activeTab === 'sea') && (
+            <TransportTrackingView
+              key={activeTab}
+              mode={activeTab === 'air' ? 'Air' : 'Sea'}
               shipments={shipmentsWithAlerts}
-              modeFilter="Air"
               globalSearch={globalSearch}
               onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
+              onOpenShipment={openShipmentById}
               canEdit={canEdit}
               onUpdateShipment={canEdit ? handleSaveShipment : undefined}
-              onNewShipment={canEdit ? () => openNewShipment('Air') : undefined}
-              digiValueFor={digiValueFor}
-            />
-          )}
-
-          {activeTab === 'sea' && (
-            <ShipmentsView
-              shipments={shipmentsWithAlerts}
-              modeFilter="Sea"
-              globalSearch={globalSearch}
-              onClearGlobalSearch={() => setGlobalSearch('')}
-              onSelectShipment={setSelectedShipment}
-              canEdit={canEdit}
-              onUpdateShipment={canEdit ? handleSaveShipment : undefined}
-              onNewShipment={canEdit ? () => openNewShipment('Sea') : undefined}
+              onNewShipment={canEdit ? () => openNewShipment(activeTab === 'air' ? 'Air' : 'Sea') : undefined}
               digiValueFor={digiValueFor}
             />
           )}
@@ -961,11 +955,7 @@ if (!authUser) {
             <DigiInvoicesView
               canDelete={currentRole === 'supply_chain'}
               isSupplyChain={currentRole === 'supply_chain'}
-              onOpenShipment={(id) => {
-                const linked = shipmentsWithAlerts.find((s) => s.id === id);
-                if (linked) setSelectedShipment(linked);
-                else showToast('Expédition introuvable : rechargez la liste des expéditions.');
-              }}
+              onOpenShipment={openShipmentById}
               onShipmentsChanged={loadShipmentsFromNeon}
               shipments={shipmentsWithAlerts}
               onDeleteShipment={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}

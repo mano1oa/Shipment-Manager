@@ -78,19 +78,44 @@ export function applyAutomaticShipmentStatus<T extends { global_status?: string;
 export const PARCEL_STATUSES = ['to_receive', 'received', 'lost', 'search'] as const;
 export type ParcelStatus = (typeof PARCEL_STATUSES)[number];
 
-export const PARCEL_STATUS_LABELS: Record<ParcelStatus, string> = {
-  to_receive: 'À recevoir',
-  received: 'Reçu à Orly',
-  lost: 'Perdu avant Orly',
-  search: 'Avis de recherche',
+/** Where the supplier delivers the parcel: Orly hub (air) or Rouen quay (sea). */
+export const PARCEL_DESTINATIONS = ['ORLY', 'ROUEN'] as const;
+export type ParcelDestination = (typeof PARCEL_DESTINATIONS)[number];
+
+export const PARCEL_DESTINATION_LABELS: Record<ParcelDestination, string> = {
+  ORLY: 'Orly (aérien)',
+  ROUEN: 'Rouen (maritime)',
 };
 
-export const PARCEL_STATUS_HINTS: Record<ParcelStatus, string> = {
-  to_receive: 'Attendu chez Antoine',
-  received: 'Confirmé par Antoine (photo facultative)',
-  lost: 'Pas de confirmation à temps : réclamation fournisseur',
-  search: 'Reçu à Orly mais absent à l’arrivée à Madagascar : réclamation MIDEX',
-};
+const HUB_NAMES: Record<ParcelDestination, string> = { ORLY: 'Orly', ROUEN: 'Rouen' };
+
+export function isParcelDestination(value: unknown): value is ParcelDestination {
+  return (PARCEL_DESTINATIONS as readonly string[]).includes(value as string);
+}
+
+export function parcelStatusLabel(status: ParcelStatus, destination: ParcelDestination = 'ORLY'): string {
+  const hub = HUB_NAMES[destination];
+  return {
+    to_receive: 'À recevoir',
+    received: `Reçu à ${hub}`,
+    lost: `Perdu avant ${hub}`,
+    search: 'Avis de recherche',
+  }[status];
+}
+
+export function parcelStatusHint(status: ParcelStatus, destination: ParcelDestination = 'ORLY'): string {
+  const hub = HUB_NAMES[destination];
+  return {
+    to_receive: destination === 'ORLY' ? 'Attendu chez Antoine' : 'Attendu au quai de Rouen',
+    received: destination === 'ORLY' ? 'Confirmé par Antoine (photo facultative)' : 'Réception confirmée au quai de Rouen',
+    lost: 'Pas de confirmation à temps : réclamation fournisseur',
+    search: `Reçu à ${hub} mais absent à l’arrivée à Madagascar : réclamation transitaire`,
+  }[status];
+}
+
+/** Sea deliveries: brought by the supplier, or to be collected. */
+export const DELIVERY_TYPES = ['Livraison par fournisseur', 'Enlèvement à prévoir'] as const;
+export type DeliveryType = (typeof DELIVERY_TYPES)[number];
 
 export function isParcelStatus(value: unknown): value is ParcelStatus {
   return (PARCEL_STATUSES as readonly string[]).includes(value as string);
@@ -105,6 +130,12 @@ export interface ParcelInput {
   carrier_name: string | null;
   expected_delivery: string | null; // YYYY-MM-DD
   notes: string | null;
+  destination: ParcelDestination;
+  /** Sea (Rouen) details, optional for Orly. */
+  description: string | null;
+  packing_info: string | null; // number of parcels, dimensions, weight
+  volume_m3: number | null;
+  delivery_type: DeliveryType | null;
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -138,11 +169,39 @@ export function validateParcelInput(raw: any): { value: ParcelInput | null; erro
     else errors.push('Date de livraison prévue invalide.');
   }
 
-  const notes = typeof raw.notes === 'string' && raw.notes.trim() ? raw.notes.trim().slice(0, 2000) : null;
+  const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
+  const notes = text(raw.notes, 2000);
+
+  const destination: ParcelDestination = raw.destination === undefined ? 'ORLY' : raw.destination;
+  if (!isParcelDestination(destination)) errors.push('Destination invalide (Orly ou Rouen).');
+
+  let volume: number | null = null;
+  if (raw.volume_m3 !== undefined && raw.volume_m3 !== null && raw.volume_m3 !== '') {
+    if (typeof raw.volume_m3 === 'number' && Number.isFinite(raw.volume_m3) && raw.volume_m3 >= 0 && raw.volume_m3 < 100000) {
+      volume = Math.round(raw.volume_m3 * 1000) / 1000;
+    } else errors.push('Volume invalide.');
+  }
+  let deliveryType: DeliveryType | null = null;
+  if (raw.delivery_type) {
+    if ((DELIVERY_TYPES as readonly string[]).includes(raw.delivery_type)) deliveryType = raw.delivery_type;
+    else errors.push('Type de livraison invalide.');
+  }
+
   return {
     value:
       errors.length === 0
-        ? { tracking_number: trackingNumber, carrier, carrier_name: carrierName, expected_delivery: expected, notes }
+        ? {
+            tracking_number: trackingNumber,
+            carrier,
+            carrier_name: carrierName,
+            expected_delivery: expected,
+            notes,
+            destination,
+            description: text(raw.description, 2000),
+            packing_info: text(raw.packing_info, 500),
+            volume_m3: volume,
+            delivery_type: deliveryType,
+          }
         : null,
     errors,
   };

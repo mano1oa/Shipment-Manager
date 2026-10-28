@@ -60,6 +60,12 @@ export async function initParcelSchema(): Promise<void> {
   await sql`CREATE INDEX IF NOT EXISTS idx_parcels_status ON parcels (status);`;
   // Carrier of the Settings list (shipment_carriers.name); `carrier` stays the tracking connector
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS carrier_name VARCHAR(100);`;
+  // Destination hub: Orly (air) or Rouen quay (sea), with the sea delivery details
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS destination VARCHAR(10) NOT NULL DEFAULT 'ORLY';`;
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS description TEXT;`;
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS packing_info VARCHAR(500);`;
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS volume_m3 NUMERIC(12, 3);`;
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(40);`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS parcel_invoices (
@@ -84,9 +90,101 @@ export async function initParcelSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_parcel_photos_parcel ON parcel_photos (parcel_id);`;
 
-  await convertExistingData();
+  await runOnce('parcel_model_v1', runConversion);
   // After the conversion (which fills the NULLs): new DIGI invoices start unsorted
   await sql`ALTER TABLE digi_invoices ALTER COLUMN triage SET DEFAULT 'to_sort';`;
+  await runOnce('parcel_rouen_v1', convertSeaDeliveries);
+}
+
+/**
+ * Runs a one-time conversion. Claimed first so two server instances never run
+ * it together; released on failure (each step is idempotent, so a retry
+ * resumes where it stopped).
+ */
+async function runOnce(key: string, conversion: () => Promise<void>): Promise<void> {
+  const sql = getDb();
+  const claimed = await sql`INSERT INTO app_migrations (key) VALUES (${key}) ON CONFLICT DO NOTHING RETURNING key`;
+  if (claimed.length === 0) return;
+  try {
+    await conversion();
+  } catch (err) {
+    await sql`DELETE FROM app_migrations WHERE key = ${key}`;
+    throw err;
+  }
+}
+
+const RECEP_ROUEN_RECEIVED = 'Oui';
+/** created_by_email of the parcels taken from the Rouen lines (marks a shipment as done). */
+const SEA_MIGRATION_ACTOR = 'migration-rouen';
+
+/**
+ * One-time: the "livraisons Rouen" lines of sea shipments become parcels to
+ * Rouen (Oui → received, Non / À confirmer → to receive), linked to the
+ * shipment's invoices. The JSON lines are kept as history. Parcels taken
+ * from sea shipments by parcel_model_v1 are moved to Rouen.
+ */
+async function convertSeaDeliveries(): Promise<void> {
+  const sql = getDb();
+  await sql`
+    UPDATE parcels p SET destination = 'ROUEN'
+    FROM shipments s
+    WHERE s.id = p.legacy_shipment_id AND s.mode = 'Sea' AND p.destination <> 'ROUEN'
+  `;
+
+  const shipments = await sql`
+    SELECT s.id, s.supplier, s.sea_deliveries,
+      COALESCE((SELECT array_agg(i.id) FROM digi_invoices i WHERE i.shipment_id = s.id), '{}') AS invoice_ids
+    FROM shipments s
+    WHERE s.mode = 'Sea' AND jsonb_array_length(COALESCE(s.sea_deliveries, '[]'::jsonb)) > 0
+  `;
+  for (const s of shipments as any[]) {
+    const invoiceIds: string[] = s.invoice_ids || [];
+    const done = await sql`
+      SELECT 1 FROM parcels WHERE legacy_shipment_id = ${s.id} AND created_by_email = ${SEA_MIGRATION_ACTOR} LIMIT 1
+    `;
+    if (done.length > 0) continue;
+    for (const item of (s.sea_deliveries || []) as any[]) {
+      const raw = typeof item.tracking_no === 'string' ? item.tracking_no.trim() : '';
+      const detected = raw ? detectTrackingNumber(raw) : null;
+      const tracking = detected?.number || raw || null;
+      const received = item.recep_rouen === RECEP_ROUEN_RECEIVED;
+      const notes = [
+        item.remarks,
+        item.recep_rouen === 'A confirmer svp' ? 'Réception Rouen à confirmer' : null,
+        item.carrier_delivery_status ? `Statut transporteur : ${item.carrier_delivery_status}` : null,
+        `Repris de l'expédition ${s.id} (ligne ${item.item_no ?? '?'})`,
+      ]
+        .filter((t) => typeof t === 'string' && t.trim())
+        .join(' · ');
+      const volume = Number(item.volume_m3);
+
+      const inserted = await sql`
+        INSERT INTO parcels (tracking_number, carrier, carrier_name, supplier_name, destination, status,
+          received_at, description, packing_info, volume_m3, delivery_type, notes,
+          legacy_shipment_id, status_changed_at, created_by_email)
+        VALUES (${tracking}, ${detected?.carrier || 'UNKNOWN'}, ${item.carrier?.trim() || null},
+          ${item.supplier?.trim() || s.supplier || null}, 'ROUEN', ${received ? 'received' : 'to_receive'},
+          NULL, ${item.description?.trim() || null}, ${item.colisage_info?.trim() || null},
+          ${Number.isFinite(volume) && volume > 0 ? volume : null}, ${item.delivery_type || null}, ${notes || null},
+          ${s.id}, NOW(), ${SEA_MIGRATION_ACTOR})
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      // Same tracking number already a parcel (e.g. taken by parcel_model_v1)
+      const parcelId =
+        inserted[0]?.id ??
+        (tracking
+          ? (await sql`SELECT id FROM parcels WHERE UPPER(TRIM(tracking_number)) = UPPER(TRIM(${tracking}))`)[0]?.id
+          : null);
+      if (parcelId && invoiceIds.length > 0) {
+        await sql`
+          INSERT INTO parcel_invoices (parcel_id, invoice_id)
+          SELECT ${parcelId}::uuid, UNNEST(${invoiceIds}::uuid[])
+          ON CONFLICT DO NOTHING
+        `;
+      }
+    }
+  }
 }
 
 /**
@@ -100,21 +198,6 @@ export async function initParcelSchema(): Promise<void> {
  * - "Perdu Orly" / "Avis de recherche" become a parcel in that state so the
  *   claim is not lost.
  */
-async function convertExistingData(): Promise<void> {
-  const sql = getDb();
-  const key = 'parcel_model_v1';
-  // Claimed first so two server instances never run it together; released on
-  // failure (each step is idempotent, so a retry resumes where it stopped).
-  const claimed = await sql`INSERT INTO app_migrations (key) VALUES (${key}) ON CONFLICT DO NOTHING RETURNING key`;
-  if (claimed.length === 0) return;
-  try {
-    await runConversion();
-  } catch (err) {
-    await sql`DELETE FROM app_migrations WHERE key = ${key}`;
-    throw err;
-  }
-}
-
 async function runConversion(): Promise<void> {
   const sql = getDb();
   await sql`

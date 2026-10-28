@@ -89,6 +89,8 @@ import { validateDirectInvoiceInput } from './lib/directInvoices.js';
 import type { ParcelInput } from './lib/parcelTracking.js';
 import {
   listParcelsForInvoice,
+  listParcels,
+  listGoodsInvoicesWithoutParcel,
   getParcel,
   createParcel,
   updateParcel,
@@ -2055,6 +2057,17 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     if (resolved.trackingCode && isCarrierCode(resolved.trackingCode)) value.carrier = resolved.trackingCode;
     return true;
   };
+
+  // Suivi Aérien › Colis vers Orly (read: every role)
+  app.get('/api/parcels', async (_req, res) => {
+    try {
+      const [parcels, invoicesWithoutParcel] = await Promise.all([listParcels(), listGoodsInvoicesWithoutParcel()]);
+      return res.json({ success: true, parcels, invoices_without_parcel: invoicesWithoutParcel });
+    } catch (err: any) {
+      console.error('[Parcels] List all error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis' });
+    }
+  });
 
   app.get('/api/digi-invoices/:id/parcels', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });

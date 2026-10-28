@@ -2,7 +2,7 @@ import { getDb } from './neon.js';
 import { ensureDigiInvoicesSchema } from './digiInvoices.js';
 import { trackingSupplierName } from '../lib/digiInvoices.js';
 import type { CarrierCode } from '../lib/carrierDetection.js';
-import type { ParcelInput, ParcelStatus } from '../lib/parcelTracking.js';
+import type { DeliveryType, ParcelDestination, ParcelInput, ParcelStatus } from '../lib/parcelTracking.js';
 
 /**
  * Parcels (supplier → Orly): one per tracking number, linked to 1..n invoices
@@ -24,6 +24,8 @@ export interface ParcelRecord {
   /** Carrier of the Settings list (Paramètres › Transporteurs). */
   carrier_name: string | null;
   supplier_name: string | null;
+  /** Orly (air) or Rouen quay (sea). */
+  destination: ParcelDestination;
   expected_delivery: string | null;
   status: ParcelStatus;
   received_at: string | null;
@@ -31,6 +33,12 @@ export interface ParcelRecord {
   status_changed_at: string | null;
   notes: string | null;
   legacy_shipment_id: string | null;
+  description: string | null;
+  packing_info: string | null;
+  volume_m3: number | null;
+  delivery_type: DeliveryType | null;
+  /** Orly → Mada (or sea) shipments of its invoices, else the shipment it was taken from. */
+  shipment_ids: string[];
   invoices: ParcelInvoiceRef[];
   photo_count: number;
   created_by_email: string | null;
@@ -50,7 +58,18 @@ const SELECT_PARCELS = `
     p.id, p.tracking_number, p.carrier, p.carrier_name, p.supplier_name,
     TO_CHAR(p.expected_delivery, 'YYYY-MM-DD') AS expected_delivery,
     p.status, TO_CHAR(p.received_at, 'YYYY-MM-DD') AS received_at, p.received_by_email,
-    p.status_changed_at, p.notes, p.legacy_shipment_id,
+    p.status_changed_at, p.notes, p.legacy_shipment_id, p.destination,
+    p.description, p.packing_info, p.volume_m3::float AS volume_m3, p.delivery_type,
+    COALESCE(
+      (
+        SELECT array_agg(DISTINCT i.shipment_id)
+        FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+        JOIN shipments s ON s.id = i.shipment_id
+        WHERE pi.parcel_id = p.id
+      ),
+      CASE WHEN EXISTS (SELECT 1 FROM shipments s WHERE s.id = p.legacy_shipment_id)
+        THEN ARRAY[p.legacy_shipment_id] ELSE '{}'::varchar[] END
+    ) AS shipment_ids,
     p.created_by_email, p.updated_by_email, p.created_at, p.updated_at,
     (SELECT COUNT(*)::int FROM parcel_photos ph WHERE ph.parcel_id = p.id) AS photo_count,
     COALESCE(
@@ -75,6 +94,7 @@ function mapParcelRow(row: any): ParcelRecord {
     carrier: row.carrier,
     carrier_name: row.carrier_name ?? null,
     supplier_name: row.supplier_name,
+    destination: row.destination || 'ORLY',
     expected_delivery: row.expected_delivery,
     status: row.status,
     received_at: row.received_at,
@@ -82,6 +102,11 @@ function mapParcelRow(row: any): ParcelRecord {
     status_changed_at: row.status_changed_at,
     notes: row.notes,
     legacy_shipment_id: row.legacy_shipment_id,
+    description: row.description ?? null,
+    packing_info: row.packing_info ?? null,
+    volume_m3: row.volume_m3 ?? null,
+    delivery_type: row.delivery_type ?? null,
+    shipment_ids: row.shipment_ids || [],
     invoices: (row.invoices || []).map((i: any) => ({
       id: i.id,
       ref: i.ref,
@@ -169,9 +194,11 @@ export async function createParcel(
   try {
     const rows = await sql`
       INSERT INTO parcels (tracking_number, carrier, carrier_name, supplier_name, expected_delivery, notes,
+        destination, description, packing_info, volume_m3, delivery_type,
         created_by_email, updated_by_email)
       VALUES (${input.tracking_number}, ${input.carrier}, ${input.carrier_name}, ${supplierName}, ${input.expected_delivery},
-        ${input.notes}, ${actorEmail}, ${actorEmail})
+        ${input.notes}, ${input.destination}, ${input.description}, ${input.packing_info},
+        ${input.volume_m3}, ${input.delivery_type}, ${actorEmail}, ${actorEmail})
       RETURNING id
     `;
     const id = rows[0].id as string;
@@ -206,6 +233,11 @@ export async function updateParcel(id: string, input: ParcelInput, actorEmail: s
         carrier_name = ${input.carrier_name},
         expected_delivery = ${input.expected_delivery},
         notes = ${input.notes},
+        destination = ${input.destination},
+        description = ${input.description},
+        packing_info = ${input.packing_info},
+        volume_m3 = ${input.volume_m3},
+        delivery_type = ${input.delivery_type},
         updated_by_email = ${actorEmail},
         updated_at = NOW()
       WHERE id = ${id}
@@ -295,4 +327,41 @@ export async function deleteParcel(id: string): Promise<{ tracking_number: strin
   const sql = getDb();
   const rows = await sql`DELETE FROM parcels WHERE id = ${id} RETURNING tracking_number`;
   return (rows[0] as any) ?? null;
+}
+
+export interface InvoiceWithoutParcel {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  invoice_date: string | null;
+  is_digi: boolean;
+  validation_status: string;
+}
+
+/**
+ * Tracked invoices (goods, not refused, not in a shipment yet) that have no
+ * parcel: their tracking number is still to be entered.
+ */
+export async function listGoodsInvoicesWithoutParcel(): Promise<InvoiceWithoutParcel[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id, i.ref, i.supplier_name, i.amazon_order_ref, i.is_digi, i.validation_status,
+      TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date
+    FROM digi_invoices i
+    WHERE i.triage = 'goods'
+      AND NOT i.no_shipment
+      AND i.validation_status <> 'rejected'
+      AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.invoice_id = i.id)
+      AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = i.shipment_id)
+    ORDER BY i.invoice_date NULLS LAST, i.ref
+  `;
+  return (rows as any[]).map((r) => ({
+    id: r.id,
+    ref: r.ref,
+    supplier_display: trackingSupplierName(r.supplier_name, r.amazon_order_ref),
+    invoice_date: r.invoice_date,
+    is_digi: r.is_digi !== false,
+    validation_status: r.validation_status,
+  }));
 }

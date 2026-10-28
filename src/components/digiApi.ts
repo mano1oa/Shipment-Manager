@@ -3,6 +3,8 @@ import type { DirectInvoiceInput } from '../lib/directInvoices';
 import type { CarrierCode } from '../lib/carrierDetection';
 import type {
   Currency,
+  DeliveryType,
+  ParcelDestination,
   InvoiceTriage,
   ParcelInput,
   ParcelStatus,
@@ -199,6 +201,7 @@ export interface Parcel {
   /** Carrier of the Settings list (Paramètres › Transporteurs). */
   carrier_name: string | null;
   supplier_name: string | null;
+  destination: ParcelDestination;
   expected_delivery: string | null;
   status: ParcelStatus;
   received_at: string | null;
@@ -206,12 +209,30 @@ export interface Parcel {
   status_changed_at: string | null;
   notes: string | null;
   legacy_shipment_id: string | null;
+  description: string | null;
+  packing_info: string | null;
+  volume_m3: number | null;
+  delivery_type: DeliveryType | null;
+  /** Shipments of its invoices (or the shipment it was taken from). */
+  shipment_ids: string[];
   invoices: { id: string; ref: string | null; supplier_display: string | null; invoice_date: string | null }[];
   photo_count: number;
   created_by_email: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface InvoiceWithoutParcel {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  invoice_date: string | null;
+  is_digi: boolean;
+  validation_status: ValidationStatus;
+}
+
+export const fetchAllParcels = () =>
+  apiJson<{ parcels: Parcel[]; invoices_without_parcel: InvoiceWithoutParcel[] }>('/api/parcels');
 
 export const fetchInvoiceParcels = (invoiceId: string) =>
   apiJson<{ parcels: Parcel[] }>(`/api/digi-invoices/${invoiceId}/parcels`).then((d) => d.parcels);
