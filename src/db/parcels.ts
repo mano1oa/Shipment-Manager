@@ -2,7 +2,7 @@ import { getDb } from './neon.js';
 import { ensureDigiInvoicesSchema } from './digiInvoices.js';
 import { trackingSupplierName } from '../lib/digiInvoices.js';
 import type { CarrierCode } from '../lib/carrierDetection.js';
-import type { DeliveryType, ParcelDestination, ParcelInput, ParcelStatus } from '../lib/parcelTracking.js';
+import type { DeliveryType, ParcelDestination, ParcelInput, ParcelStatus, TrackingSettings } from '../lib/parcelTracking.js';
 
 /**
  * Parcels (supplier → Orly): one per tracking number, linked to 1..n invoices
@@ -270,19 +270,22 @@ export async function linkParcelInvoices(parcelId: string, invoiceIds: string[])
 export async function unlinkParcelInvoice(
   parcelId: string,
   invoiceId: string
-): Promise<{ unlinked: boolean; deleted: boolean }> {
+): Promise<{ unlinked: boolean; deleted: boolean; photo_keys: string[] }> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
   const rows = await sql`
     DELETE FROM parcel_invoices WHERE parcel_id = ${parcelId} AND invoice_id = ${invoiceId} RETURNING parcel_id
   `;
-  if (rows.length === 0) return { unlinked: false, deleted: false };
+  if (rows.length === 0) return { unlinked: false, deleted: false, photo_keys: [] };
+  const keys = await sql`SELECT storage_key FROM parcel_photos WHERE parcel_id = ${parcelId}`;
   const orphan = await sql`
     DELETE FROM parcels p WHERE p.id = ${parcelId}
       AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
     RETURNING id
   `;
-  return { unlinked: true, deleted: orphan.length > 0 };
+  // Photos of a deleted parcel: their objects are to be removed from the bucket
+  const deleted = orphan.length > 0;
+  return { unlinked: true, deleted, photo_keys: deleted ? keys.map((k: any) => k.storage_key as string) : [] };
 }
 
 /**
@@ -327,6 +330,118 @@ export async function deleteParcel(id: string): Promise<{ tracking_number: strin
   const sql = getDb();
   const rows = await sql`DELETE FROM parcels WHERE id = ${id} RETURNING tracking_number`;
   return (rows[0] as any) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Loss before the hub (automatic)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parcels still "to receive" after their deadline become "lost": expected
+ * delivery + N days, else earliest invoice date + M days (settings).
+ * Returns the parcels changed.
+ */
+export async function markOverdueParcelsLost(settings: TrackingSettings): Promise<number> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    UPDATE parcels p SET status = 'lost', status_changed_at = NOW(), updated_by_email = 'alerte-automatique',
+      updated_at = NOW()
+    WHERE p.status = 'to_receive'
+      AND CURRENT_DATE > COALESCE(
+        p.expected_delivery + ${settings.parcel_loss_days_after_eta}::int,
+        (
+          SELECT MIN(i.invoice_date) FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+          WHERE pi.parcel_id = p.id
+        ) + ${settings.parcel_loss_days_without_eta}::int
+      )
+    RETURNING id
+  `;
+  return rows.length;
+}
+
+export interface LateTriageInvoice {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  created_at: string;
+}
+
+/** DIGI invoices still unsorted after the delay of the settings. */
+export async function listLateTriageInvoices(settings: TrackingSettings): Promise<LateTriageInvoice[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id, i.ref, i.supplier_name, i.amazon_order_ref, i.created_at
+    FROM digi_invoices i
+    WHERE i.is_digi AND COALESCE(i.triage, 'to_sort') = 'to_sort' AND NOT i.no_shipment
+      AND i.created_at < NOW() - make_interval(days => ${settings.triage_alert_days}::int)
+      -- fee-only invoices are services without sorting
+      AND (
+        NOT EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id)
+        OR EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id AND NOT l.is_service)
+      )
+    ORDER BY i.created_at
+  `;
+  return (rows as any[]).map((r) => ({
+    id: r.id,
+    ref: r.ref,
+    supplier_display: trackingSupplierName(r.supplier_name, r.amazon_order_ref),
+    created_at: r.created_at,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Photos (object storage key only)
+// ---------------------------------------------------------------------------
+
+export interface ParcelPhotoRecord {
+  id: string;
+  parcel_id: string;
+  storage_key: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_by_email: string | null;
+  uploaded_at: string;
+}
+
+export async function listParcelPhotos(parcelId: string): Promise<ParcelPhotoRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id, parcel_id, storage_key, content_type, size_bytes, uploaded_by_email, uploaded_at
+    FROM parcel_photos WHERE parcel_id = ${parcelId} ORDER BY uploaded_at
+  `;
+  return rows as unknown as ParcelPhotoRecord[];
+}
+
+export async function addParcelPhoto(
+  parcelId: string,
+  storageKey: string,
+  contentType: string,
+  sizeBytes: number,
+  actorEmail: string
+): Promise<string> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    INSERT INTO parcel_photos (parcel_id, storage_key, content_type, size_bytes, uploaded_by_email)
+    VALUES (${parcelId}, ${storageKey}, ${contentType}, ${sizeBytes}, ${actorEmail})
+    ON CONFLICT (storage_key) DO NOTHING
+    RETURNING id
+  `;
+  if (rows[0]?.id) return rows[0].id as string;
+  const existing = await sql`SELECT id FROM parcel_photos WHERE storage_key = ${storageKey}`;
+  return existing[0].id as string;
+}
+
+export async function deleteParcelPhoto(parcelId: string, photoId: string): Promise<string | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    DELETE FROM parcel_photos WHERE id = ${photoId} AND parcel_id = ${parcelId} RETURNING storage_key
+  `;
+  return (rows[0]?.storage_key as string) ?? null;
 }
 
 export interface InvoiceWithoutParcel {

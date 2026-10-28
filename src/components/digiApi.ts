@@ -231,8 +231,73 @@ export interface InvoiceWithoutParcel {
   validation_status: ValidationStatus;
 }
 
-export const fetchAllParcels = () =>
-  apiJson<{ parcels: Parcel[]; invoices_without_parcel: InvoiceWithoutParcel[] }>('/api/parcels');
+export interface LateTriageInvoice {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  created_at: string;
+}
+
+export interface ParcelsOverview {
+  parcels: Parcel[];
+  invoices_without_parcel: InvoiceWithoutParcel[];
+  late_triage_invoices: LateTriageInvoice[];
+  photo_storage_configured: boolean;
+}
+
+/** Every parcel (overdue ones are marked lost by the server first). */
+export const fetchAllParcels = () => apiJson<ParcelsOverview>('/api/parcels');
+
+/** Supply Chain: reception at the hub, avis de recherche, lost, back to waiting. */
+export const setParcelStatus = (id: string, status: ParcelStatus, receivedAt?: string | null) =>
+  apiJson<{ parcel: Parcel }>(`/api/parcels/${id}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status, received_at: receivedAt || null }),
+  }).then((d) => d.parcel);
+
+/** Supply Chain: parcel not announced, created at reception (already received). */
+export const createReceivedParcel = (input: ParcelInput, invoiceIds: string[], receivedAt: string) =>
+  apiJson<{ parcel: Parcel; existed: boolean }>('/api/parcels', {
+    method: 'POST',
+    body: JSON.stringify({ ...input, invoice_ids: invoiceIds, received: true, received_at: receivedAt }),
+  });
+
+export interface ParcelPhoto {
+  id: string;
+  /** Short-lived display URL (null when the storage is not configured). */
+  url: string | null;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_by_email: string | null;
+  uploaded_at: string;
+}
+
+export const fetchParcelPhotos = (parcelId: string) =>
+  apiJson<{ photos: ParcelPhoto[]; storage_configured: boolean }>(`/api/parcels/${parcelId}/photos`);
+
+/**
+ * Uploads one photo: presigned URL from the API, then PUT straight to the
+ * private bucket, then the key is recorded. The image never goes through the server.
+ */
+export async function uploadParcelPhoto(parcelId: string, photo: Blob): Promise<void> {
+  const upload = await apiJson<{ key: string; url: string; method: string; headers: Record<string, string> }>(
+    `/api/parcels/${parcelId}/photos/upload-url`,
+    { method: 'POST', body: JSON.stringify({ content_type: photo.type, size_bytes: photo.size }) }
+  );
+  const res = await fetch(upload.url, {
+    method: upload.method || 'PUT',
+    headers: { 'Content-Type': photo.type, ...upload.headers },
+    body: photo,
+  });
+  if (!res.ok) throw new Error(`Envoi de la photo refusé par le stockage (${res.status}).`);
+  await apiJson(`/api/parcels/${parcelId}/photos`, {
+    method: 'POST',
+    body: JSON.stringify({ key: upload.key, content_type: photo.type, size_bytes: photo.size }),
+  });
+}
+
+export const deleteParcelPhoto = (parcelId: string, photoId: string) =>
+  apiJson(`/api/parcels/${parcelId}/photos/${photoId}`, { method: 'DELETE' });
 
 export const fetchInvoiceParcels = (invoiceId: string) =>
   apiJson<{ parcels: Parcel[] }>(`/api/digi-invoices/${invoiceId}/parcels`).then((d) => d.parcels);

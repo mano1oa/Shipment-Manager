@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Package, Plane, Ship } from 'lucide-react';
 import type { TrackingSettings } from '../lib/parcelTracking';
-import { InvoiceWithoutParcel, Parcel, fetchAllParcels, fetchTrackingSettings } from './digiApi';
+import { ParcelsOverview } from './digiApi';
 import { ParcelsBoardView, parcelMatches } from './ParcelsBoardView';
 import { ShipmentsView, matchesSearch } from './ShipmentsView';
 
@@ -10,6 +10,13 @@ type Tab = 'shipments' | 'parcels';
 interface Props extends Omit<React.ComponentProps<typeof ShipmentsView>, 'modeFilter'> {
   mode: 'Air' | 'Sea';
   onOpenShipment: (shipmentId: string) => void;
+  /** Loaded once by the app (also feeds the parcel alerts). */
+  parcelsOverview: ParcelsOverview | null;
+  parcelsLoading: boolean;
+  parcelsError: string | null;
+  onReloadParcels: () => void;
+  settings: TrackingSettings | undefined;
+  isSupplyChain: boolean;
 }
 
 /**
@@ -17,32 +24,21 @@ interface Props extends Omit<React.ComponentProps<typeof ShipmentsView>, 'modeFi
  * suppliers (to Orly or Rouen) and the shipments to Madagascar. The top bar
  * search applies to both; each tab shows how many results it holds.
  */
-export const TransportTrackingView: React.FC<Props> = ({ mode, onOpenShipment, ...shipmentsProps }) => {
+export const TransportTrackingView: React.FC<Props> = ({
+  mode,
+  onOpenShipment,
+  parcelsOverview,
+  parcelsLoading,
+  parcelsError,
+  onReloadParcels,
+  settings,
+  isSupplyChain,
+  ...shipmentsProps
+}) => {
   const destination = mode === 'Air' ? 'ORLY' : 'ROUEN';
   const hub = mode === 'Air' ? 'Orly' : 'Rouen';
   const [tab, setTab] = useState<Tab>('parcels');
-  const [parcels, setParcels] = useState<Parcel[] | null>(null);
-  const [withoutParcel, setWithoutParcel] = useState<InvoiceWithoutParcel[]>([]);
-  const [settings, setSettings] = useState<TrackingSettings | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    fetchAllParcels()
-      .then((d) => {
-        setParcels(d.parcels);
-        setWithoutParcel(d.invoices_without_parcel);
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, []);
-
-  useEffect(() => {
-    load();
-    fetchTrackingSettings().then(setSettings).catch(() => {});
-  }, [load]);
+  const parcels = parcelsOverview?.parcels ?? null;
 
   const search = shipmentsProps.globalSearch || '';
   const shipmentCount = useMemo(
@@ -100,13 +96,14 @@ export const TransportTrackingView: React.FC<Props> = ({ mode, onOpenShipment, .
         <ParcelsBoardView
           destination={destination}
           parcels={parcels}
-          invoicesWithoutParcel={withoutParcel}
+          invoicesWithoutParcel={parcelsOverview?.invoices_without_parcel ?? []}
           settings={settings}
-          loading={loading}
-          error={error}
-          onReload={load}
+          loading={parcelsLoading}
+          error={parcelsError}
+          onReload={onReloadParcels}
           globalSearch={search}
           onOpenShipment={onOpenShipment}
+          isSupplyChain={isSupplyChain}
         />
       )}
     </div>

@@ -83,14 +83,29 @@ import {
   isShipmentStatus,
   applyAutomaticShipmentStatus,
   validateParcelInput,
+  isParcelStatus,
   INVOICE_TRIAGES,
 } from './lib/parcelTracking.js';
+import {
+  isPhotoStorageConfigured,
+  presignPhotoUpload,
+  presignPhotoView,
+  deletePhotoObject,
+  PHOTO_CONTENT_TYPES,
+  PHOTO_MAX_BYTES,
+} from './services/photoStorage.js';
 import { validateDirectInvoiceInput } from './lib/directInvoices.js';
 import type { ParcelInput } from './lib/parcelTracking.js';
 import {
   listParcelsForInvoice,
   listParcels,
   listGoodsInvoicesWithoutParcel,
+  listLateTriageInvoices,
+  markOverdueParcelsLost,
+  setParcelStatus,
+  listParcelPhotos,
+  addParcelPhoto,
+  deleteParcelPhoto,
   getParcel,
   createParcel,
   updateParcel,
@@ -2040,6 +2055,22 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   // Parcels (supplier → Orly)
   // ---------------------------------------------------------------------------
 
+  /** Reception date: YYYY-MM-DD, null when absent (today), undefined when invalid or in the future. */
+  const parseReceptionDate = (value: unknown): string | null | undefined => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+    const today = new Date().toISOString().slice(0, 10);
+    return value > today ? undefined : value;
+  };
+
+  /** Removes photo objects from the bucket; a failure only leaves an orphan object (logged). */
+  const removePhotoObjects = async (keys: string[]) => {
+    if (keys.length === 0 || !isPhotoStorageConfigured()) return;
+    for (const key of keys) {
+      await deletePhotoObject(key).catch((err) => console.error('[Parcels] Photo object not deleted:', key, err?.message));
+    }
+  };
+
   /**
    * Carrier of a parcel from the Settings list (or from the number format).
    * Returns false (and answers 400) when the picked carrier is unknown.
@@ -2061,8 +2092,30 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   // Suivi Aérien › Colis vers Orly (read: every role)
   app.get('/api/parcels', async (_req, res) => {
     try {
-      const [parcels, invoicesWithoutParcel] = await Promise.all([listParcels(), listGoodsInvoicesWithoutParcel()]);
-      return res.json({ success: true, parcels, invoices_without_parcel: invoicesWithoutParcel });
+      // Parcels not confirmed in time become "lost" (alert, claim to the supplier)
+      const settings = await getTrackingSettings();
+      const markedLost = await markOverdueParcelsLost(settings);
+      if (markedLost > 0) {
+        await writeAuditLog({
+          entityType: 'PARCEL',
+          entityId: '*',
+          action: 'AUTO_MARK_PARCELS_LOST',
+          actor: { id: 'system', email: 'alerte-automatique', role: 'SYSTEM' },
+          details: { count: markedLost },
+        });
+      }
+      const [parcels, invoicesWithoutParcel, lateTriage] = await Promise.all([
+        listParcels(),
+        listGoodsInvoicesWithoutParcel(),
+        listLateTriageInvoices(settings),
+      ]);
+      return res.json({
+        success: true,
+        parcels,
+        invoices_without_parcel: invoicesWithoutParcel,
+        late_triage_invoices: lateTriage,
+        photo_storage_configured: isPhotoStorageConfigured(),
+      });
     } catch (err: any) {
       console.error('[Parcels] List all error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de charger les colis' });
@@ -2101,7 +2154,16 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (invoices.some((inv) => inv!.triage === 'services')) {
         return res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
       }
+      // Parcel created at reception (tracking number unknown until Antoine's photo): Supply Chain only
+      const receivedNow = req.body?.received === true;
+      if (receivedNow && req.user.role !== 'SUPPLY_CHAIN') {
+        return res.status(403).json({ success: false, error: 'Seule la Supply Chain confirme une réception.' });
+      }
+      const receivedAt = receivedNow ? parseReceptionDate(req.body?.received_at) : null;
+      if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
+
       const { id, existed } = await createParcel(value, invoiceIds, supplier, req.user.email);
+      if (receivedNow) await setParcelStatus(id, 'received', receivedAt, req.user.email);
       const parcel = await getParcel(id);
       if (existed && parcel) {
         // The known parcel must stay single-supplier
@@ -2119,7 +2181,13 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         entityId: id,
         action: existed ? 'LINK_PARCEL_INVOICES' : 'CREATE_PARCEL',
         actor: req.user,
-        details: { tracking_number: value.tracking_number, carrier: value.carrier, invoice_ids: invoiceIds },
+        details: {
+          tracking_number: value.tracking_number,
+          carrier: value.carrier,
+          destination: value.destination,
+          invoice_ids: invoiceIds,
+          received: receivedNow,
+        },
       });
       return res.status(existed ? 200 : 201).json({ success: true, existed, parcel: await getParcel(id) });
     } catch (err: any) {
@@ -2167,6 +2235,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       const outcome = await unlinkParcelInvoice(req.params.id, req.params.invoiceId);
       if (!outcome.unlinked) return res.status(404).json({ success: false, error: 'Ce colis n\'est pas rattaché à cette facture' });
+      await removePhotoObjects(outcome.photo_keys);
       await writeAuditLog({
         entityType: 'PARCEL',
         entityId: req.params.id,
@@ -2178,6 +2247,149 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     } catch (err: any) {
       console.error('[Parcels] Unlink error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de retirer le colis' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Réception Orly / Rouen (Supply Chain): status and photos
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Status of a parcel at the hub:
+   * - received: confirmed by Antoine (Orly) or at Rouen; date defaults to today;
+   * - search: received but missing on arrival in Madagascar (claim);
+   * - lost: not received (claim to the supplier); to_receive: back to waiting.
+   */
+  app.patch('/api/parcels/:id/status', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const status = req.body?.status;
+    if (!isParcelStatus(status)) return res.status(400).json({ success: false, error: 'État invalide.' });
+    const receivedAt = parseReceptionDate(req.body?.received_at);
+    if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
+    try {
+      const parcel = await getParcel(req.params.id);
+      if (!parcel) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      if (status === 'search' && parcel.status !== 'received' && parcel.status !== 'search') {
+        return res.status(409).json({
+          success: false,
+          error: 'Un avis de recherche concerne un colis reçu : confirmez d\'abord sa réception.',
+        });
+      }
+      const outcome = await setParcelStatus(req.params.id, status, receivedAt, req.user.email);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'SET_PARCEL_STATUS',
+        actor: req.user,
+        details: { from: outcome.previous, to: status, received_at: receivedAt, tracking_number: parcel.tracking_number },
+      });
+      return res.json({ success: true, parcel: await getParcel(req.params.id) });
+    } catch (err: any) {
+      console.error('[Parcels] Status error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier l\'état du colis' });
+    }
+  });
+
+  // Photos with short display URLs (every role, reading is a proof for claims)
+  app.get('/api/parcels/:id/photos', async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    try {
+      const photos = await listParcelPhotos(req.params.id);
+      const configured = isPhotoStorageConfigured();
+      const withUrls = await Promise.all(
+        photos.map(async (p) => ({
+          id: p.id,
+          content_type: p.content_type,
+          size_bytes: p.size_bytes,
+          uploaded_by_email: p.uploaded_by_email,
+          uploaded_at: p.uploaded_at,
+          url: configured ? await presignPhotoView(p.storage_key).catch(() => null) : null,
+        }))
+      );
+      return res.json({ success: true, storage_configured: configured, photos: withUrls });
+    } catch (err: any) {
+      console.error('[Parcels] Photos list error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les photos' });
+    }
+  });
+
+  // Step 1: a presigned PUT URL for one compressed photo (sent by the browser to the bucket)
+  app.post('/api/parcels/:id/photos/upload-url', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    if (!isPhotoStorageConfigured()) {
+      return res.status(503).json({ success: false, error: 'Le stockage des photos (Neon Object Storage) n\'est pas configuré.' });
+    }
+    const contentType = req.body?.content_type;
+    const size = req.body?.size_bytes;
+    if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType)) {
+      return res.status(400).json({ success: false, error: 'Format de photo non accepté (JPEG, PNG ou WebP).' });
+    }
+    if (!Number.isInteger(size) || size <= 0 || size > PHOTO_MAX_BYTES) {
+      return res.status(400).json({ success: false, error: 'Photo trop lourde (5 Mo maximum après compression).' });
+    }
+    try {
+      if (!(await getParcel(req.params.id))) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+      const key = `parcels/${req.params.id}/${crypto.randomUUID()}.${ext}`;
+      const upload = await presignPhotoUpload(key, contentType);
+      return res.json({ success: true, key, url: upload.url, method: upload.method, headers: upload.headers });
+    } catch (err: any) {
+      console.error('[Parcels] Upload URL error:', err);
+      return res.status(502).json({ success: false, error: 'Le stockage des photos ne répond pas. Réessayez.' });
+    }
+  });
+
+  // Step 2: records the uploaded photo (the database keeps the key only)
+  app.post('/api/parcels/:id/photos', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const key = req.body?.key;
+    const contentType = req.body?.content_type;
+    const size = req.body?.size_bytes;
+    // Only a key issued for this parcel by the upload-url step
+    const keyRe = new RegExp(`^parcels/${req.params.id}/[0-9a-f-]{36}\\.(jpg|png|webp)$`);
+    if (typeof key !== 'string' || !keyRe.test(key)) {
+      return res.status(400).json({ success: false, error: 'Photo invalide.' });
+    }
+    if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType) || !Number.isInteger(size) || size > PHOTO_MAX_BYTES) {
+      return res.status(400).json({ success: false, error: 'Photo invalide.' });
+    }
+    try {
+      if (!(await getParcel(req.params.id))) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      const id = await addParcelPhoto(req.params.id, key, contentType, size, req.user.email);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'ADD_PARCEL_PHOTO',
+        actor: req.user,
+        details: { photo_id: id, size_bytes: size },
+      });
+      return res.status(201).json({ success: true, id });
+    } catch (err: any) {
+      console.error('[Parcels] Add photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la photo' });
+    }
+  });
+
+  app.delete('/api/parcels/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
+      return res.status(404).json({ success: false, error: 'Photo introuvable' });
+    }
+    try {
+      const key = await deleteParcelPhoto(req.params.id, req.params.photoId);
+      if (!key) return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      await removePhotoObjects([key]);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'DELETE_PARCEL_PHOTO',
+        actor: req.user,
+        details: { photo_id: req.params.photoId },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Parcels] Delete photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer la photo' });
     }
   });
 

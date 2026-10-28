@@ -11,7 +11,9 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { AIAssistantBubble } from './components/AIAssistantBubble';
 import { SettingsView } from './components/SettingsView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
-import { apiJson } from './components/digiApi';
+import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
+import { evaluateParcelAlerts } from './lib/parcelAlerts';
+import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
 import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
 import { evaluateShipmentRules } from './lib/rulesEngine';
@@ -287,12 +289,37 @@ useEffect(() => {
     }
   };
 
+  // Parcels (supplier → Orly / Rouen): tabs of the air / sea tracking and parcel alerts
+  const [parcelsOverview, setParcelsOverview] = useState<ParcelsOverview | null>(null);
+  const [parcelsLoading, setParcelsLoading] = useState(false);
+  const [parcelsError, setParcelsError] = useState<string | null>(null);
+  const [trackingSettings, setTrackingSettings] = useState<TrackingSettings | undefined>(undefined);
+
+  const loadParcels = async () => {
+    setParcelsLoading(true);
+    setParcelsError(null);
+    try {
+      setParcelsOverview(await fetchAllParcels());
+    } catch (err: any) {
+      setParcelsError(err.message);
+    } finally {
+      setParcelsLoading(false);
+    }
+  };
+
   // Load once the session is known: before login the API answers 401.
+  // Parcels after the shipments: their first load prepares the parcel tables.
   useEffect(() => {
     if (authUser) {
-      loadShipmentsFromNeon();
+      loadShipmentsFromNeon().then(loadParcels);
+      fetchTrackingSettings().then(setTrackingSettings).catch(() => {});
     }
   }, [authUser?.id]);
+
+  // Fresh parcel states when opening the air / sea tracking
+  useEffect(() => {
+    if (authUser && (activeTab === 'air' || activeTab === 'sea') && parcelsOverview) loadParcels();
+  }, [activeTab]);
 
   const handleDeleteShipment = async (shipmentId: string) => {
     try {
@@ -402,8 +429,13 @@ useEffect(() => {
 
   // Evaluate rules against current shipments (claim messages use the effective value)
   const { shipmentsWithAlerts, allAlerts } = useMemo(() => {
-    return evaluateShipmentRules(shipments, valueOfShipment);
-  }, [shipments, digiValueFor]);
+    const evaluated = evaluateShipmentRules(shipments, valueOfShipment);
+    // Parcel alerts: lost before the hub, avis de recherche, DIGI invoices not sorted
+    const parcelAlerts = parcelsOverview
+      ? evaluateParcelAlerts(parcelsOverview.parcels, parcelsOverview.late_triage_invoices)
+      : [];
+    return { ...evaluated, allAlerts: [...evaluated.allAlerts, ...parcelAlerts] };
+  }, [shipments, digiValueFor, parcelsOverview]);
 
   // Combine alerts with resolved status from state
   const allAlertsWithResolved = useMemo(() => {
@@ -944,6 +976,12 @@ if (!authUser) {
               onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
               onOpenShipment={openShipmentById}
+              parcelsOverview={parcelsOverview}
+              parcelsLoading={parcelsLoading}
+              parcelsError={parcelsError}
+              onReloadParcels={loadParcels}
+              settings={trackingSettings}
+              isSupplyChain={currentRole === 'supply_chain'}
               canEdit={canEdit}
               onUpdateShipment={canEdit ? handleSaveShipment : undefined}
               onNewShipment={canEdit ? () => openNewShipment(activeTab === 'air' ? 'Air' : 'Sea') : undefined}

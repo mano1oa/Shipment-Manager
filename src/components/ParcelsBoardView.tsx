@@ -1,11 +1,27 @@
 import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Camera, ChevronDown, ChevronRight, Loader2, RefreshCw, Search } from 'lucide-react';
+import {
+  AlertTriangle,
+  Camera,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  PackageCheck,
+  PackageX,
+  RefreshCw,
+  Search,
+  SearchX,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
-import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
+import { InvoiceWithoutParcel, Parcel, formatDate, setParcelStatus } from './digiApi';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
+import { ParcelPhotosModal } from './ParcelPhotosModal';
+import { ReceiveParcelModal } from './ReceiveParcelModal';
 
-type StatusFilter = 'open' | 'overdue' | ParcelStatus | 'all';
+type StatusFilter = 'open' | ParcelStatus | 'all';
 
 interface Props {
   destination: ParcelDestination;
@@ -18,6 +34,8 @@ interface Props {
   /** Search typed in the top bar (applies to both tabs). */
   globalSearch: string;
   onOpenShipment: (shipmentId: string) => void;
+  /** Supply Chain: confirms receptions, photos, avis de recherche. */
+  isSupplyChain: boolean;
 }
 
 /** Earliest invoice date of a parcel: start of the loss delay without expected delivery. */
@@ -48,6 +66,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
   onReload,
   globalSearch,
   onOpenShipment,
+  isSupplyChain,
 }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
   const [search, setSearch] = useState('');
@@ -55,6 +74,53 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [supplierFilter, setSupplierFilter] = useState('all');
   const [showWithout, setShowWithout] = useState(false);
   const today = new Date().toISOString().slice(0, 10);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [receptionDate, setReceptionDate] = useState(today);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
+  const [receiving, setReceiving] = useState(false);
+
+  /** Changes the state of parcels one by one and reports the failures. */
+  const changeStatus = async (list: Parcel[], status: ParcelStatus, label: string) => {
+    setActionError(null);
+    setActionMessage(null);
+    const failures: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      setBusy(`${label} : ${i + 1} / ${list.length}…`);
+      try {
+        await setParcelStatus(list[i].id, status, status === 'received' ? receptionDate : null);
+      } catch (err: any) {
+        failures.push(`${list[i].tracking_number || list[i].supplier_name || list[i].id} (${err.message})`);
+      }
+    }
+    setBusy(null);
+    setSelected(new Set());
+    if (failures.length > 0) setActionError(`${failures.length} colis non traité(s) : ${failures.join(' ; ')}`);
+    if (list.length > failures.length) setActionMessage(`${list.length - failures.length} colis : ${label.toLowerCase()}.`);
+    onReload();
+  };
+
+  const confirmReception = (list: Parcel[]) => {
+    if (!window.confirm(`Confirmer la réception à ${hub} de ${list.length} colis, le ${formatDate(receptionDate)} ?`)) return;
+    changeStatus(list, 'received', 'Réception confirmée');
+  };
+
+  const openSearch = (p: Parcel) => {
+    if (!window.confirm(`Ouvrir un avis de recherche : le colis ${p.tracking_number || ''} a été reçu à ${hub} mais n'est pas arrivé à Madagascar ?`)) return;
+    changeStatus([p], 'search', 'Avis de recherche ouvert');
+  };
+
+  const declareLost = (p: Parcel) => {
+    if (!window.confirm(`Déclarer le colis ${p.tracking_number || ''} perdu avant ${hub} (réclamation fournisseur) ?`)) return;
+    changeStatus([p], 'lost', `Déclaré perdu avant ${hub}`);
+  };
+
+  const backToReceive = (p: Parcel) => {
+    if (!window.confirm(`Remettre le colis ${p.tracking_number || ''} « à recevoir » ? La date de réception est effacée.`)) return;
+    changeStatus([p], 'to_receive', 'Remis à recevoir');
+  };
 
   const own = useMemo(() => (parcels || []).filter((p) => p.destination === destination), [parcels, destination]);
   const overdue = (p: Parcel) => isParcelOverdue(p, parcelInvoiceDate(p), today, settings);
@@ -62,7 +128,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const counts = useMemo(
     () => ({
       to_receive: own.filter((p) => p.status === 'to_receive').length,
-      overdue: own.filter(overdue).length,
       received: own.filter((p) => p.status === 'received').length,
       lost: own.filter((p) => p.status === 'lost').length,
       search: own.filter((p) => p.status === 'search').length,
@@ -79,7 +144,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
     () =>
       own.filter((p) => {
         if (statusFilter === 'open' && p.status !== 'to_receive') return false;
-        if (statusFilter === 'overdue' && !overdue(p)) return false;
         if (['received', 'lost', 'search', 'to_receive'].includes(statusFilter) && p.status !== statusFilter) return false;
         if (supplierFilter !== 'all' && (p.supplier_name || '—') !== supplierFilter) return false;
         return parcelMatches(p, search) && parcelMatches(p, globalSearch);
@@ -87,27 +151,59 @@ export const ParcelsBoardView: React.FC<Props> = ({
     [own, statusFilter, supplierFilter, search, globalSearch, settings]
   );
 
+  // Late parcels are turned "lost" by the server when the list is loaded
   const tiles: { key: StatusFilter; label: string; value: number; tone: string }[] = [
     { key: 'open', label: 'À recevoir', value: counts.to_receive, tone: 'text-slate-900 dark:text-white' },
-    { key: 'overdue', label: 'En retard', value: counts.overdue, tone: 'text-rose-600' },
     { key: 'received', label: `Reçus à ${hub}`, value: counts.received, tone: 'text-emerald-600' },
     { key: 'lost', label: `Perdus avant ${hub}`, value: counts.lost, tone: 'text-rose-600' },
     { key: 'search', label: 'Avis de recherche', value: counts.search, tone: 'text-amber-600' },
   ];
+
+  const selectedParcels = filtered.filter((p) => selected.has(p.id));
+  const toConfirm = selectedParcels.filter((p) => p.status === 'to_receive' || p.status === 'lost');
+  const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const columns = 7 + (destination === 'ROUEN' ? 1 : 0) + (isSupplyChain ? 1 : 0) + 1;
+  const iconButton =
+    'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700';
 
   const selectClass =
     'rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        Colis livrés par les fournisseurs {destination === 'ORLY' ? 'chez Antoine à Orly' : 'au quai de Rouen'}, avant
-        leur expédition vers Madagascar. Ils se créent depuis Factures fournisseurs (« + Colis ») ; un colis non confirmé
-        à temps passe en retard (livraison prévue + {settings?.parcel_loss_days_after_eta ?? 7} j, sinon date de facture
-        + {settings?.parcel_loss_days_without_eta ?? 14} j).
-      </p>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
+          Colis livrés par les fournisseurs {destination === 'ORLY' ? 'chez Antoine à Orly' : 'au quai de Rouen'}, avant
+          leur expédition vers Madagascar. Ils se créent depuis Factures fournisseurs (« + Colis »). Un colis non confirmé
+          à temps passe automatiquement « Perdu avant {hub} » (livraison prévue +{' '}
+          {settings?.parcel_loss_days_after_eta ?? 7} j, sinon date de facture +{' '}
+          {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
+          {isSupplyChain &&
+            (destination === 'ORLY'
+              ? ' Au point avec Antoine : cochez les colis reçus et confirmez leur réception, puis joignez ses photos.'
+              : ' Cochez les colis reçus au quai et confirmez leur réception.')}
+        </p>
+        {isSupplyChain && (
+          <button
+            onClick={() => setReceiving(true)}
+            className="flex shrink-0 items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
+          >
+            <PackageCheck className="h-4 w-4" /> Colis reçu non annoncé
+          </button>
+        )}
+      </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      {actionError && <p className="text-xs font-semibold text-rose-600">{actionError}</p>}
+      {actionMessage && <p className="text-xs font-semibold text-emerald-600">{actionMessage}</p>}
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {tiles.map((t) => (
           <button
             key={t.key}
@@ -163,7 +259,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
         </select>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={selectClass}>
           <option value="open">À recevoir</option>
-          <option value="overdue">En retard</option>
           <option value="received">Reçus à {hub}</option>
           <option value="lost">Perdus avant {hub}</option>
           <option value="search">Avis de recherche</option>
@@ -180,11 +275,66 @@ export const ParcelsBoardView: React.FC<Props> = ({
 
       {error && <p className="text-xs font-semibold text-rose-600">{error}</p>}
 
+      {isSupplyChain && (selectedParcels.length > 0 || busy) && (
+        <div className="sticky top-20 z-10 flex flex-col gap-3 rounded-2xl border border-emerald-300 bg-emerald-50 p-3 shadow-md lg:flex-row lg:items-center dark:border-emerald-900 dark:bg-slate-900">
+          <div className="flex flex-1 items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-100">
+            {busy ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> {busy}
+              </>
+            ) : (
+              <>
+                {selectedParcels.length} colis sélectionné(s)
+                <button
+                  onClick={() => setSelected(new Set())}
+                  title="Tout désélectionner"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-white hover:text-slate-700 dark:hover:bg-slate-800"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            )}
+          </div>
+          {!busy && (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Reçu(s) le
+                <input
+                  type="date"
+                  value={receptionDate}
+                  max={today}
+                  onChange={(e) => setReceptionDate(e.target.value || today)}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                />
+              </label>
+              <button
+                onClick={() => confirmReception(toConfirm)}
+                disabled={toConfirm.length === 0}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" /> Confirmer la réception à {hub} ({toConfirm.length})
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-800">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
               <tr>
+                {isSupplyChain && (
+                  <th className="w-8 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Sélectionner les colis affichés"
+                      checked={allSelected}
+                      onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map((p) => p.id)))}
+                      className="h-4 w-4 cursor-pointer accent-emerald-600"
+                    />
+                  </th>
+                )}
                 <th className="px-3 py-3">N° de suivi</th>
                 <th className="px-3 py-3">Transporteur</th>
                 <th className="px-3 py-3">Fournisseur</th>
@@ -193,18 +343,19 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 <th className="px-3 py-3">État</th>
                 {destination === 'ROUEN' && <th className="px-3 py-3">Colisage / volume</th>}
                 <th className="px-3 py-3">Expédition</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {parcels === null || (loading && own.length === 0) ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center">
+                  <td colSpan={columns} className="px-4 py-10 text-center">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={columns} className="px-4 py-10 text-center text-slate-500">
                     {own.length === 0 ? `Aucun colis vers ${hub}.` : 'Aucun colis ne correspond à vos filtres.'}
                   </td>
                 </tr>
@@ -212,7 +363,25 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 filtered.map((p) => {
                   const late = overdue(p);
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30">
+                    <tr
+                      key={p.id}
+                      className={
+                        selected.has(p.id)
+                          ? 'bg-emerald-50/70 dark:bg-emerald-950/20'
+                          : 'hover:bg-slate-50/80 dark:hover:bg-slate-700/30'
+                      }
+                    >
+                      {isSupplyChain && (
+                        <td className="px-3 py-2.5">
+                          <input
+                            type="checkbox"
+                            aria-label={`Sélectionner le colis ${p.tracking_number || ''}`}
+                            checked={selected.has(p.id)}
+                            onChange={() => toggleOne(p.id)}
+                            className="h-4 w-4 cursor-pointer accent-emerald-600"
+                          />
+                        </td>
+                      )}
                       <td className="px-3 py-2.5 font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</td>
                       <td className="px-3 py-2.5">{p.carrier_name || '—'}</td>
                       <td className="px-3 py-2.5 font-semibold">{p.supplier_name || '—'}</td>
@@ -261,6 +430,57 @@ export const ParcelsBoardView: React.FC<Props> = ({
                               </button>
                             ))}
                       </td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex justify-end gap-0.5">
+                          <button
+                            onClick={() => setPhotosOf(p)}
+                            title={isSupplyChain ? 'Photos (ajouter / voir)' : 'Voir les photos'}
+                            className={`${iconButton} hover:text-[#643288]`}
+                          >
+                            <Camera className="h-4 w-4" />
+                          </button>
+                          {isSupplyChain && (p.status === 'to_receive' || p.status === 'lost') && (
+                            <button
+                              onClick={() => confirmReception([p])}
+                              disabled={busy !== null}
+                              title={`Reçu à ${hub} le ${formatDate(receptionDate)}`}
+                              className={`${iconButton} text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40`}
+                            >
+                              <CheckCircle2 className="h-4 w-4" />
+                            </button>
+                          )}
+                          {isSupplyChain && p.status === 'received' && (
+                            <button
+                              onClick={() => openSearch(p)}
+                              disabled={busy !== null}
+                              title="Avis de recherche : reçu mais absent à l'arrivée à Madagascar"
+                              className={`${iconButton} text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40`}
+                            >
+                              <SearchX className="h-4 w-4" />
+                            </button>
+                          )}
+                          {isSupplyChain && p.status === 'to_receive' && (
+                            <button
+                              onClick={() => declareLost(p)}
+                              disabled={busy !== null}
+                              title={`Déclarer perdu avant ${hub}`}
+                              className={`${iconButton} text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40`}
+                            >
+                              <PackageX className="h-4 w-4" />
+                            </button>
+                          )}
+                          {isSupplyChain && p.status !== 'to_receive' && (
+                            <button
+                              onClick={() => backToReceive(p)}
+                              disabled={busy !== null}
+                              title="Remettre à recevoir"
+                              className={`${iconButton} hover:text-[#643288]`}
+                            >
+                              <Undo2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })
@@ -269,6 +489,29 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      {photosOf && (
+        <ParcelPhotosModal
+          parcel={photosOf}
+          canEdit={isSupplyChain}
+          onClose={() => setPhotosOf(null)}
+          onChanged={onReload}
+        />
+      )}
+
+      {receiving && (
+        <ReceiveParcelModal
+          destination={destination}
+          onClose={() => setReceiving(false)}
+          onSaved={(parcel) => {
+            setReceiving(false);
+            setActionMessage(`Colis ${parcel.tracking_number || 'sans n° de suivi'} enregistré comme reçu à ${hub}.`);
+            onReload();
+            // Antoine's photo is the proof: offered right away
+            setPhotosOf(parcel);
+          }}
+        />
+      )}
     </div>
   );
 };

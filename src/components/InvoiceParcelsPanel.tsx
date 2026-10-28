@@ -4,6 +4,7 @@ import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabe
 import type { ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { DigiInvoice, Parcel, fetchInvoiceParcels, formatDate, unlinkParcel } from './digiApi';
 import { ParcelFormModal } from './ParcelFormModal';
+import { ParcelPhotosModal } from './ParcelPhotosModal';
 
 export const PARCEL_STATUS_BADGES: Record<ParcelStatus, string> = {
   to_receive: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
@@ -27,6 +28,7 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Parcel | 'new' | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -117,9 +119,13 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
                       <span className="ml-1 text-[10px] text-slate-400">le {formatDate(p.received_at)}</span>
                     )}
                     {p.photo_count > 0 && (
-                      <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] text-slate-400">
+                      <button
+                        onClick={() => setPhotosOf(p)}
+                        title="Voir les photos"
+                        className="ml-1 inline-flex items-center gap-0.5 text-[10px] text-slate-400 hover:text-[#643288]"
+                      >
                         <Camera className="h-3 w-3" /> {p.photo_count}
-                      </span>
+                      </button>
                     )}
                     {overdue && (
                       <span className="ml-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
@@ -154,6 +160,10 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
             })}
           </tbody>
         </table>
+      )}
+
+      {photosOf && (
+        <ParcelPhotosModal parcel={photosOf} canEdit={isSupplyChain} onClose={() => setPhotosOf(null)} onChanged={load} />
       )}
 
       {form && (
