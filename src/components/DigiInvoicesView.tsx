@@ -65,7 +65,7 @@ type TrackingFilter = 'all' | 'no_shipment' | 'no_tracking' | 'tracked';
 const TRACKING_FILTER_LABELS: Record<TrackingFilter, string> = {
   all: 'Tous les suivis',
   no_shipment: 'Sans expédition',
-  no_tracking: 'Expédition sans n° de suivi',
+  no_tracking: 'Expédition sans n° de suivi ni LTA / BL',
   tracked: 'Expédition suivie',
 };
 
@@ -457,7 +457,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
           <span className="ml-1 font-sans text-[10px] font-normal text-slate-400">{inv.shipment_mode}</span>
           {trackingState(inv) === 'untracked' && (
             <span className="mt-0.5 block w-fit rounded-full bg-amber-100 px-1.5 py-0.5 font-sans text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-              Sans n° de suivi
+              Sans suivi ni LTA / BL
             </span>
           )}
         </button>

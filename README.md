@@ -345,7 +345,7 @@ même référence).
 nombre de factures sans expédition par fournisseur ; un clic replie le
 groupe ; case « Grouper par fournisseur » pour revenir à une liste simple).
 Filtres : recherche libre, fournisseur, source et, dans « À traiter », état
-du suivi — « Sans expédition », « Expédition sans n° de suivi » (ni n° de
+du suivi — « Sans expédition », « Expédition sans n° de suivi ni LTA / BL » (ni n° de
 suivi ni LTA / BL sur l'expédition), « Expédition suivie ».
 
 **Sélection multiple.** Des cases à cocher par facture, par fournisseur et
