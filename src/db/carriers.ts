@@ -148,6 +148,33 @@ export async function updateCarrier(
  * Tracking connector linked to the carrier saved on a shipment (shipments.carrier
  * is free text, matched case-insensitively). Null when unknown or not linked.
  */
+/**
+ * Carrier of a parcel, from the Settings list:
+ * - a name picked by the user must be an active carrier;
+ * - without name, the carrier linked to the connector detected from the
+ *   tracking number format, if any.
+ * Returns undefined when the picked name is unknown or inactive.
+ */
+export async function resolveParcelCarrier(
+  pickedName: string | null,
+  detectedCode: string
+): Promise<{ name: string | null; trackingCode: string | null } | undefined> {
+  await ensureReferenceSchema();
+  if (pickedName) {
+    const carrier = await findCarrierByName(pickedName);
+    if (!carrier || !carrier.is_active) return undefined;
+    return { name: carrier.name, trackingCode: carrier.tracking_carrier_code };
+  }
+  if (detectedCode === 'UNKNOWN' || detectedCode === 'OTHER') return { name: null, trackingCode: null };
+  const sql = getDb();
+  const rows = await sql`
+    SELECT name FROM shipment_carriers
+    WHERE is_active AND tracking_carrier_code = ${detectedCode}
+    ORDER BY LOWER(name) LIMIT 1
+  `;
+  return { name: (rows[0]?.name as string) ?? null, trackingCode: detectedCode };
+}
+
 export async function getTrackingCodeForCarrierName(name: string | null | undefined): Promise<string | null> {
   if (!name || !name.trim()) return null;
   await ensureReferenceSchema();

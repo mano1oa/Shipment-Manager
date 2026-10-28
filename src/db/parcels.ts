@@ -1,0 +1,523 @@
+import { getDb } from './neon.js';
+import { ensureDigiInvoicesSchema } from './digiInvoices.js';
+import { trackingSupplierName } from '../lib/digiInvoices.js';
+import type { CarrierCode } from '../lib/carrierDetection.js';
+import type { DeliveryType, ParcelDestination, ParcelInput, ParcelStatus, TrackingSettings } from '../lib/parcelTracking.js';
+
+/**
+ * Parcels (supplier → Orly): one per tracking number, linked to 1..n invoices
+ * of the same supplier. Tables: see parcelSchema.ts.
+ */
+
+export interface ParcelInvoiceRef {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  invoice_date: string | null;
+}
+
+export interface ParcelRecord {
+  id: string;
+  tracking_number: string | null;
+  /** Tracking connector (detected from the number or linked to the carrier). */
+  carrier: CarrierCode;
+  /** Carrier of the Settings list (Paramètres › Transporteurs). */
+  carrier_name: string | null;
+  supplier_name: string | null;
+  /** Orly (air) or Rouen quay (sea). */
+  destination: ParcelDestination;
+  expected_delivery: string | null;
+  status: ParcelStatus;
+  received_at: string | null;
+  received_by_email: string | null;
+  status_changed_at: string | null;
+  notes: string | null;
+  legacy_shipment_id: string | null;
+  description: string | null;
+  packing_info: string | null;
+  volume_m3: number | null;
+  delivery_type: DeliveryType | null;
+  /** Orly → Mada (or sea) shipments of its invoices, else the shipment it was taken from. */
+  shipment_ids: string[];
+  invoices: ParcelInvoiceRef[];
+  photo_count: number;
+  created_by_email: string | null;
+  updated_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export class DuplicateParcelError extends Error {
+  constructor(public existingId: string) {
+    super('Tracking number already used by another parcel');
+  }
+}
+
+const SELECT_PARCELS = `
+  SELECT
+    p.id, p.tracking_number, p.carrier, p.carrier_name, p.supplier_name,
+    TO_CHAR(p.expected_delivery, 'YYYY-MM-DD') AS expected_delivery,
+    p.status, TO_CHAR(p.received_at, 'YYYY-MM-DD') AS received_at, p.received_by_email,
+    p.status_changed_at, p.notes, p.legacy_shipment_id, p.destination,
+    p.description, p.packing_info, p.volume_m3::float AS volume_m3, p.delivery_type,
+    COALESCE(
+      (
+        SELECT array_agg(DISTINCT i.shipment_id)
+        FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+        JOIN shipments s ON s.id = i.shipment_id
+        WHERE pi.parcel_id = p.id
+      ),
+      CASE WHEN EXISTS (SELECT 1 FROM shipments s WHERE s.id = p.legacy_shipment_id)
+        THEN ARRAY[p.legacy_shipment_id] ELSE '{}'::varchar[] END
+    ) AS shipment_ids,
+    p.created_by_email, p.updated_by_email, p.created_at, p.updated_at,
+    (SELECT COUNT(*)::int FROM parcel_photos ph WHERE ph.parcel_id = p.id) AS photo_count,
+    COALESCE(
+      (
+        SELECT json_agg(json_build_object(
+          'id', i.id, 'ref', i.ref, 'supplier_name', i.supplier_name,
+          'amazon_order_ref', i.amazon_order_ref,
+          'invoice_date', TO_CHAR(i.invoice_date, 'YYYY-MM-DD')
+        ) ORDER BY i.invoice_date NULLS LAST, i.ref)
+        FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+        WHERE pi.parcel_id = p.id
+      ),
+      '[]'::json
+    ) AS invoices
+  FROM parcels p
+`;
+
+function mapParcelRow(row: any): ParcelRecord {
+  return {
+    id: row.id,
+    tracking_number: row.tracking_number,
+    carrier: row.carrier,
+    carrier_name: row.carrier_name ?? null,
+    supplier_name: row.supplier_name,
+    destination: row.destination || 'ORLY',
+    expected_delivery: row.expected_delivery,
+    status: row.status,
+    received_at: row.received_at,
+    received_by_email: row.received_by_email,
+    status_changed_at: row.status_changed_at,
+    notes: row.notes,
+    legacy_shipment_id: row.legacy_shipment_id,
+    description: row.description ?? null,
+    packing_info: row.packing_info ?? null,
+    volume_m3: row.volume_m3 ?? null,
+    delivery_type: row.delivery_type ?? null,
+    shipment_ids: row.shipment_ids || [],
+    invoices: (row.invoices || []).map((i: any) => ({
+      id: i.id,
+      ref: i.ref,
+      supplier_display: trackingSupplierName(i.supplier_name, i.amazon_order_ref),
+      invoice_date: i.invoice_date,
+    })),
+    photo_count: Number(row.photo_count) || 0,
+    created_by_email: row.created_by_email,
+    updated_by_email: row.updated_by_email,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
+
+export async function listParcels(): Promise<ParcelRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql.query(`${SELECT_PARCELS} ORDER BY p.created_at DESC`);
+  return (rows as any[]).map(mapParcelRow);
+}
+
+export async function getParcel(id: string): Promise<ParcelRecord | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql.query(`${SELECT_PARCELS} WHERE p.id = $1`, [id]);
+  return rows[0] ? mapParcelRow(rows[0]) : null;
+}
+
+export async function listParcelsForInvoice(invoiceId: string): Promise<ParcelRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql.query(
+    `${SELECT_PARCELS}
+     WHERE p.id IN (SELECT parcel_id FROM parcel_invoices WHERE invoice_id = $1)
+     ORDER BY p.created_at ASC`,
+    [invoiceId]
+  );
+  return (rows as any[]).map(mapParcelRow);
+}
+
+async function findByTrackingNumber(trackingNumber: string): Promise<string | null> {
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id FROM parcels WHERE UPPER(TRIM(tracking_number)) = UPPER(TRIM(${trackingNumber}))
+  `;
+  return (rows[0]?.id as string) ?? null;
+}
+
+/**
+ * Supplier shown for the invoices (AMAZON for an Amazon order). A parcel only
+ * covers invoices of one supplier: returns null when they differ or are unknown.
+ */
+export async function commonSupplierOf(invoiceIds: string[]): Promise<{ supplier: string | null; mixed: boolean }> {
+  const sql = getDb();
+  const rows = await sql`
+    SELECT supplier_name, amazon_order_ref FROM digi_invoices WHERE id = ANY(${invoiceIds}::uuid[])
+  `;
+  const names = new Set(rows.map((r: any) => (trackingSupplierName(r.supplier_name, r.amazon_order_ref) || '').toUpperCase()));
+  if (names.size !== 1) return { supplier: null, mixed: names.size > 1 };
+  return { supplier: trackingSupplierName(rows[0].supplier_name, rows[0].amazon_order_ref), mixed: false };
+}
+
+/**
+ * Creates a parcel for the invoices. When the tracking number already belongs
+ * to a parcel, the invoices are linked to that parcel instead (one parcel can
+ * cover several invoices): `existed` is then true.
+ */
+export async function createParcel(
+  input: ParcelInput,
+  invoiceIds: string[],
+  supplierName: string | null,
+  actorEmail: string
+): Promise<{ id: string; existed: boolean }> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+
+  if (input.tracking_number) {
+    const existing = await findByTrackingNumber(input.tracking_number);
+    if (existing) {
+      await linkParcelInvoices(existing, invoiceIds);
+      return { id: existing, existed: true };
+    }
+  }
+
+  try {
+    const rows = await sql`
+      INSERT INTO parcels (tracking_number, carrier, carrier_name, supplier_name, expected_delivery, notes,
+        destination, description, packing_info, volume_m3, delivery_type,
+        created_by_email, updated_by_email)
+      VALUES (${input.tracking_number}, ${input.carrier}, ${input.carrier_name}, ${supplierName}, ${input.expected_delivery},
+        ${input.notes}, ${input.destination}, ${input.description}, ${input.packing_info},
+        ${input.volume_m3}, ${input.delivery_type}, ${actorEmail}, ${actorEmail})
+      RETURNING id
+    `;
+    const id = rows[0].id as string;
+    await linkParcelInvoices(id, invoiceIds);
+    return { id, existed: false };
+  } catch (err: any) {
+    // Same tracking number created at the same time: link to that one
+    if (err?.code === '23505' && input.tracking_number) {
+      const raced = await findByTrackingNumber(input.tracking_number);
+      if (raced) {
+        await linkParcelInvoices(raced, invoiceIds);
+        return { id: raced, existed: true };
+      }
+    }
+    throw err;
+  }
+}
+
+/** Returns false when the parcel does not exist. */
+export async function updateParcel(id: string, input: ParcelInput, actorEmail: string): Promise<boolean> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  if (input.tracking_number) {
+    const existing = await findByTrackingNumber(input.tracking_number);
+    if (existing && existing !== id) throw new DuplicateParcelError(existing);
+  }
+  try {
+    const rows = await sql`
+      UPDATE parcels SET
+        tracking_number = ${input.tracking_number},
+        carrier = ${input.carrier},
+        carrier_name = ${input.carrier_name},
+        expected_delivery = ${input.expected_delivery},
+        notes = ${input.notes},
+        destination = ${input.destination},
+        description = ${input.description},
+        packing_info = ${input.packing_info},
+        volume_m3 = ${input.volume_m3},
+        delivery_type = ${input.delivery_type},
+        updated_by_email = ${actorEmail},
+        updated_at = NOW()
+      WHERE id = ${id}
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err: any) {
+    if (err?.code === '23505' && input.tracking_number) {
+      const raced = await findByTrackingNumber(input.tracking_number);
+      if (raced) throw new DuplicateParcelError(raced);
+    }
+    throw err;
+  }
+}
+
+export async function linkParcelInvoices(parcelId: string, invoiceIds: string[]): Promise<void> {
+  if (invoiceIds.length === 0) return;
+  const sql = getDb();
+  await sql`
+    INSERT INTO parcel_invoices (parcel_id, invoice_id)
+    SELECT ${parcelId}::uuid, UNNEST(${invoiceIds}::uuid[])
+    ON CONFLICT DO NOTHING
+  `;
+}
+
+/**
+ * Detaches a parcel from an invoice. A parcel left without any invoice is
+ * deleted (nothing to track any more): `deleted` is then true.
+ */
+export async function unlinkParcelInvoice(
+  parcelId: string,
+  invoiceId: string
+): Promise<{ unlinked: boolean; deleted: boolean; photo_keys: string[] }> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    DELETE FROM parcel_invoices WHERE parcel_id = ${parcelId} AND invoice_id = ${invoiceId} RETURNING parcel_id
+  `;
+  if (rows.length === 0) return { unlinked: false, deleted: false, photo_keys: [] };
+  const remaining = await sql`SELECT 1 FROM parcel_invoices WHERE parcel_id = ${parcelId} LIMIT 1`;
+  if (remaining.length === 0) {
+    // Photos of a point Antoine go back to "to match" instead of disappearing
+    await sql`
+      UPDATE parcel_photos SET parcel_id = NULL, linked_by_email = NULL, linked_at = NULL
+      WHERE parcel_id = ${parcelId} AND point_id IS NOT NULL
+    `;
+  }
+  const keys = await sql`SELECT storage_key FROM parcel_photos WHERE parcel_id = ${parcelId}`;
+  const orphan = await sql`
+    DELETE FROM parcels p WHERE p.id = ${parcelId}
+      AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
+    RETURNING id
+  `;
+  // Photos of a deleted parcel: their Drive files are to be trashed
+  const deleted = orphan.length > 0;
+  return { unlinked: true, deleted, photo_keys: deleted ? keys.map((k: any) => k.storage_key as string) : [] };
+}
+
+/**
+ * Changes the state of a parcel. "received" keeps the reception date
+ * (defaults to today); going back to "to_receive" clears it.
+ * Returns the previous status, or null when the parcel does not exist.
+ */
+export async function setParcelStatus(
+  id: string,
+  status: ParcelStatus,
+  receivedAt: string | null,
+  actorEmail: string
+): Promise<{ previous: ParcelStatus } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const before = await sql`SELECT status FROM parcels WHERE id = ${id}`;
+  if (!before[0]) return null;
+  const keepsReception = status === 'received' || status === 'search';
+  await sql`
+    UPDATE parcels SET
+      status = ${status},
+      -- leaving "lost": a new loss later is announced again
+      loss_notified_at = CASE WHEN ${status} = 'lost' THEN loss_notified_at ELSE NULL END,
+      received_at = CASE
+        WHEN ${status} = 'received' THEN COALESCE(${receivedAt}::date, received_at, CURRENT_DATE)
+        WHEN ${keepsReception} THEN received_at
+        ELSE NULL
+      END,
+      received_by_email = CASE
+        WHEN ${status} = 'received' THEN ${actorEmail}
+        WHEN ${keepsReception} THEN received_by_email
+        ELSE NULL
+      END,
+      status_changed_at = NOW(),
+      updated_by_email = ${actorEmail},
+      updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return { previous: before[0].status as ParcelStatus };
+}
+
+export async function deleteParcel(id: string): Promise<{ tracking_number: string | null } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`DELETE FROM parcels WHERE id = ${id} RETURNING tracking_number`;
+  return (rows[0] as any) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Loss before the hub (automatic)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parcels still "to receive" after their deadline become "lost": expected
+ * delivery + N days, else earliest invoice date + M days (settings).
+ * Returns the parcels changed.
+ */
+export async function markOverdueParcelsLost(settings: TrackingSettings): Promise<number> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    UPDATE parcels p SET status = 'lost', status_changed_at = NOW(), updated_by_email = 'alerte-automatique',
+      updated_at = NOW()
+    WHERE p.status = 'to_receive'
+      AND CURRENT_DATE > COALESCE(
+        p.expected_delivery + ${settings.parcel_loss_days_after_eta}::int,
+        (
+          SELECT MIN(i.invoice_date) FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+          WHERE pi.parcel_id = p.id
+        ) + ${settings.parcel_loss_days_without_eta}::int
+      )
+    RETURNING id
+  `;
+  return rows.length;
+}
+
+export interface LostParcelToNotify {
+  id: string;
+  tracking_number: string | null;
+  supplier_name: string | null;
+  carrier_name: string | null;
+  destination: ParcelDestination;
+  expected_delivery: string | null;
+  invoice_refs: string[];
+}
+
+/** Lost parcels not announced on Google Chat yet. */
+export async function listLostParcelsToNotify(): Promise<LostParcelToNotify[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT p.id, p.tracking_number, p.supplier_name, p.carrier_name, p.destination,
+      TO_CHAR(p.expected_delivery, 'YYYY-MM-DD') AS expected_delivery,
+      COALESCE(
+        (SELECT array_agg(COALESCE(i.ref, '—') ORDER BY i.ref) FROM parcel_invoices pi
+         JOIN digi_invoices i ON i.id = pi.invoice_id WHERE pi.parcel_id = p.id),
+        '{}'
+      ) AS invoice_refs
+    FROM parcels p
+    WHERE p.status = 'lost' AND p.loss_notified_at IS NULL
+    ORDER BY p.supplier_name NULLS LAST, p.tracking_number
+  `;
+  return rows as unknown as LostParcelToNotify[];
+}
+
+export async function markLossesNotified(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const sql = getDb();
+  await sql`UPDATE parcels SET loss_notified_at = NOW() WHERE id = ANY(${ids}::uuid[])`;
+}
+
+export interface LateTriageInvoice {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  created_at: string;
+}
+
+/** DIGI invoices still unsorted after the delay of the settings. */
+export async function listLateTriageInvoices(settings: TrackingSettings): Promise<LateTriageInvoice[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id, i.ref, i.supplier_name, i.amazon_order_ref, i.created_at
+    FROM digi_invoices i
+    WHERE i.is_digi AND COALESCE(i.triage, 'to_sort') = 'to_sort' AND NOT i.no_shipment
+      AND i.created_at < NOW() - make_interval(days => ${settings.triage_alert_days}::int)
+      -- fee-only invoices are services without sorting
+      AND (
+        NOT EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id)
+        OR EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id AND NOT l.is_service)
+      )
+    ORDER BY i.created_at
+  `;
+  return (rows as any[]).map((r) => ({
+    id: r.id,
+    ref: r.ref,
+    supplier_display: trackingSupplierName(r.supplier_name, r.amazon_order_ref),
+    created_at: r.created_at,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Photos (object storage key only)
+// ---------------------------------------------------------------------------
+
+export interface ParcelPhotoRecord {
+  id: string;
+  parcel_id: string;
+  storage_key: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_by_email: string | null;
+  uploaded_at: string;
+}
+
+export async function listParcelPhotos(parcelId: string): Promise<ParcelPhotoRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id, parcel_id, storage_key, content_type, size_bytes, uploaded_by_email, uploaded_at
+    FROM parcel_photos WHERE parcel_id = ${parcelId} ORDER BY uploaded_at
+  `;
+  return rows as unknown as ParcelPhotoRecord[];
+}
+
+export async function deleteParcelPhoto(parcelId: string, photoId: string): Promise<string | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    DELETE FROM parcel_photos WHERE id = ${photoId} AND parcel_id = ${parcelId} RETURNING storage_key
+  `;
+  return (rows[0]?.storage_key as string) ?? null;
+}
+
+export interface InvoiceWithoutParcel {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  invoice_date: string | null;
+  is_digi: boolean;
+  validation_status: string;
+}
+
+/**
+ * Tracked invoices (goods, not refused, not in a shipment yet) that have no
+ * parcel: their tracking number is still to be entered.
+ */
+export async function listGoodsInvoicesWithoutParcel(): Promise<InvoiceWithoutParcel[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id, i.ref, i.supplier_name, i.amazon_order_ref, i.is_digi, i.validation_status,
+      TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date
+    FROM digi_invoices i
+    WHERE i.triage = 'goods'
+      AND NOT i.no_shipment
+      AND i.validation_status <> 'rejected'
+      AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.invoice_id = i.id)
+      AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = i.shipment_id)
+    ORDER BY i.invoice_date NULLS LAST, i.ref
+  `;
+  return (rows as any[]).map((r) => ({
+    id: r.id,
+    ref: r.ref,
+    supplier_display: trackingSupplierName(r.supplier_name, r.amazon_order_ref),
+    invoice_date: r.invoice_date,
+    is_digi: r.is_digi !== false,
+    validation_status: r.validation_status,
+  }));
+}
+
+/** Parcels of the invoices of a shipment (arrival check in Madagascar). */
+export async function listParcelsForShipment(shipmentId: string): Promise<ParcelRecord[]> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql.query(
+    `${SELECT_PARCELS}
+     WHERE p.id IN (
+       SELECT pi.parcel_id FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
+       WHERE i.shipment_id = $1
+     )
+     ORDER BY p.supplier_name NULLS LAST, p.tracking_number`,
+    [shipmentId]
+  );
+  return (rows as any[]).map(mapParcelRow);
+}

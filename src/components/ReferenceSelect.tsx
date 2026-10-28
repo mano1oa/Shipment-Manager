@@ -26,6 +26,8 @@ interface ReferenceSelectProps {
   loading?: boolean;
   loadError?: string | null;
   emptyHint?: string;
+  /** Label of the empty choice (default: "— Sélectionner —"). */
+  emptyOptionLabel?: string;
 }
 
 const CREATE_VALUE = '__create__';
@@ -49,6 +51,7 @@ export const ReferenceSelect: React.FC<ReferenceSelectProps> = ({
   loading = false,
   loadError = null,
   emptyHint,
+  emptyOptionLabel = '— Sélectionner —',
 }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -110,7 +113,7 @@ export const ReferenceSelect: React.FC<ReferenceSelectProps> = ({
           }}
           className={inputClass}
         >
-          <option value="">{loading ? 'Chargement…' : '— Sélectionner —'}</option>
+          <option value="">{loading ? 'Chargement…' : emptyOptionLabel}</option>
           {options.map((opt) => (
             <option key={opt.id} value={opt.name}>
               {opt.name}

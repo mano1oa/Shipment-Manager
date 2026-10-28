@@ -4,24 +4,21 @@ import LoginView from './components/LoginView';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
-import { ShipmentsView } from './components/ShipmentsView';
+import { TransportTrackingView } from './components/TransportTrackingView';
 import { ShipmentDetailModal } from './components/ShipmentDetailModal';
 import { AlertsCenterView } from './components/AlertsCenterView';
 import { AnalyticsView } from './components/AnalyticsView';
 import { AIAssistantBubble } from './components/AIAssistantBubble';
 import { SettingsView } from './components/SettingsView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
-import { apiJson } from './components/digiApi';
+import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
+import { evaluateParcelAlerts } from './lib/parcelAlerts';
+import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
-import { ReferenceSelect, ReferenceTransportMode, ReferenceCreateResult } from './components/ReferenceSelect';
+import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
 import { evaluateShipmentRules } from './lib/rulesEngine';
-import { Shipment, ShipmentAlert, UserRole, MetricSummary, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from './types';
-
-type ReferenceCarrier = { id: string; name: string; transport_mode: ReferenceTransportMode };
-type ReferenceSupplier = { id: string; name: string };
-type ShipmentPriority = Shipment['priority'];
-type CustomsStatus = Shipment['customs_status'];
-import { PlusCircle, X, CheckCircle2, Loader2, AlertCircle, LayoutDashboard, BarChart3 } from 'lucide-react';
+import { Shipment, UserRole, MetricSummary, shipmentValue } from './types';
+import { CheckCircle2, AlertCircle, LayoutDashboard, BarChart3 } from 'lucide-react';
 
 type AuthUser = {
   id: string;
@@ -63,159 +60,8 @@ export default function App() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
-  // New Shipment Form State
-  const [newSupplier, setNewSupplier] = useState('');
-  const [newOrderRef, setNewOrderRef] = useState('');
-  const [newTrackingNo, setNewTrackingNo] = useState('');
-  const [newRefFa, setNewRefFa] = useState('');
-  const [newInvoiceNo, setNewInvoiceNo] = useState('');
-  const [newBlAwb, setNewBlAwb] = useState('');
-  const [newCarrier, setNewCarrier] = useState('');
+  // New shipment = grouping of received invoices (Supply Chain)
   const [newMode, setNewMode] = useState<'Air' | 'Sea'>('Air');
-  const [newGlobalStatus, setNewGlobalStatus] = useState<GlobalStatus | ''>('');
-  const [newAntoineStatus, setNewAntoineStatus] = useState<AntoineStatus | ''>('');
-  const [newPriority, setNewPriority] = useState<ShipmentPriority | ''>('');
-  const [newCustomsStatus, setNewCustomsStatus] = useState<CustomsStatus | ''>('');
-  const [newEta, setNewEta] = useState('');
-  // Numeric inputs are kept as strings ('' = unknown) and converted on submit.
-  const [newWeight, setNewWeight] = useState('');
-  const [newCost, setNewCost] = useState('');
-  const [newOrigin, setNewOrigin] = useState('');
-  const [newDestination, setNewDestination] = useState('');
-  const [newRemarks, setNewRemarks] = useState('');
-  const [isCreatingShipment, setIsCreatingShipment] = useState(false);
-  const [createError, setCreateError] = useState<string | null>(null);
-
-  // Reference lists (Neon): carriers & suppliers for the creation form
-  const [refCarriers, setRefCarriers] = useState<ReferenceCarrier[]>([]);
-  const [refSuppliers, setRefSuppliers] = useState<ReferenceSupplier[]>([]);
-  const [refLoading, setRefLoading] = useState(false);
-  const [refCarriersError, setRefCarriersError] = useState<string | null>(null);
-  const [refSuppliersError, setRefSuppliersError] = useState<string | null>(null);
-
-  const sortByName = <T extends { name: string }>(items: T[]) =>
-    [...items].sort((a, b) => a.name.localeCompare(b.name, 'fr', { sensitivity: 'base' }));
-
-  const loadReferenceLists = async () => {
-    setRefLoading(true);
-    setRefCarriersError(null);
-    setRefSuppliersError(null);
-    try {
-      const [carriersRes, suppliersRes] = await Promise.all([
-        fetch('/api/reference/carriers', { credentials: 'include' }),
-        fetch('/api/reference/suppliers', { credentials: 'include' }),
-      ]);
-      const carriersData = await carriersRes.json().catch(() => ({}));
-      const suppliersData = await suppliersRes.json().catch(() => ({}));
-
-      if (carriersRes.ok && carriersData?.success) {
-        setRefCarriers(carriersData.carriers || []);
-      } else {
-        setRefCarriersError('Impossible de charger la liste des transporteurs.');
-      }
-      if (suppliersRes.ok && suppliersData?.success) {
-        setRefSuppliers(suppliersData.suppliers || []);
-      } else {
-        setRefSuppliersError('Impossible de charger la liste des fournisseurs.');
-      }
-    } catch {
-      setRefCarriersError('Impossible de charger la liste des transporteurs (erreur réseau).');
-      setRefSuppliersError('Impossible de charger la liste des fournisseurs (erreur réseau).');
-    } finally {
-      setRefLoading(false);
-    }
-  };
-
-  // Reload lists each time the creation form opens (picks up other users' additions)
-  useEffect(() => {
-    if (showNewModal) {
-      loadReferenceLists();
-    }
-  }, [showNewModal]);
-
-  const carrierAppliesToMode = (carrier: ReferenceCarrier, mode: 'Air' | 'Sea') =>
-    carrier.transport_mode === 'BOTH' || carrier.transport_mode === mode;
-
-  const carriersForMode = useMemo(
-    () => refCarriers.filter((c) => carrierAppliesToMode(c, newMode)),
-    [refCarriers, newMode]
-  );
-
-  const handleCreateCarrier = async (
-    name: string,
-    mode?: ReferenceTransportMode
-  ): Promise<ReferenceCreateResult> => {
-    try {
-      const res = await fetch('/api/reference/carriers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ name, transport_mode: mode }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && data?.success && data.carrier) {
-        const carrier: ReferenceCarrier = data.carrier;
-        setRefCarriers((prev) => sortByName([...prev.filter((c) => c.id !== carrier.id), carrier]));
-        if (carrierAppliesToMode(carrier, newMode)) {
-          setNewCarrier(carrier.name);
-          return { ok: true };
-        }
-        return {
-          ok: false,
-          error: `« ${carrier.name} » a été ajouté, mais il n'est pas disponible pour le mode ${newMode === 'Air' ? 'aérien' : 'maritime'}.`,
-        };
-      }
-
-      if (res.status === 409 && data?.existing) {
-        const existing: ReferenceCarrier = data.existing;
-        if (carrierAppliesToMode(existing, newMode)) {
-          setRefCarriers((prev) =>
-            prev.some((c) => c.id === existing.id) ? prev : sortByName([...prev, existing])
-          );
-          setNewCarrier(existing.name);
-          return { ok: true };
-        }
-      }
-
-      return { ok: false, error: data?.error || `Erreur ${res.status}` };
-    } catch {
-      return { ok: false, error: 'Erreur réseau lors de l\'ajout du transporteur.' };
-    }
-  };
-
-  const handleCreateSupplier = async (name: string): Promise<ReferenceCreateResult> => {
-    try {
-      const res = await fetch('/api/reference/suppliers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (res.ok && data?.success && data.supplier) {
-        const supplier: ReferenceSupplier = data.supplier;
-        setRefSuppliers((prev) => sortByName([...prev.filter((s) => s.id !== supplier.id), supplier]));
-        setNewSupplier(supplier.name);
-        return { ok: true };
-      }
-
-      if (res.status === 409 && data?.existing) {
-        // Already exists (maybe with different casing): select the canonical entry
-        const existing: ReferenceSupplier = data.existing;
-        setRefSuppliers((prev) =>
-          prev.some((s) => s.id === existing.id) ? prev : sortByName([...prev, existing])
-        );
-        setNewSupplier(existing.name);
-        return { ok: true };
-      }
-
-      return { ok: false, error: data?.error || `Erreur ${res.status}` };
-    } catch {
-      return { ok: false, error: 'Erreur réseau lors de l\'ajout du fournisseur.' };
-    }
-  };
 
 useEffect(() => {
   async function checkAuthentication() {
@@ -286,12 +132,37 @@ useEffect(() => {
     }
   };
 
+  // Parcels (supplier → Orly / Rouen): tabs of the air / sea tracking and parcel alerts
+  const [parcelsOverview, setParcelsOverview] = useState<ParcelsOverview | null>(null);
+  const [parcelsLoading, setParcelsLoading] = useState(false);
+  const [parcelsError, setParcelsError] = useState<string | null>(null);
+  const [trackingSettings, setTrackingSettings] = useState<TrackingSettings | undefined>(undefined);
+
+  const loadParcels = async () => {
+    setParcelsLoading(true);
+    setParcelsError(null);
+    try {
+      setParcelsOverview(await fetchAllParcels());
+    } catch (err: any) {
+      setParcelsError(err.message);
+    } finally {
+      setParcelsLoading(false);
+    }
+  };
+
   // Load once the session is known: before login the API answers 401.
+  // Parcels after the shipments: their first load prepares the parcel tables.
   useEffect(() => {
     if (authUser) {
-      loadShipmentsFromNeon();
+      loadShipmentsFromNeon().then(loadParcels);
+      fetchTrackingSettings().then(setTrackingSettings).catch(() => {});
     }
   }, [authUser?.id]);
+
+  // Fresh parcel states when opening the air / sea tracking
+  useEffect(() => {
+    if (authUser && (activeTab === 'air' || activeTab === 'sea') && parcelsOverview) loadParcels();
+  }, [activeTab]);
 
   const handleDeleteShipment = async (shipmentId: string) => {
     try {
@@ -401,8 +272,13 @@ useEffect(() => {
 
   // Evaluate rules against current shipments (claim messages use the effective value)
   const { shipmentsWithAlerts, allAlerts } = useMemo(() => {
-    return evaluateShipmentRules(shipments, valueOfShipment);
-  }, [shipments, digiValueFor]);
+    const evaluated = evaluateShipmentRules(shipments, valueOfShipment);
+    // Parcel alerts: lost before the hub, avis de recherche, DIGI invoices not sorted
+    const parcelAlerts = parcelsOverview
+      ? evaluateParcelAlerts(parcelsOverview.parcels, parcelsOverview.late_triage_invoices)
+      : [];
+    return { ...evaluated, allAlerts: [...evaluated.allAlerts, ...parcelAlerts] };
+  }, [shipments, digiValueFor, parcelsOverview]);
 
   // Combine alerts with resolved status from state
   const allAlertsWithResolved = useMemo(() => {
@@ -422,9 +298,8 @@ useEffect(() => {
       (s) => s.carrier_status === 'Exception / Delay' || (s.alerts && s.alerts.length > 0)
     ).length;
 
-    const orlyStock = shipmentsWithAlerts.filter(
-      (s) => s.global_status === 'Reçu et expédié' || s.global_status === 'Livré Orly' || s.carrier_status === 'Delivered'
-    );
+    // At Orly, not departed yet
+    const orlyStock = shipmentsWithAlerts.filter((s) => s.global_status === 'En préparation');
     const orlyStockCount = orlyStock.length;
 
     const orlyOverdueCount = allAlerts.filter(
@@ -434,22 +309,22 @@ useEffect(() => {
     const criticalAlertsCount = allAlerts.filter((a) => a.severity === 'critical').length;
 
     const customsBlockedCount = shipmentsWithAlerts.filter(
-      (s) => s.customs_status === 'Bloqué Douane' || s.global_status === 'Bloqué douane' || s.global_status === 'Bloqué Douane'
+      (s) => s.customs_status === 'Bloqué Douane' || s.global_status === 'Bloquée douane'
     ).length;
 
-    const pendingTransitConfirm = shipmentsWithAlerts.filter(
-      (s) => s.global_status === 'Attente confirmation transitaire'
-    ).length;
+    // Shipments saved before the parcel model, to regroup or delete
+    const pendingTransitConfirm = shipmentsWithAlerts.filter((s) => s.needs_review).length;
 
     const onTimeCount = total - delaysCount;
     const slaComplianceRate = total > 0 ? Math.round((onTimeCount / total) * 100) : 100;
 
     const totalValueInTransit = shipmentsWithAlerts
-      .filter((s) => s.global_status === 'Reçu et expédié')
+      .filter((s) => s.global_status === 'Expédiée vers Mada')
       .reduce((sum, s) => sum + valueOfShipment(s), 0);
 
+    // Former "Perdu Orly" shipments; new losses are tracked on the parcels
     const totalValuePerduOrly = shipmentsWithAlerts
-      .filter((s) => s.global_status === 'Perdu Orly')
+      .filter((s) => s.legacy_global_status === 'Perdu Orly')
       .reduce((sum, s) => sum + valueOfShipment(s), 0);
 
     return {
@@ -591,173 +466,25 @@ useEffect(() => {
     }
   };
 
-  const handleCreateShipment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreateError(null);
-
-    const supplierTrim = newSupplier.trim();
-    const orderRefTrim = newOrderRef.trim();
-
-    if (!supplierTrim) {
-      setCreateError('Le nom du Fournisseur est obligatoire.');
-      return;
-    }
-    if (!orderRefTrim) {
-      setCreateError('La Référence de Commande / PO est obligatoire.');
-      return;
-    }
-    if (!newCarrier) {
-      setCreateError('Le Transporteur est obligatoire.');
-      return;
-    }
-    if (!newGlobalStatus) {
-      setCreateError('Le Statut global initial est obligatoire.');
-      return;
-    }
-    if (!newAntoineStatus) {
-      setCreateError('Le Statut Antoine est obligatoire.');
-      return;
-    }
-    if (!newPriority) {
-      setCreateError('La Priorité est obligatoire.');
-      return;
-    }
-    if (!newCustomsStatus) {
-      setCreateError('Le Statut douane est obligatoire.');
-      return;
-    }
-
-    // Numeric fields: '' = unknown (stored as 0, the column is NOT NULL); never NaN.
-    const parseAmount = (raw: string): number | null => {
-      if (raw.trim() === '') return 0;
-      const n = Number(raw.replace(',', '.'));
-      return Number.isFinite(n) && n >= 0 ? n : null;
-    };
-    const weightValue = parseAmount(newWeight);
-    const costValue = parseAmount(newCost);
-    if (weightValue === null) {
-      setCreateError('Le Poids doit être un nombre positif.');
-      return;
-    }
-    if (costValue === null) {
-      setCreateError('La Valeur marchandise doit être un nombre positif.');
-      return;
-    }
-
-    setIsCreatingShipment(true);
-
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-      const trackingValue = newTrackingNo.trim();
-      const blAwbValue = newBlAwb.trim();
-      const invoiceValue = newInvoiceNo.trim();
-      const shipmentId = `SHP-${new Date().getFullYear()}-${randomSuffix}`;
-
-      const created: Shipment = {
-        id: shipmentId,
-        mode: newMode,
-        supplier: supplierTrim,
-        order_reference: orderRefTrim,
-        invoice_no: invoiceValue,
-        bl_awb: blAwbValue,
-        tracking_no: trackingValue,
-        carrier: newCarrier,
-        carrier_status: '', // unknown until a real carrier status is recorded
-        carrier_last_location: '',
-        eta: newEta || '',
-        antoine_status: newAntoineStatus,
-        global_status: newGlobalStatus,
-        remarks: newRemarks.trim(),
-        priority: newPriority,
-        weight_kg: weightValue,
-        cost_eur: costValue,
-        origin: newOrigin.trim(),
-        destination: newDestination.trim(),
-        vessel_flight: '',
-        customs_status: newCustomsStatus,
-        ref_fa_digi_nxt: newRefFa.trim(),
-        created_at: today,
-        updated_at: today,
-        documents: [],
-        history: [
-          {
-            date: `${today} ${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`,
-            location: newOrigin.trim(),
-            status: 'Création',
-            details: `Création de l'expédition pour ${supplierTrim}`,
-          },
-        ],
-        alerts: [],
-        sea_deliveries: [],
-      };
-
-      let finalShipment = created;
-
-      // Direct persistence attempt to Neon PostgreSQL - Single source of truth
-      const res = await fetch('/api/shipments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(created),
-      });
-
-      const resData = await res.json().catch(() => ({}));
-
-      if (!res.ok || !resData.success) {
-        const errMsg =
-          resData?.message ||
-          resData?.error ||
-          'Erreur lors de l\'enregistrement dans la base Neon PostgreSQL.';
-        setCreateError(errMsg);
-        showToast(`❌ Erreur création Neon: ${errMsg}`);
-        return;
-      }
-
-      if (resData.shipment) {
-        finalShipment = resData.shipment;
-      }
-
-      showToast(`✅ Expédition ${finalShipment.id} enregistrée avec succès dans Neon PostgreSQL !`);
-
-      // Commit to React state and close modal only after successful Neon persistence
-      setShipments((prev) => [finalShipment, ...prev]);
-      setShowNewModal(false);
-
-      // Reset form
-      setNewSupplier('');
-      setNewOrderRef('');
-      setNewTrackingNo('');
-      setNewRefFa('');
-      setNewInvoiceNo('');
-      setNewBlAwb('');
-      setNewRemarks('');
-      setNewCarrier('');
-      setNewGlobalStatus('');
-      setNewAntoineStatus('');
-      setNewPriority('');
-      setNewCustomsStatus('');
-      setNewEta('');
-      setNewCost('');
-      setNewWeight('');
-      setNewOrigin('');
-      setNewDestination('');
-    } catch (err: any) {
-      console.error('Erreur enregistrement:', err);
-      const networkMsg = err?.message || 'Erreur réseau lors de la création.';
-      setCreateError(networkMsg);
-      showToast(`❌ ${networkMsg}`);
-    } finally {
-      setIsCreatingShipment(false);
-    }
-  };
-
   // Restart the timer on each message: an older timer must not hide a newer toast
   const toastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const showToast = (msg: string) => {
     setNotification(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setNotification(null), 3500);
+  };
+
+  // The open shipment follows a reload (invoices added / removed change its supplier, value, history)
+  useEffect(() => {
+    if (!selectedShipment) return;
+    const fresh = shipmentsWithAlerts.find((s) => s.id === selectedShipment.id);
+    if (fresh && fresh.updated_at !== selectedShipment.updated_at) setSelectedShipment(fresh);
+  }, [shipmentsWithAlerts]);
+
+  const openShipmentById = (id: string) => {
+    const linked = shipmentsWithAlerts.find((s) => s.id === id);
+    if (linked) setSelectedShipment(linked);
+    else showToast('Expédition introuvable : rechargez la liste des expéditions.');
   };
 
   const canEdit = currentRole === 'supply_chain' || currentRole === 'sourcing';
@@ -782,9 +509,17 @@ useEffect(() => {
   };
 
   const openNewShipment = (mode?: 'Air' | 'Sea') => {
-    setCreateError(null);
     if (mode) setNewMode(mode);
     setShowNewModal(true);
+  };
+
+  /** Former shipments left without invoice after a regrouping: offered for deletion. */
+  const offerToDeleteEmptied = async (emptied: string[]) => {
+    for (const id of emptied) {
+      if (window.confirm(`L'expédition ${id} (ancien modèle) n'a plus aucune facture. La supprimer ?`)) {
+        await handleDeleteShipment(id);
+      }
+    }
   };
 
   // The navbar search filters the Air / Sea lists: jump to one when typing elsewhere
@@ -929,30 +664,26 @@ if (!authUser) {
             </div>
           )}
 
-          {activeTab === 'air' && (
-            <ShipmentsView
+          {(activeTab === 'air' || activeTab === 'sea') && (
+            <TransportTrackingView
+              key={activeTab}
+              mode={activeTab === 'air' ? 'Air' : 'Sea'}
               shipments={shipmentsWithAlerts}
-              modeFilter="Air"
               globalSearch={globalSearch}
               onClearGlobalSearch={() => setGlobalSearch('')}
               onSelectShipment={setSelectedShipment}
+              onOpenShipment={openShipmentById}
+              parcelsOverview={parcelsOverview}
+              parcelsLoading={parcelsLoading}
+              parcelsError={parcelsError}
+              onReloadParcels={loadParcels}
+              settings={trackingSettings}
+              isSupplyChain={currentRole === 'supply_chain'}
               canEdit={canEdit}
               onUpdateShipment={canEdit ? handleSaveShipment : undefined}
-              onNewShipment={canEdit ? () => openNewShipment('Air') : undefined}
-              digiValueFor={digiValueFor}
-            />
-          )}
-
-          {activeTab === 'sea' && (
-            <ShipmentsView
-              shipments={shipmentsWithAlerts}
-              modeFilter="Sea"
-              globalSearch={globalSearch}
-              onClearGlobalSearch={() => setGlobalSearch('')}
-              onSelectShipment={setSelectedShipment}
-              canEdit={canEdit}
-              onUpdateShipment={canEdit ? handleSaveShipment : undefined}
-              onNewShipment={canEdit ? () => openNewShipment('Sea') : undefined}
+              onNewShipment={
+                currentRole === 'supply_chain' ? () => openNewShipment(activeTab === 'air' ? 'Air' : 'Sea') : undefined
+              }
               digiValueFor={digiValueFor}
             />
           )}
@@ -960,11 +691,8 @@ if (!authUser) {
           {activeTab === 'digi' && (
             <DigiInvoicesView
               canDelete={currentRole === 'supply_chain'}
-              onOpenShipment={(id) => {
-                const linked = shipmentsWithAlerts.find((s) => s.id === id);
-                if (linked) setSelectedShipment(linked);
-                else showToast('Expédition introuvable : rechargez la liste des expéditions.');
-              }}
+              isSupplyChain={currentRole === 'supply_chain'}
+              onOpenShipment={openShipmentById}
               onShipmentsChanged={loadShipmentsFromNeon}
               shipments={shipmentsWithAlerts}
               onDeleteShipment={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
@@ -1004,359 +732,30 @@ if (!authUser) {
           onSave={handleSaveShipment}
           onDelete={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
           onDispatchGoogleChat={handleDispatchGoogleChat}
+          isSupplyChain={currentRole === 'supply_chain'}
+          shipments={shipmentsWithAlerts}
+          onContentsChanged={async (emptied) => {
+            await loadShipmentsFromNeon();
+            loadParcels();
+            await offerToDeleteEmptied(emptied);
+          }}
         />
       )}
 
-      {/* New Shipment Modal */}
+      {/* New shipment: grouping of the invoices received at the hub (Supply Chain) */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs overflow-y-auto">
-          <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 my-8">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
-                  <PlusCircle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                    Créer une Nouvelle Expédition
-                  </h2>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Enregistrement direct dans Neon PostgreSQL & le tableau de bord
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setShowNewModal(false)}
-                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {createError && (
-              <div className="mt-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
-                <span>{createError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleCreateShipment} className="mt-4 space-y-4 text-xs">
-              {/* Mode & Transporteur */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Mode de Transport *
-                  </label>
-                  <select
-                    value={newMode}
-                    onChange={(e) => {
-                      const mode = e.target.value as 'Air' | 'Sea';
-                      setNewMode(mode);
-                      // Drop the selected carrier if it does not apply to the new mode
-                      const current = refCarriers.find((c) => c.name === newCarrier);
-                      if (current && !carrierAppliesToMode(current, mode)) {
-                        setNewCarrier('');
-                      }
-                    }}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-medium dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="Air">✈️ Aérien (Express / Cargo)</option>
-                    <option value="Sea">🚢 Maritime (Conteneur / FCL / LCL)</option>
-                  </select>
-                </div>
-
-                <ReferenceSelect
-                  label="Transporteur / Compagnie"
-                  entityLabel="transporteur"
-                  required
-                  withModeChoice
-                  options={carriersForMode}
-                  value={newCarrier}
-                  onChange={setNewCarrier}
-                  onCreate={currentRole === 'supply_chain' ? handleCreateCarrier : undefined}
-                  loading={refLoading}
-                  loadError={refCarriersError}
-                  emptyHint={`Aucun transporteur ${newMode === 'Air' ? 'aérien' : 'maritime'} enregistré : ${currentRole === 'supply_chain' ? 'utilisez « + Ajouter un transporteur… ».' : 'demandez à Supply Chain de l’ajouter.'}`}
-                />
-              </div>
-
-              {/* Fournisseur & Ref Commande */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <ReferenceSelect
-                  label="Fournisseur"
-                  entityLabel="fournisseur"
-                  required
-                  options={refSuppliers}
-                  value={newSupplier}
-                  onChange={setNewSupplier}
-                  onCreate={(name) => handleCreateSupplier(name)}
-                  loading={refLoading}
-                  loadError={refSuppliersError}
-                  emptyHint="Aucun fournisseur enregistré : utilisez « + Ajouter un fournisseur… »."
-                />
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Réf Commande / PO *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={newOrderRef}
-                    onChange={(e) => setNewOrderRef(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* N° Tracking & Réf FA (DIGI - NXT) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    N° Suivi / Tracking Transporteur
-                  </label>
-                  <input
-                    type="text"
-                    value={newTrackingNo}
-                    onChange={(e) => setNewTrackingNo(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Réf FA (DIGI - NXT)
-                  </label>
-                  <input
-                    type="text"
-                    value={newRefFa}
-                    onChange={(e) => setNewRefFa(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* LTA / BL & Facture */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    {newMode === 'Air' ? 'N° LTA / AWB' : 'N° BL / Conteneur / SWB'}
-                  </label>
-                  <input
-                    type="text"
-                    value={newBlAwb}
-                    onChange={(e) => setNewBlAwb(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Facture Commerciale N°
-                  </label>
-                  <input
-                    type="text"
-                    value={newInvoiceNo}
-                    onChange={(e) => setNewInvoiceNo(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 font-mono dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Statut global & ETA */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Statut Global Initial *
-                  </label>
-                  <select
-                    required
-                    value={newGlobalStatus}
-                    onChange={(e) => setNewGlobalStatus(e.target.value as GlobalStatus | '')}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="">— Sélectionner —</option>
-                    <option value="Attente confirmation transitaire">Attente confirmation transitaire</option>
-                    <option value="Reçu et expédié">Reçu et expédié</option>
-                    <option value="En livraison vers Orly">En livraison vers Orly</option>
-                    <option value="Livré Orly">Livré Orly</option>
-                    <option value="Bloqué douane">Bloqué douane</option>
-                    <option value="Livré entrepôt">Livré entrepôt</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Date estimée d'arrivée (ETA)
-                  </label>
-                  <input
-                    type="date"
-                    value={newEta}
-                    onChange={(e) => setNewEta(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Statut Antoine, Priorité & Douane */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Statut du colis à Orly (Antoine) *
-                  </label>
-                  <select
-                    required
-                    value={newAntoineStatus}
-                    onChange={(e) => setNewAntoineStatus(e.target.value as AntoineStatus | '')}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="">— Sélectionner —</option>
-                    {ANTOINE_STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {ANTOINE_STATUS_LABELS[s]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Priorité *
-                  </label>
-                  <select
-                    required
-                    value={newPriority}
-                    onChange={(e) => setNewPriority(e.target.value as ShipmentPriority | '')}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="">— Sélectionner —</option>
-                    <option value="Haute">Haute</option>
-                    <option value="Moyenne">Moyenne</option>
-                    <option value="Basse">Basse</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Statut Douane *
-                  </label>
-                  <select
-                    required
-                    value={newCustomsStatus}
-                    onChange={(e) => setNewCustomsStatus(e.target.value as CustomsStatus | '')}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="">— Sélectionner —</option>
-                    <option value="Non Requis">Non Requis</option>
-                    <option value="En cours">En cours</option>
-                    <option value="Dédouané">Dédouané</option>
-                    <option value="Bloqué Douane">Bloqué Douane</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Poids & Coût */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Poids (kg)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    inputMode="decimal"
-                    value={newWeight}
-                    onChange={(e) => setNewWeight(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Valeur marchandise (€)
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    inputMode="decimal"
-                    value={newCost}
-                    onChange={(e) => setNewCost(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Origine & Destination */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Lieu d'origine
-                  </label>
-                  <input
-                    type="text"
-                    value={newOrigin}
-                    onChange={(e) => setNewOrigin(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 dark:text-slate-300">
-                    Destination finale
-                  </label>
-                  <input
-                    type="text"
-                    value={newDestination}
-                    onChange={(e) => setNewDestination(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  />
-                </div>
-              </div>
-
-              {/* Remarques */}
-              <div>
-                <label className="font-semibold text-slate-700 dark:text-slate-300">
-                  Observations / Remarques Supply Chain
-                </label>
-                <textarea
-                  rows={2}
-                  value={newRemarks}
-                  onChange={(e) => setNewRemarks(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                />
-              </div>
-
-              {/* Actions */}
-              <div className="pt-3 flex gap-2 justify-end border-t border-slate-100 dark:border-slate-800">
-                <button
-                  type="button"
-                  disabled={isCreatingShipment}
-                  onClick={() => setShowNewModal(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={isCreatingShipment}
-                  className="flex items-center gap-2 rounded-xl bg-[#643288] px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-[#522870] active:scale-95 disabled:opacity-50"
-                >
-                  {isCreatingShipment ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Enregistrement dans Neon...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" /> Enregistrer l'Expédition
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <ShipmentInvoicesModal
+          mode={newMode}
+          shipments={shipmentsWithAlerts}
+          onClose={() => setShowNewModal(false)}
+          onDone={async (shipmentId, emptied) => {
+            setShowNewModal(false);
+            await loadShipmentsFromNeon();
+            loadParcels();
+            showToast(`✅ Expédition ${shipmentId} créée.`);
+            await offerToDeleteEmptied(emptied);
+          }}
+        />
       )}
 
       {/* Floating Notification Toast */}

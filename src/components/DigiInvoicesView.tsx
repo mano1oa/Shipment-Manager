@@ -15,10 +15,12 @@ import {
   Trash2,
   Wrench,
   PackageCheck,
-  Link2,
-  PlusCircle,
-  Layers,
   X,
+  FileText,
+  Package,
+  ShieldCheck,
+  ShieldX,
+  Undo2,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -34,22 +36,31 @@ import {
   formatDateTime,
   formatQuantity,
   syncDigiOdoo,
-  createShipmentFromInvoice,
-  setInvoiceServices,
   isServicesInvoice,
-  assignInvoiceShipment,
+  isAwaitingValidation,
+  isGoodsInvoice,
+  isInvoiceReceived,
+  setInvoiceTriage,
+  setInvoiceValidation,
+  fetchTrackingSettings,
 } from './digiApi';
-import { AttachShipmentModal } from './AttachShipmentModal';
 import { Shipment } from '../types';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
+import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
 import { DigiImportModal } from './DigiImportModal';
+import { ParcelFormModal } from './ParcelFormModal';
+import { InvoiceParcelsPanel } from './InvoiceParcelsPanel';
 import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
+import { VALIDATION_STATUS_LABELS, amountInEur, triageDeadline } from '../lib/parcelTracking';
+import type { InvoiceTriage, TrackingSettings } from '../lib/parcelTracking';
 
 interface Props {
   canDelete: boolean;
-  /** Opens a shipment's detail (shipment created from an invoice). */
+  /** Supply Chain: validates "hors DIGI" invoices, edits validated ones. */
+  isSupplyChain: boolean;
+  /** Opens a shipment's detail. */
   onOpenShipment: (shipmentId: string) => void;
-  /** Shipments were created: the app reloads its shipment lists. */
+  /** Shipments changed: the app reloads its shipment lists. */
   onShipmentsChanged: () => void;
   /** Existing shipments, to attach an invoice to one of them. */
   shipments: Shipment[];
@@ -57,17 +68,33 @@ interface Props {
   onDeleteShipment?: (shipmentId: string) => Promise<void> | void;
 }
 
-type Section = 'to_ship' | 'services';
+/**
+ * to_sort: DIGI invoices not sorted yet · goods: tracked (parcels) ·
+ * services: nothing to ship · validation: "hors DIGI" waiting for Supply Chain.
+ */
+type Section = 'to_sort' | 'goods' | 'services' | 'validation';
 
-/** Where the invoice stands on the way to a tracked shipment. */
-type TrackingFilter = 'all' | 'no_shipment' | 'no_tracking' | 'tracked';
-
-const TRACKING_FILTER_LABELS: Record<TrackingFilter, string> = {
-  all: 'Tous les suivis',
-  no_shipment: 'Sans expédition',
-  no_tracking: 'Expédition sans n° de suivi ni LTA / BL',
-  tracked: 'Expédition suivie',
+const sectionsOf = (inv: DigiInvoice): Section[] => {
+  if (isServicesInvoice(inv)) return ['services'];
+  const sections: Section[] = [];
+  if (isAwaitingValidation(inv)) sections.push('validation');
+  if (isGoodsInvoice(inv)) sections.push('goods');
+  else if (inv.is_digi) sections.push('to_sort');
+  return sections;
 };
+
+/** Where a tracked invoice stands on the way to Orly. */
+type ParcelFilter = 'all' | 'no_parcel' | 'waiting' | 'received';
+
+const PARCEL_FILTER_LABELS: Record<ParcelFilter, string> = {
+  all: 'Tous les colis',
+  no_parcel: 'Sans colis',
+  waiting: 'Colis pas tous reçus',
+  received: 'Reçue à Orly (tous les colis)',
+};
+
+const parcelState = (inv: DigiInvoice): Exclude<ParcelFilter, 'all'> =>
+  inv.parcel_count === 0 ? 'no_parcel' : isInvoiceReceived(inv) ? 'received' : 'waiting';
 
 const NO_SUPPLIER = '— Sans fournisseur —';
 const supplierOf = (inv: DigiInvoice) => inv.supplier_display || NO_SUPPLIER;
@@ -78,8 +105,12 @@ const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   manual: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
+const formatInvoiceAmount = (inv: DigiInvoice) =>
+  `${formatAmount(inv.amount_total)}${inv.amount_total !== null && inv.currency === 'USD' ? ' $' : ''}`;
+
 export const DigiInvoicesView: React.FC<Props> = ({
   canDelete,
+  isSupplyChain,
   onOpenShipment,
   onShipmentsChanged,
   shipments,
@@ -94,12 +125,14 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | DigiInvoiceSource>('all');
-  const [section, setSection] = useState<Section>('to_ship');
+  const [section, setSection] = useState<Section>('to_sort');
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [attaching, setAttaching] = useState<DigiInvoice | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [supplierFilter, setSupplierFilter] = useState('all');
-  const [trackingFilter, setTrackingFilter] = useState<TrackingFilter>('all');
+  const [parcelFilter, setParcelFilter] = useState<ParcelFilter>('all');
+  const [settings, setSettings] = useState<TrackingSettings | undefined>(undefined);
+  const [editingDirect, setEditingDirect] = useState<DigiInvoice | 'new' | null>(null);
+  const [parcelFor, setParcelFor] = useState<DigiInvoice[] | null>(null);
   const [groupBySupplier, setGroupBySupplier] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -126,7 +159,12 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
   useEffect(() => {
     load();
+    // Alert delays: the defaults apply when they cannot be read
+    fetchTrackingSettings().then(setSettings).catch(() => {});
   }, [load]);
+
+  /** Reloads the list (parcel counters changed). */
+  const reloadInvoices = () => fetchDigiInvoices().then(setInvoices).catch((err) => setError(err.message));
 
   const handleSync = async () => {
     setSyncing(true);
@@ -170,48 +208,15 @@ export const DigiInvoicesView: React.FC<Props> = ({
   const replaceInvoice = (updated: DigiInvoice) =>
     setInvoices((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
 
-  const handleCreateShipment = async (inv: DigiInvoice) => {
-    setBusyId(inv.id);
-    setError(null);
-    try {
-      const { invoice, shipment } = await createShipmentFromInvoice(inv.id);
-      replaceInvoice(invoice);
-      onShipmentsChanged();
-      setMessage(`Expédition ${shipment.id} créée.`);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setBusyId(null);
-    }
+  const TRIAGE_DONE: Record<InvoiceTriage, string> = {
+    goods: 'classée en marchandises (suivi des colis)',
+    services: 'classée en services (pas de colis)',
+    to_sort: 'remise à trier',
   };
 
-  const handleAssign = async (inv: DigiInvoice, shipmentId: string | null) => {
-    const r = await assignInvoiceShipment(inv.id, shipmentId);
-    replaceInvoice(r.invoice);
-    setAttaching(null);
-    onShipmentsChanged();
-    setMessage(
-      shipmentId
-        ? `Facture ${inv.ref ?? ''} rattachée à l'expédition ${shipmentId}.`
-        : `Facture ${inv.ref ?? ''} détachée de ${r.previous_shipment_id}.`
-    );
-    const emptied = r.previous_shipment_empty ? r.previous_shipment_id : null;
-    if (emptied) {
-      if (
-        onDeleteShipment &&
-        window.confirm(`L'expédition ${emptied} n'a plus aucune facture. La supprimer ?`)
-      ) {
-        await onDeleteShipment(emptied);
-      } else if (!onDeleteShipment) {
-        setMessage(`Facture rattachée. L'expédition ${emptied} n'a plus de facture : demandez à Supply Chain de la supprimer si besoin.`);
-      }
-    }
-  };
-
-  const handleToggleServices = async (inv: DigiInvoice) => {
-    const toServices = !inv.no_shipment;
+  const handleTriage = async (inv: DigiInvoice, triage: InvoiceTriage) => {
     if (
-      toServices &&
+      triage === 'services' &&
       inv.shipment_id &&
       inv.shipment_exists &&
       !window.confirm(
@@ -223,19 +228,49 @@ export const DigiInvoicesView: React.FC<Props> = ({
     setBusyId(inv.id);
     setError(null);
     try {
-      const { invoice, detached_shipment_id } = await setInvoiceServices(inv.id, toServices);
+      const { invoice, detached_shipment_id } = await setInvoiceTriage(inv.id, triage);
       replaceInvoice(invoice);
       if (detached_shipment_id) onShipmentsChanged();
-      setMessage(
-        toServices
-          ? `Facture ${inv.ref ?? ''} classée en services (pas d'expédition).`
-          : `Facture ${inv.ref ?? ''} remise dans les factures à traiter.`
-      );
+      setMessage(`Facture ${inv.ref ?? ''} ${TRIAGE_DONE[triage]}.`);
     } catch (err: any) {
       setError(err.message);
     } finally {
       setBusyId(null);
     }
+  };
+
+  const handleValidate = async (inv: DigiInvoice) => {
+    setBusyId(inv.id);
+    setError(null);
+    try {
+      replaceInvoice(await setInvoiceValidation(inv.id, 'validated'));
+      setMessage(`Facture ${inv.ref ?? ''} validée : elle pourra entrer dans une expédition.`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleReject = async (list: DigiInvoice[]) => {
+    const reason = window.prompt(
+      `Motif du refus (${list.length} facture(s)) — il sera affiché à l'acheteur :`
+    )?.trim();
+    if (!reason) return;
+    const done = await runBulk('Refus', list, async (inv) => {
+      replaceInvoice(await setInvoiceValidation(inv.id, 'rejected', reason));
+    });
+    if (done > 0) setMessage(`${done} facture(s) refusée(s).`);
+  };
+
+  /** A parcel covers invoices of one supplier only. */
+  const openParcelForm = (list: DigiInvoice[]) => {
+    const names = new Set(list.map(supplierOf));
+    if (names.size > 1) {
+      setError('Un colis ne peut regrouper que des factures d\'un même fournisseur : sélectionnez un seul fournisseur.');
+      return;
+    }
+    setParcelFor(list);
   };
 
   const toggle = (id: string) =>
@@ -246,23 +281,25 @@ export const DigiInvoicesView: React.FC<Props> = ({
       return next;
     });
 
-  const shipmentById = useMemo(() => new Map(shipments.map((s) => [s.id, s])), [shipments]);
+  const isDeletable = (inv: DigiInvoice) => canDelete && (inv.source !== 'odoo' || inv.odoo_missing);
+  /** Sourcing corrects its "hors DIGI" invoices until they are validated. */
+  const canEditDirect = (inv: DigiInvoice) => isSupplyChain || inv.validation_status !== 'validated';
 
-  /** none = no shipment yet; untracked = shipment without tracking / LTA number. */
-  const trackingState = (inv: DigiInvoice): 'none' | 'untracked' | 'tracked' => {
-    if (!(inv.shipment_id && inv.shipment_exists)) return 'none';
-    const s = shipmentById.get(inv.shipment_id);
-    return s && (s.tracking_no?.trim() || s.bl_awb?.trim()) ? 'tracked' : 'untracked';
+  const today = new Date().toISOString().slice(0, 10);
+  const isTriageLate = (inv: DigiInvoice) => {
+    const deadline = triageDeadline(inv.created_at, settings);
+    return deadline !== null && today > deadline;
   };
 
-  const canCreateShipment = (inv: DigiInvoice) =>
-    inv.has_items && !isServicesInvoice(inv) && !(inv.shipment_id && inv.shipment_exists);
-  const isDeletable = (inv: DigiInvoice) => canDelete && (inv.source !== 'odoo' || inv.odoo_missing);
-
   const sectionInvoices = useMemo(
-    () => invoices.filter((inv) => (section === 'services') === isServicesInvoice(inv)),
+    () => invoices.filter((inv) => sectionsOf(inv).includes(section)),
     [invoices, section]
   );
+  const sectionCounts = useMemo(() => {
+    const counts: Record<Section, number> = { to_sort: 0, goods: 0, services: 0, validation: 0 };
+    invoices.forEach((inv) => sectionsOf(inv).forEach((s) => counts[s]++));
+    return counts;
+  }, [invoices]);
 
   const suppliers = useMemo(
     () => Array.from(new Set<string>(sectionInvoices.map(supplierOf))).sort((a, b) => a.localeCompare(b, 'fr')),
@@ -274,12 +311,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return sectionInvoices.filter((inv) => {
       if (sourceFilter !== 'all' && inv.source !== sourceFilter) return false;
       if (supplierFilter !== 'all' && supplierOf(inv) !== supplierFilter) return false;
-      if (section === 'to_ship' && trackingFilter !== 'all') {
-        const state = trackingState(inv);
-        if (trackingFilter === 'no_shipment' && state !== 'none') return false;
-        if (trackingFilter === 'no_tracking' && state !== 'untracked') return false;
-        if (trackingFilter === 'tracked' && state !== 'tracked') return false;
-      }
+      if (section === 'goods' && parcelFilter !== 'all' && parcelState(inv) !== parcelFilter) return false;
       if (!q) return true;
       return [
         inv.supplier_name,
@@ -288,10 +320,11 @@ export const DigiInvoicesView: React.FC<Props> = ({
         inv.amazon_order_ref,
         inv.sale_move_ref,
         inv.odoo_move_name,
+        inv.buyer,
         ...inv.lines.map((l) => l.name),
       ].some((v) => v && v.toLowerCase().includes(q));
     });
-  }, [sectionInvoices, search, sourceFilter, supplierFilter, trackingFilter, section, shipmentById]);
+  }, [sectionInvoices, search, sourceFilter, supplierFilter, parcelFilter, section]);
 
   const groups = useMemo(() => {
     const bySupplier = new Map<string, DigiInvoice[]>();
@@ -302,8 +335,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return Array.from(bySupplier.entries()).sort(([a], [b]) => a.localeCompare(b, 'fr'));
   }, [filtered]);
 
-  const servicesCount = useMemo(() => invoices.filter(isServicesInvoice).length, [invoices]);
-
   // A supplier picked in one tab may not exist in the other
   useEffect(() => {
     if (supplierFilter !== 'all' && !suppliers.includes(supplierFilter)) setSupplierFilter('all');
@@ -313,7 +344,10 @@ export const DigiInvoicesView: React.FC<Props> = ({
   useEffect(() => setSelected(new Set()), [section]);
 
   const selectedInvoices = useMemo(() => filtered.filter((i) => selected.has(i.id)), [filtered, selected]);
-  const selectedTotal = selectedInvoices.reduce((sum, i) => sum + (i.amount_total || 0), 0);
+  // In EUR: USD amounts converted with the rate of the settings (left out without rate)
+  const eurTotal = (list: DigiInvoice[]) =>
+    list.reduce((sum, i) => sum + (amountInEur(i.amount_total, i.currency, settings?.usd_eur_rate ?? null) ?? 0), 0);
+  const selectedTotal = eurTotal(selectedInvoices);
 
   const setSelection = (ids: string[], on: boolean) =>
     setSelected((prev) => {
@@ -327,9 +361,13 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return n === 0 ? false : n === list.length ? true : 'mixed';
   };
 
-  const toShipNow = selectedInvoices.filter(canCreateShipment);
-  const toServices = selectedInvoices.filter((i) => !i.no_shipment && section === 'to_ship');
-  const backToShip = selectedInvoices.filter((i) => i.no_shipment);
+  const toGoods = selectedInvoices.filter((i) => i.is_digi && i.triage !== 'goods' && !isServicesInvoice(i));
+  const toServices = selectedInvoices.filter((i) => i.is_digi && i.triage !== 'services');
+  // Fee-only invoices stay in services: only the ones sorted by hand go back
+  const backToSort = selectedInvoices.filter((i) => i.is_digi && i.triage !== 'to_sort' && (i.triage !== 'services' || i.has_items));
+  const forParcel = selectedInvoices.filter((i) => isGoodsInvoice(i));
+  const toValidate = selectedInvoices.filter((i) => i.validation_status === 'pending');
+  const toReject = selectedInvoices.filter((i) => !i.is_digi && i.validation_status === 'pending');
   const toDelete = selectedInvoices.filter(isDeletable);
 
   /** Runs one request per invoice, in sequence, and reports what failed. */
@@ -360,78 +398,35 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return done;
   };
 
-  const handleBulkCreate = async () => {
-    if (!window.confirm(`Créer ${toShipNow.length} expédition(s), une par facture ?`)) return;
-    const created: string[] = [];
-    await runBulk('Création des expéditions', toShipNow, async (inv) => {
-      const { invoice, shipment } = await createShipmentFromInvoice(inv.id);
-      replaceInvoice(invoice);
-      created.push(shipment.id);
-    });
-    if (created.length > 0) {
-      onShipmentsChanged();
-      setMessage(`${created.length} expédition(s) créée(s) : ${created.join(', ')}.`);
-    }
-  };
-
-  const handleBulkGroup = async () => {
-    const supplierNames = Array.from(new Set(toShipNow.map(supplierOf)));
-    if (
-      !window.confirm(
-        `Créer UNE expédition pour ces ${toShipNow.length} factures (envoi groupé)` +
-          (supplierNames.length > 1 ? `, de ${supplierNames.length} fournisseurs différents` : '') +
-          ' ?'
-      )
-    ) {
-      return;
-    }
-    const [first, ...others] = toShipNow;
-    setError(null);
-    setMessage(null);
-    setBulkProgress('Envoi groupé : création de l\'expédition…');
-    let shipmentId: string;
-    try {
-      const { invoice, shipment } = await createShipmentFromInvoice(first.id);
-      replaceInvoice(invoice);
-      setSelection([first.id], false);
-      shipmentId = shipment.id;
-    } catch (err: any) {
-      setBulkProgress(null);
-      setError(err.message);
-      return;
-    }
-    const attached = await runBulk('Envoi groupé : rattachement', others, async (inv) => {
-      const r = await assignInvoiceShipment(inv.id, shipmentId);
-      replaceInvoice(r.invoice);
-    });
-    onShipmentsChanged();
-    setMessage(`Expédition ${shipmentId} créée avec ${attached + 1} facture(s).`);
-  };
-
-  const handleBulkServices = async (noShipment: boolean) => {
-    const list = noShipment ? toServices : backToShip;
+  const handleBulkTriage = async (triage: InvoiceTriage) => {
+    const list = triage === 'goods' ? toGoods : triage === 'services' ? toServices : backToSort;
     const withShipment = list.filter((i) => i.shipment_id && i.shipment_exists);
-    const question = noShipment
-      ? `Classer ${list.length} facture(s) en services (pas d'expédition) ?` +
-        (withShipment.length > 0
-          ? ` ${withShipment.length} seront détachées de leur expédition, qui reste à supprimer si elle n'a plus lieu d'être.`
-          : '')
-      : `Remettre ${list.length} facture(s) dans les factures à traiter ?`;
+    const question =
+      triage === 'services'
+        ? `Classer ${list.length} facture(s) en services (pas de colis) ?` +
+          (withShipment.length > 0
+            ? ` ${withShipment.length} seront détachées de leur expédition, qui reste à supprimer si elle n'a plus lieu d'être.`
+            : '')
+        : triage === 'goods'
+        ? `Classer ${list.length} facture(s) en marchandises ? Leurs colis seront suivis jusqu'à Orly (alertes de perte).`
+        : `Remettre ${list.length} facture(s) à trier ?`;
     if (!window.confirm(question)) return;
     let detached = false;
-    const done = await runBulk(noShipment ? 'Classement en services' : 'Remise à traiter', list, async (inv) => {
-      const r = await setInvoiceServices(inv.id, noShipment);
+    const done = await runBulk('Tri', list, async (inv) => {
+      const r = await setInvoiceTriage(inv.id, triage);
       replaceInvoice(r.invoice);
       if (r.detached_shipment_id) detached = true;
     });
     if (detached) onShipmentsChanged();
-    if (done > 0) {
-      setMessage(
-        noShipment
-          ? `${done} facture(s) classée(s) en services.`
-          : `${done} facture(s) remise(s) dans les factures à traiter.`
-      );
-    }
+    if (done > 0) setMessage(`${done} facture(s) traitée(s) : ${TRIAGE_DONE[triage]}.`);
+  };
+
+  const handleBulkValidate = async () => {
+    if (!window.confirm(`Valider ${toValidate.length} facture(s) hors DIGI ?`)) return;
+    const done = await runBulk('Validation', toValidate, async (inv) => {
+      replaceInvoice(await setInvoiceValidation(inv.id, 'validated'));
+    });
+    if (done > 0) setMessage(`${done} facture(s) validée(s).`);
   };
 
   const handleBulkDelete = async () => {
@@ -445,6 +440,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
   const lastSync = config?.last_sync ?? null;
 
+  /** Orly → Mada shipment of the invoice, if any. */
   const renderShipmentCell = (inv: DigiInvoice) => {
     if (inv.shipment_id && inv.shipment_exists) {
       return (
@@ -454,37 +450,35 @@ export const DigiInvoicesView: React.FC<Props> = ({
           title={inv.shipment_global_status || undefined}
         >
           {inv.shipment_id}
-          <span className="ml-1 font-sans text-[10px] font-normal text-slate-400">{inv.shipment_mode}</span>
-          {trackingState(inv) === 'untracked' && (
-            <span className="mt-0.5 block w-fit rounded-full bg-amber-100 px-1.5 py-0.5 font-sans text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-              Sans suivi ni LTA / BL
-            </span>
-          )}
+          <span className="ml-1 font-sans text-[10px] font-normal text-slate-400">{inv.shipment_global_status}</span>
         </button>
       );
     }
-    if (isServicesInvoice(inv)) return <span className="text-slate-400">Service</span>;
-    if (!inv.has_items) return <span className="text-slate-400">—</span>;
-    return createShipmentButton(inv);
+    return <span className="text-slate-400">—</span>;
   };
 
-  /** Creates the shipment of an invoice that has none (old, draft, deleted, detached). */
-  const createShipmentButton = (inv: DigiInvoice) => {
-    const isDraft = Boolean(inv.odoo_state && inv.odoo_state !== 'posted');
+  /** Parcels received at Orly / expected, for a tracked invoice. */
+  const renderParcelsCell = (inv: DigiInvoice) => {
+    if (isServicesInvoice(inv)) return <span className="text-slate-400">Service</span>;
+    if (!isGoodsInvoice(inv)) return <span className="text-slate-400">—</span>;
+    if (inv.parcel_count === 0) {
+      return (
+        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+          Sans colis
+        </span>
+      );
+    }
+    const received = isInvoiceReceived(inv);
     return (
-      <button
-        onClick={() => handleCreateShipment(inv)}
-        disabled={busyId === inv.id}
-        title={
-          isDraft
-            ? 'Brouillon Odoo : vous pouvez déjà créer l\'expédition si la marchandise est commandée.'
-            : 'Créer une expédition à partir de cette facture'
-        }
-        className="inline-flex items-center gap-1 whitespace-nowrap rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white shadow-sm hover:bg-[#522870] disabled:opacity-50"
+      <span
+        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+          received
+            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+            : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+        }`}
       >
-        {busyId === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <PlusCircle className="h-3 w-3" />}
-        {inv.shipment_id ? 'Recréer l\'expédition' : 'Créer l\'expédition'}
-      </button>
+        {received ? 'Reçue à Orly' : `${inv.parcel_received_count} / ${inv.parcel_count} reçu(s)`}
+      </span>
     );
   };
 
@@ -533,20 +527,44 @@ export const DigiInvoicesView: React.FC<Props> = ({
             {inv.odoo_move_name && (
               <div className="text-[10px] text-slate-400">Odoo : {inv.odoo_move_name}</div>
             )}
+            {inv.buyer && <div className="text-[10px] text-slate-400">Acheteur : {inv.buyer}</div>}
           </td>
-          <td className="px-3 py-3">{formatDate(inv.invoice_date)}</td>
+          <td className="px-3 py-3">
+            {formatDate(inv.invoice_date)}
+            {section === 'to_sort' && isTriageLate(inv) && (
+              <span
+                title={`Arrivée le ${formatDate(inv.created_at)} : à trier sous ${settings?.triage_alert_days ?? 3} jours`}
+                className="mt-0.5 block w-fit rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+              >
+                Tri en retard
+              </span>
+            )}
+          </td>
           <td className="px-3 py-3 font-mono">{inv.amazon_order_ref || '—'}</td>
           <td className="px-3 py-3">{inv.sale_move_ref || '—'}</td>
+          <td className="px-3 py-3">{renderParcelsCell(inv)}</td>
           <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
             {renderShipmentCell(inv)}
           </td>
-          <td className="px-3 py-3 text-right">{inv.lines.length}</td>
-          <td className="px-3 py-3 text-right font-semibold">{formatAmount(inv.amount_total)}</td>
+          <td className="px-3 py-3 text-right">{inv.is_digi ? inv.lines.length : '—'}</td>
+          <td className="px-3 py-3 text-right font-semibold">{formatInvoiceAmount(inv)}</td>
           <td className="px-3 py-3">
             <div className="flex flex-wrap gap-1">
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${SOURCE_BADGES[inv.source]}`}>
-                {SOURCE_LABELS[inv.source]}
+                {inv.is_digi ? SOURCE_LABELS[inv.source] : 'Hors DIGI'}
               </span>
+              {!inv.is_digi && inv.validation_status !== 'validated' && (
+                <span
+                  title={inv.rejection_reason || undefined}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    inv.validation_status === 'rejected'
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                      : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                  }`}
+                >
+                  {VALIDATION_STATUS_LABELS[inv.validation_status]}
+                </span>
+              )}
               {inv.odoo_state && inv.odoo_state !== 'posted' && (
                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                   {ODOO_STATE_LABELS[inv.odoo_state] || inv.odoo_state}
@@ -564,26 +582,67 @@ export const DigiInvoicesView: React.FC<Props> = ({
           </td>
           <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-end gap-1">
-              {inv.has_items && !inv.no_shipment && (
+              {isSupplyChain && inv.validation_status === 'pending' && (
+                <>
+                  <button
+                    onClick={() => handleValidate(inv)}
+                    disabled={busyId === inv.id}
+                    title="Valider la facture hors DIGI"
+                    className="rounded-lg p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:hover:bg-emerald-950/40"
+                  >
+                    <ShieldCheck className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => handleReject([inv])}
+                    title="Refuser (avec motif)"
+                    className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                  >
+                    <ShieldX className="h-4 w-4" />
+                  </button>
+                </>
+              )}
+              {isGoodsInvoice(inv) && (
                 <button
-                  onClick={() => setAttaching(inv)}
-                  title="Rattacher à une expédition existante (envoi groupé)"
+                  onClick={() => openParcelForm([inv])}
+                  title="Ajouter un colis (n° de suivi)"
                   className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
                 >
-                  <Link2 className="h-4 w-4" />
+                  <Package className="h-4 w-4" />
                 </button>
               )}
-              <button
-                onClick={() => handleToggleServices(inv)}
-                disabled={busyId === inv.id}
-                title={inv.no_shipment ? 'Remettre dans les factures à traiter' : 'Classer en services (pas d\'expédition)'}
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
-              >
-                {inv.no_shipment ? <PackageCheck className="h-4 w-4" /> : <Wrench className="h-4 w-4" />}
-              </button>
-              {editable && (
+              {inv.is_digi && inv.triage !== 'goods' && !isServicesInvoice(inv) && (
                 <button
-                  onClick={() => setEditing(inv)}
+                  onClick={() => handleTriage(inv, 'goods')}
+                  disabled={busyId === inv.id}
+                  title="Marchandises : suivre ses colis jusqu'à Orly"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                >
+                  <PackageCheck className="h-4 w-4" />
+                </button>
+              )}
+              {inv.is_digi && inv.triage !== 'services' && (
+                <button
+                  onClick={() => handleTriage(inv, 'services')}
+                  disabled={busyId === inv.id}
+                  title="Services : pas de colis"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                >
+                  <Wrench className="h-4 w-4" />
+                </button>
+              )}
+              {inv.is_digi && inv.triage !== 'to_sort' && (inv.triage !== 'services' || inv.has_items) && (
+                <button
+                  onClick={() => handleTriage(inv, 'to_sort')}
+                  disabled={busyId === inv.id}
+                  title="Remettre à trier"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                >
+                  <Undo2 className="h-4 w-4" />
+                </button>
+              )}
+              {editable && (inv.is_digi || canEditDirect(inv)) && (
+                <button
+                  onClick={() => (inv.is_digi ? setEditing(inv) : setEditingDirect(inv))}
                   title="Modifier"
                   className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
                 >
@@ -605,24 +664,43 @@ export const DigiInvoicesView: React.FC<Props> = ({
         {isOpen && (
           <tr className="bg-slate-50/60 dark:bg-slate-900/40">
             <td colSpan={2} />
-            <td colSpan={10} className="px-3 py-3">
-              {inv.has_items && !isServicesInvoice(inv) && !(inv.shipment_id && inv.shipment_exists) && (
-                <div className="mb-3 flex items-center gap-3 rounded-xl border border-dashed border-slate-300 bg-white p-3 dark:border-slate-600 dark:bg-slate-800">
-                  <span className="flex-1 text-slate-600 dark:text-slate-300">
-                    {inv.shipment_id
-                      ? `L'expédition ${inv.shipment_id} de cette facture a été supprimée.`
-                      : 'Cette facture n\'a pas encore d\'expédition.'}
-                  </span>
-                  {createShipmentButton(inv)}
-                  <button
-                    onClick={() => setAttaching(inv)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#643288] hover:text-[#643288] dark:border-slate-600 dark:text-slate-200"
-                  >
-                    <Link2 className="h-3 w-3" /> Rattacher à une expédition existante
-                  </button>
-                </div>
+            <td colSpan={11} className="px-3 py-3">
+              {isGoodsInvoice(inv) && (
+                <InvoiceParcelsPanel
+                  invoice={inv}
+                  canEdit
+                  isSupplyChain={isSupplyChain}
+                  settings={settings}
+                  onChanged={reloadInvoices}
+                />
               )}
-              {inv.lines.length === 0 ? (
+              {!inv.is_digi ? (
+                <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-4 dark:border-slate-700 dark:bg-slate-800">
+                  <div>
+                    <div className="text-[10px] uppercase text-slate-500">Montant</div>
+                    <div className="font-semibold">{formatAmount(inv.amount_total)} {inv.currency}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase text-slate-500">Acheteur / demandeur</div>
+                    <div className="font-semibold">{inv.buyer || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase text-slate-500">Validation Supply Chain</div>
+                    <div className="font-semibold">{VALIDATION_STATUS_LABELS[inv.validation_status]}</div>
+                    {inv.validated_by_email && (
+                      <div className="text-[10px] text-slate-400">
+                        {inv.validated_by_email} le {formatDate(inv.validated_at)}
+                      </div>
+                    )}
+                  </div>
+                  {inv.rejection_reason && (
+                    <div>
+                      <div className="text-[10px] uppercase text-slate-500">Motif du refus</div>
+                      <div className="font-semibold text-rose-600">{inv.rejection_reason}</div>
+                    </div>
+                  )}
+                </div>
+              ) : inv.lines.length === 0 ? (
                 <p className="text-slate-500">Aucune ligne de facture.</p>
               ) : (
                 <table className="w-full rounded-xl border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-800">
@@ -676,14 +754,14 @@ export const DigiInvoicesView: React.FC<Props> = ({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900 dark:text-white">
-            <ReceiptText className="h-6 w-6 text-[#643288]" /> Factures DIGI
+            <ReceiptText className="h-6 w-6 text-[#643288]" /> Factures fournisseurs
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Factures DIGI LOGISTIC dont l'entité de destination est <strong>{destination}</strong>, avec leurs lignes de
-            produits. Sources : Odoo, import Excel, saisie manuelle. Aucune expédition n'est créée automatiquement, car une
-            facture peut ne contenir que des services : cochez les factures de marchandises puis « Créer les
-            expéditions », et classez les autres en services. Le suivi des colis se fait ensuite dans Suivi Aérien /
-            Maritime.
+            Factures DIGI LOGISTIC à destination de <strong>{destination}</strong> (Odoo, import Excel, saisie) et
+            factures hors DIGI. Triez chaque facture DIGI : <strong>marchandises</strong> (ses colis sont suivis jusqu'à
+            Orly) ou <strong>services</strong> (pas de colis). Ajoutez ensuite les colis (n° de suivi) : une facture est
+            reçue à Orly quand tous ses colis sont confirmés par Antoine. Les factures hors DIGI saisies par le Sourcing
+            sont validées par la Supply Chain.
           </p>
           {config?.odoo_configured && (
             <p className="mt-0.5 text-[11px] text-slate-400">
@@ -726,7 +804,13 @@ export const DigiInvoicesView: React.FC<Props> = ({
             onClick={() => setEditing('new')}
             className={`${button} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
           >
-            <FilePlus2 className="h-4 w-4" /> Saisie manuelle
+            <FilePlus2 className="h-4 w-4" /> Saisie DIGI
+          </button>
+          <button
+            onClick={() => setEditingDirect('new')}
+            className={`${button} border border-[#643288] bg-white text-[#643288] hover:bg-purple-50 dark:bg-slate-800 dark:text-purple-300`}
+          >
+            <FileText className="h-4 w-4" /> Facture hors DIGI
           </button>
         </div>
       </div>
@@ -758,10 +842,12 @@ export const DigiInvoicesView: React.FC<Props> = ({
       <div className="flex gap-1 rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
         {(
           [
-            ['to_ship', 'À traiter', invoices.length - servicesCount],
-            ['services', 'Services (non expédiés)', servicesCount],
-          ] as [Section, string, number][]
-        ).map(([key, label, count]) => (
+            ['to_sort', 'À trier'],
+            ['goods', 'Marchandises (suivi colis)'],
+            ['services', 'Services'],
+            ['validation', 'Hors DIGI à valider'],
+          ] as [Section, string][]
+        ).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setSection(key)}
@@ -771,16 +857,22 @@ export const DigiInvoicesView: React.FC<Props> = ({
                 : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
             }`}
           >
-            {label} <span className="ml-1 text-slate-400">{count}</span>
+            {label} <span className="ml-1 text-slate-400">{sectionCounts[key]}</span>
           </button>
         ))}
       </div>
-      {section === 'services' && (
-        <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
-          Factures sans article à expédier (frais DEEE, RCP, port… ou classées à la main) : traitement manuel, aucune
-          expédition n'est créée.
-        </p>
-      )}
+      <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
+        {section === 'to_sort' &&
+          `Factures DIGI pas encore triées : aucune alerte de perte tant qu'elles ne sont pas classées en marchandises. Signalées « Tri en retard » après ${settings?.triage_alert_days ?? 3} jours.`}
+        {section === 'goods' &&
+          'Factures dont les colis sont suivis jusqu\'à Orly (alerte de perte si un colis n\'est pas confirmé à temps). Les factures hors DIGI à valider y figurent aussi : leurs colis peuvent déjà être suivis.'}
+        {section === 'services' &&
+          'Factures sans article à expédier (frais DEEE, RCP, port… ou classées à la main) : pas de colis, traitement manuel.'}
+        {section === 'validation' &&
+          (isSupplyChain
+            ? 'Factures hors DIGI saisies par le Sourcing : validez-les pour qu\'elles puissent entrer dans une expédition, ou refusez-les avec un motif.'
+            : 'Vos factures hors DIGI en attente de la Supply Chain, ou refusées (motif affiché) : corrigez-les pour les renvoyer en validation.')}
+      </p>
 
       {/* Filters */}
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:flex-wrap lg:items-center dark:border-slate-800 dark:bg-slate-800">
@@ -806,16 +898,16 @@ export const DigiInvoicesView: React.FC<Props> = ({
             </option>
           ))}
         </select>
-        {section === 'to_ship' && (
+        {section === 'goods' && (
           <select
-            value={trackingFilter}
-            onChange={(e) => setTrackingFilter(e.target.value as TrackingFilter)}
+            value={parcelFilter}
+            onChange={(e) => setParcelFilter(e.target.value as ParcelFilter)}
             className={selectClass}
-            title="Où en est l'expédition de la facture"
+            title="Où en sont les colis de la facture"
           >
-            {(Object.keys(TRACKING_FILTER_LABELS) as TrackingFilter[]).map((k) => (
+            {(Object.keys(PARCEL_FILTER_LABELS) as ParcelFilter[]).map((k) => (
               <option key={k} value={k}>
-                {TRACKING_FILTER_LABELS[k]}
+                {PARCEL_FILTER_LABELS[k]}
               </option>
             ))}
           </select>
@@ -869,43 +961,63 @@ export const DigiInvoicesView: React.FC<Props> = ({
           </div>
           {!bulkProgress && (
             <div className="flex flex-wrap gap-2">
-              {section === 'to_ship' && (
-                <>
-                  <button
-                    onClick={handleBulkCreate}
-                    disabled={toShipNow.length === 0}
-                    title="Une expédition par facture (factures avec articles et sans expédition)"
-                    className={`${bulkButton} bg-[#643288] text-white hover:bg-[#522870]`}
-                  >
-                    <PlusCircle className="h-3.5 w-3.5" /> Créer les expéditions ({toShipNow.length})
-                  </button>
-                  <button
-                    onClick={handleBulkGroup}
-                    disabled={toShipNow.length < 2}
-                    title="Une seule expédition pour toutes les factures sélectionnées sans expédition (envoi groupé)"
-                    className={`${bulkButton} border border-[#643288] bg-white text-[#643288] hover:bg-purple-50 dark:bg-slate-800 dark:text-purple-300`}
-                  >
-                    <Layers className="h-3.5 w-3.5" /> Grouper en une expédition ({toShipNow.length})
-                  </button>
-                  <button
-                    onClick={() => handleBulkServices(true)}
-                    disabled={toServices.length === 0}
-                    title="Factures de services : aucune expédition"
-                    className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
-                  >
-                    <Wrench className="h-3.5 w-3.5" /> Pas d'expédition — services ({toServices.length})
-                  </button>
-                </>
-              )}
-              {section === 'services' && (
+              {section === 'to_sort' && (
                 <button
-                  onClick={() => handleBulkServices(false)}
-                  disabled={backToShip.length === 0}
-                  title="Seules les factures classées à la main peuvent revenir ; celles qui ne contiennent que des frais restent en services."
+                  onClick={() => handleBulkTriage('goods')}
+                  disabled={toGoods.length === 0}
+                  title="Marchandises : leurs colis sont suivis jusqu'à Orly"
+                  className={`${bulkButton} bg-[#643288] text-white hover:bg-[#522870]`}
+                >
+                  <PackageCheck className="h-3.5 w-3.5" /> Marchandises ({toGoods.length})
+                </button>
+              )}
+              {section === 'goods' && (
+                <button
+                  onClick={() => openParcelForm(forParcel)}
+                  disabled={forParcel.length === 0}
+                  title="Un colis (n° de suivi) pour les factures sélectionnées d'un même fournisseur"
+                  className={`${bulkButton} bg-[#643288] text-white hover:bg-[#522870]`}
+                >
+                  <Package className="h-3.5 w-3.5" /> Ajouter un colis ({forParcel.length})
+                </button>
+              )}
+              {(section === 'to_sort' || section === 'goods') && (
+                <button
+                  onClick={() => handleBulkTriage('services')}
+                  disabled={toServices.length === 0}
+                  title="Services : pas de colis"
                   className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
                 >
-                  <PackageCheck className="h-3.5 w-3.5" /> Remettre à traiter ({backToShip.length})
+                  <Wrench className="h-3.5 w-3.5" /> Services ({toServices.length})
                 </button>
+              )}
+              {(section === 'goods' || section === 'services') && (
+                <button
+                  onClick={() => handleBulkTriage('to_sort')}
+                  disabled={backToSort.length === 0}
+                  title="Seules les factures DIGI triées à la main reviennent ; celles qui ne contiennent que des frais restent en services."
+                  className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
+                >
+                  <Undo2 className="h-3.5 w-3.5" /> Remettre à trier ({backToSort.length})
+                </button>
+              )}
+              {section === 'validation' && isSupplyChain && (
+                <>
+                  <button
+                    onClick={handleBulkValidate}
+                    disabled={toValidate.length === 0}
+                    className={`${bulkButton} bg-emerald-600 text-white hover:bg-emerald-700`}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" /> Valider ({toValidate.length})
+                  </button>
+                  <button
+                    onClick={() => handleReject(toReject)}
+                    disabled={toReject.length === 0}
+                    className={`${bulkButton} border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-800 dark:text-rose-300`}
+                  >
+                    <ShieldX className="h-3.5 w-3.5" /> Refuser ({toReject.length})
+                  </button>
+                </>
               )}
               {canDelete && (
                 <button
@@ -941,6 +1053,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                 <th className="px-3 py-3 font-semibold">Date de facturation</th>
                 <th className="px-3 py-3 font-semibold">Commande Amazon</th>
                 <th className="px-3 py-3 font-semibold">Facture vente</th>
+                <th className="px-3 py-3 font-semibold">Colis</th>
                 <th className="px-3 py-3 font-semibold">Expédition</th>
                 <th className="px-3 py-3 text-right font-semibold">Lignes</th>
                 <th className="px-3 py-3 text-right font-semibold">Total</th>
@@ -951,13 +1064,13 @@ export const DigiInvoicesView: React.FC<Props> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {loading ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                     <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                     {invoices.length === 0
                       ? 'Aucune facture DIGI enregistrée : synchronisez Odoo, importez un fichier Excel ou saisissez une facture.'
                       : 'Aucune facture ne correspond à vos filtres.'}
@@ -967,7 +1080,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                 groups.map(([supplier, list]) => {
                   const collapsed = collapsedGroups.has(supplier);
                   const state = selectionState(list);
-                  const withoutShipment = list.filter(canCreateShipment).length;
+                  const withoutParcel = list.filter((i) => isGoodsInvoice(i) && i.parcel_count === 0).length;
                   return (
                     <React.Fragment key={`group-${supplier}`}>
                       <tr
@@ -991,19 +1104,19 @@ export const DigiInvoicesView: React.FC<Props> = ({
                         <td className="px-3 py-2 text-slate-400">
                           {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                         </td>
-                        <td colSpan={7} className="px-3 py-2 font-extrabold text-slate-900 dark:text-white">
+                        <td colSpan={8} className="px-3 py-2 font-extrabold text-slate-900 dark:text-white">
                           {supplier}
                           <span className="ml-2 text-[11px] font-semibold text-slate-500">
                             {list.length} facture(s)
-                            {section === 'to_ship' && withoutShipment > 0 && (
+                            {section === 'goods' && withoutParcel > 0 && (
                               <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                                {withoutShipment} sans expédition
+                                {withoutParcel} sans colis
                               </span>
                             )}
                           </span>
                         </td>
                         <td className="px-3 py-2 text-right font-bold text-slate-900 dark:text-white">
-                          {formatAmount(list.reduce((sum, i) => sum + (i.amount_total || 0), 0))}
+                          {formatAmount(eurTotal(list))}
                         </td>
                         <td colSpan={2} />
                       </tr>
@@ -1034,12 +1147,43 @@ export const DigiInvoicesView: React.FC<Props> = ({
         />
       )}
 
-      {attaching && (
-        <AttachShipmentModal
-          invoice={attaching}
-          shipments={shipments}
-          onClose={() => setAttaching(null)}
-          onConfirm={(shipmentId) => handleAssign(attaching, shipmentId)}
+      {editingDirect && (
+        <DirectInvoiceFormModal
+          invoice={editingDirect === 'new' ? null : editingDirect}
+          isSupplyChain={isSupplyChain}
+          onClose={() => setEditingDirect(null)}
+          onSaved={(saved) => {
+            setInvoices((prev) =>
+              prev.some((i) => i.id === saved.id) ? prev.map((i) => (i.id === saved.id ? saved : i)) : [saved, ...prev]
+            );
+            setMessage(
+              saved.validation_status === 'pending'
+                ? `Facture ${saved.ref ?? ''} enregistrée : en attente de validation par la Supply Chain.`
+                : `Facture ${saved.ref ?? ''} enregistrée.`
+            );
+            setEditingDirect(null);
+          }}
+        />
+      )}
+
+      {parcelFor && (
+        <ParcelFormModal
+          invoices={parcelFor}
+          canCreateCarrier={isSupplyChain}
+          onClose={() => setParcelFor(null)}
+          onSaved={(parcel, existed) => {
+            setParcelFor(null);
+            setSelection(
+              parcelFor.map((i) => i.id),
+              false
+            );
+            setMessage(
+              existed
+                ? `Le colis ${parcel.tracking_number} existait déjà : les factures y sont rattachées.`
+                : `Colis ${parcel.tracking_number || 'sans n° de suivi'} ajouté à ${parcelFor.length} facture(s).`
+            );
+            reloadInvoices();
+          }}
         />
       )}
 
