@@ -15,15 +15,16 @@ import {
   Save,
   Download,
   Trash2,
-  ReceiptText,
   Warehouse,
   Loader2,
 } from 'lucide-react';
-import { Shipment, GlobalStatus, AntoineStatus, shipmentValue, ANTOINE_STATUSES, ANTOINE_STATUS_LABELS } from '../types';
+import { Shipment, GlobalStatus, shipmentValue } from '../types';
+import { SHIPMENT_STATUSES, applyAutomaticShipmentStatus } from '../lib/parcelTracking';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { TrackingPanel } from './TrackingPanel';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
-import { DigiInvoice, fetchShipmentInvoices, formatAmount, formatDate, formatQuantity } from './digiApi';
+import { DigiInvoice, fetchShipmentInvoices, formatDate } from './digiApi';
+import { ShipmentContentsPanel } from './ShipmentContentsPanel';
 
 interface ShipmentDetailModalProps {
   shipment: Shipment | null;
@@ -32,16 +33,15 @@ interface ShipmentDetailModalProps {
   onSave: (updatedShipment: Shipment) => void;
   onDelete?: (shipmentId: string) => void;
   onDispatchGoogleChat: (message: string, space?: string) => Promise<void>;
+  /** Supply Chain: changes the invoices of the shipment, flags missing parcels. */
+  isSupplyChain?: boolean;
+  /** Every shipment (invoices of former shipments "to review" can be regrouped). */
+  shipments?: Shipment[];
+  /** Invoices / parcels changed; emptied = former shipments left without invoice. */
+  onContentsChanged?: (emptied: string[]) => void;
 }
 
-const GLOBAL_STATUSES: GlobalStatus[] = [
-  'Attente confirmation transitaire',
-  'En livraison vers Orly',
-  'Reçu et expédié',
-  'Bloqué douane',
-  'Perdu Orly',
-  'Livré entrepôt',
-];
+const GLOBAL_STATUSES: readonly GlobalStatus[] = SHIPMENT_STATUSES;
 const CUSTOMS_STATUSES: Shipment['customs_status'][] = ['Non Requis', 'En cours', 'Dédouané', 'Bloqué Douane'];
 
 const inputClass =
@@ -90,6 +90,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   onSave,
   onDelete,
   onDispatchGoogleChat,
+  isSupplyChain = false,
+  shipments = [],
+  onContentsChanged = (_emptied: string[]) => {},
 }) => {
   if (!shipment) return null;
 
@@ -107,12 +110,16 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
     setIsEditing(false);
   }, [shipment]);
 
-  useEffect(() => {
-    setInvoices(null);
+  const loadInvoices = () => {
     setInvoicesError(null);
     fetchShipmentInvoices(shipment.id)
       .then(setInvoices)
       .catch((err) => setInvoicesError(err.message));
+  };
+
+  useEffect(() => {
+    setInvoices(null);
+    loadInvoices();
   }, [shipment.id]);
 
   useEffect(() => {
@@ -132,13 +139,14 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
     invoices && invoices.some((i) => i.amount_total !== null)
       ? invoices.reduce((sum, i) => sum + (i.amount_total ?? 0), 0)
       : null;
-  const value = invoices && invoices.length > 0 ? invoicesTotal : shipmentValue(shipment) || null;
+  // The API total converts "hors DIGI" USD amounts; the local sum is a fallback
+  const value =
+    invoices && invoices.length > 0 ? shipment.digi_invoice_total ?? invoicesTotal : shipmentValue(shipment) || null;
 
   const handleSave = () => {
     const updated: Shipment = {
-      ...draft,
+      ...applyAutomaticShipmentStatus(draft),
       departure_madagascar: calculateDepartureMadagascar(draft.orly_scan_date),
-      orly_shipment_status: draft.orly_scan_date ? 'Scanné & Expédié Orly' : shipment.orly_shipment_status,
       updated_at: new Date().toISOString().split('T')[0],
     };
     onSave(updated);
@@ -304,6 +312,15 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             </div>
           )}
 
+          {shipment.needs_review && shipment.global_status === 'En préparation' && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
+              <strong>Expédition de l'ancien modèle, pas encore partie</strong> (ancien statut :{' '}
+              {shipment.legacy_global_status || 'non défini'}). Elle correspondait à un colis fournisseur : regroupez ses
+              factures dans l'expédition {isSea ? 'Rouen' : 'Orly'} → Mada de la semaine (« Nouvelle expédition »), puis
+              supprimez-la.
+            </div>
+          )}
+
           {/* 1. Main information */}
           <div className={cardClass}>
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
@@ -404,67 +421,24 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
           {/* 2. Carrier tracking, next to the carrier */}
           <TrackingPanel shipmentId={shipment.id} canEdit={canEdit} />
 
-          {/* 3. Invoice lines */}
-          <div className={cardClass}>
-            <SectionTitle icon={ReceiptText}>Lignes de facture</SectionTitle>
-            {invoicesError ? (
-              <p className="text-xs text-rose-600">{invoicesError}</p>
-            ) : invoices === null ? (
-              <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-            ) : invoices.length === 0 ? (
-              <p className="text-xs text-slate-400">Aucune facture DIGI rattachée à cette expédition.</p>
-            ) : (
-              <div className="space-y-4">
-                {invoices.map((inv) => (
-                  <div key={inv.id}>
-                    <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2 text-xs">
-                      <span className="font-semibold text-slate-800 dark:text-slate-100">
-                        Facture {inv.ref || inv.odoo_move_name || '—'}
-                        <span className="ml-2 font-normal text-slate-400">
-                          {[
-                            formatDate(inv.invoice_date),
-                            inv.amazon_order_ref && `Amazon ${inv.amazon_order_ref}`,
-                            inv.sale_move_ref && `Vente ${inv.sale_move_ref}`,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </span>
-                      </span>
-                      <span className="font-semibold text-slate-800 dark:text-slate-100">
-                        {formatAmount(inv.amount_total)} €
-                      </span>
-                    </div>
-                    <table className="w-full text-left text-xs">
-                      <thead className="text-[10px] uppercase tracking-wide text-slate-400">
-                        <tr className="border-b border-slate-100 dark:border-slate-700">
-                          <th className="py-1.5 pr-2 font-medium">Libellé</th>
-                          <th className="w-16 py-1.5 px-2 text-right font-medium">Qté</th>
-                          <th className="w-24 py-1.5 px-2 text-right font-medium">Prix</th>
-                          <th className="w-24 py-1.5 pl-2 text-right font-medium">Sous-total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
-                        {inv.lines.map((line) => (
-                          <tr key={line.id} className={line.is_service ? 'text-slate-400' : 'text-slate-700 dark:text-slate-200'}>
-                            <td className="py-1.5 pr-2">{line.name}</td>
-                            <td className="py-1.5 px-2 text-right">{formatQuantity(line.quantity)}</td>
-                            <td className="py-1.5 px-2 text-right">{formatAmount(line.price_unit)}</td>
-                            <td className="py-1.5 pl-2 text-right">{formatAmount(line.price_subtotal)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* 3. Invoices and parcels of the shipment */}
+          <ShipmentContentsPanel
+            shipment={shipment}
+            invoices={invoices}
+            invoicesError={invoicesError}
+            isSupplyChain={isSupplyChain}
+            shipments={shipments}
+            onChanged={(emptied) => {
+              loadInvoices();
+              onContentsChanged(emptied || []);
+            }}
+          />
 
           {/* 4. Orly → Madagascar */}
           <div className={cardClass}>
-            <SectionTitle icon={Warehouse}>Suivi Orly → Madagascar</SectionTitle>
+            <SectionTitle icon={Warehouse}>Suivi {isSea ? 'Rouen' : 'Orly'} → Madagascar</SectionTitle>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <Field label="Statut global">
+              <Field label="Statut de l'expédition">
                 {isEditing ? (
                   <select
                     value={draft.global_status}
@@ -480,32 +454,8 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 )}
               </Field>
 
-              <Field label="Statut du colis à Orly" hint="Antoine">
-                {isEditing ? (
-                  <select
-                    value={draft.antoine_status}
-                    onChange={(e) => set('antoine_status', e.target.value as AntoineStatus)}
-                    className={inputClass}
-                  >
-                    {/* A former status stays selectable on the shipment that has it */}
-                    {[
-                      ...(shipment.antoine_status && !ANTOINE_STATUSES.includes(shipment.antoine_status)
-                        ? [shipment.antoine_status]
-                        : []),
-                      ...ANTOINE_STATUSES,
-                    ].map((s) => (
-                      <option key={s} value={s}>
-                        {ANTOINE_STATUS_LABELS[s] || s}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  (view.antoine_status && (ANTOINE_STATUS_LABELS[view.antoine_status] || view.antoine_status)) || empty
-                )}
-              </Field>
-
               {!isSea && (
-                <Field label="Date de scan Orly">
+                <Field label="Remise / scan à Orly" hint="donne le départ du samedi">
                   {isEditing ? (
                     <input
                       type="date"

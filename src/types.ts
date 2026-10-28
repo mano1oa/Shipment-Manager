@@ -1,13 +1,13 @@
 export type TransportMode = 'Air' | 'Sea';
 
-export type GlobalStatus =
-  | 'Attente confirmation transitaire'
-  | 'Reçu et expédié'
-  | 'En livraison vers Orly'
-  | 'Bloqué douane'
-  | 'Perdu Orly'
-  | 'Livré entrepôt'
-  | 'Statut non défini';
+import type { ShipmentStatus } from './lib/parcelTracking.js';
+
+/**
+ * Status of a shipment (Orly → Mada). The statuses used before the parcel
+ * model are converted once (see convertLegacyShipmentStatus) and kept in
+ * `legacy_global_status`.
+ */
+export type GlobalStatus = ShipmentStatus;
 
 /** Status of the parcel at the Orly hub, as confirmed by Antoine (MIDEX). */
 export type AntoineStatus =
@@ -151,6 +151,10 @@ export interface Shipment {
   port_of_loading?: string; // Port de départ (ex: Le Havre / Rouen)
   port_of_discharge?: string; // Port de destination (ex: Port de Toamasina)
   transshipment_ports?: string[]; // Escales / Transbordement
+  /** Status before the parcel model ('' for shipments created since). */
+  legacy_global_status?: string | null;
+  /** Saved before the parcel model and not departed: to regroup or delete. */
+  needs_review?: boolean;
   // Computed by the API from the linked DIGI invoices (read only)
   digi_invoice_count?: number;
   digi_invoice_total?: number | null;
@@ -219,6 +223,6 @@ export interface MetricSummary {
   customsBlockedCount: number;
   pendingTransitConfirm: number;
   slaComplianceRate: number; // percentage
-  totalValueInTransit: number; // Sum cost_eur for "Reçu et expédié"
-  totalValuePerduOrly: number; // Sum cost_eur for "Perdu Orly"
+  totalValueInTransit: number; // Value of the shipments "Expédiée vers Mada"
+  totalValuePerduOrly: number; // Value of the shipments "Perdu Orly" before the parcel model
 }

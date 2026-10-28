@@ -61,7 +61,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'digi' as NavTab,
-      label: 'Factures DIGI',
+      label: 'Factures fournisseurs',
       icon: ReceiptText,
       badge: null,
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
@@ -94,7 +94,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       <div className="space-y-6">
         {/* New Shipment Button */}
-        {canEdit && (
+        {currentRole === 'supply_chain' && (
           <button
             id="sidebar-btn-new-shipment"
             onClick={onNewShipment}

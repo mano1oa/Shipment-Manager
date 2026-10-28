@@ -40,6 +40,7 @@ import {
   createCarrier,
   updateCarrier,
   getTrackingCodeForCarrierName,
+  resolveParcelCarrier,
   DuplicateReferenceError,
   CARRIER_TRANSPORT_MODES,
   CARRIER_NAME_MAX_LENGTH,
@@ -63,18 +64,76 @@ import {
   deleteDigiInvoice,
   importDigiInvoices,
   getLastOdooSyncRun,
-  getInvoiceForShipment,
   getInvoiceTotalsByShipment,
   listDigiInvoicesForShipment,
   setInvoiceNoShipment,
-  assignInvoiceToShipment,
   DuplicateDigiInvoiceError,
   ReadOnlyDigiInvoiceError,
+  WrongInvoiceKindError,
+  ensureDigiInvoicesSchema,
+  createDirectInvoice,
+  updateDirectInvoice,
+  setInvoiceValidation,
+  setInvoiceTriage,
 } from './db/digiInvoices.js';
+import { getTrackingSettings, validateTrackingSettings, saveTrackingSettings } from './db/settings.js';
+import {
+  isShipmentStatus,
+  applyAutomaticShipmentStatus,
+  validateParcelInput,
+  isParcelStatus,
+  isParcelDestination,
+  INVOICE_TRIAGES,
+} from './lib/parcelTracking.js';
+import {
+  listReceptionPoints,
+  getReceptionPoint,
+  createReceptionPoint,
+  listPointPhotos,
+  addPointPhoto,
+  linkPointPhoto,
+  deletePointPhoto,
+  setPointFolder,
+  getPhotoFile,
+} from './db/receptionPoints.js';
+import {
+  isPhotoStorageConfigured,
+  createPhotoFolder,
+  uploadPhoto,
+  downloadPhoto,
+  deletePhotoObject,
+  PHOTO_CONTENT_TYPES,
+  PHOTO_MAX_BYTES,
+} from './services/photoStorage.js';
+import { validateDirectInvoiceInput } from './lib/directInvoices.js';
+import type { ParcelInput } from './lib/parcelTracking.js';
+import {
+  listParcelsForInvoice,
+  listParcels,
+  listParcelsForShipment,
+  listGoodsInvoicesWithoutParcel,
+  listLateTriageInvoices,
+  markOverdueParcelsLost,
+  setParcelStatus,
+  listParcelPhotos,
+  deleteParcelPhoto,
+  getParcel,
+  createParcel,
+  updateParcel,
+  unlinkParcelInvoice,
+  commonSupplierOf,
+  DuplicateParcelError,
+} from './db/parcels.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
-import { createShipmentForInvoice } from './services/digiShipments.js';
+import {
+  createShipmentFromInvoices,
+  addInvoicesToShipment,
+  removeInvoiceFromShipment,
+  ShipmentGroupingError,
+} from './services/digiShipments.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
+import { runParcelLossCheck } from './services/parcelLossNotifier.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
 const ODOO_SYNC_TIME_BUDGET_MS = 240_000;
@@ -484,9 +543,20 @@ export function createServerApp(): Express {
       return res.status(401).json({ success: false, error: 'Unauthorized' });
     }
 
+    // Same daily run (8 h, Madagascar): lost parcels + Google Chat summary.
+    // Independent of Odoo: a failure here never blocks the invoices sync.
+    let parcelLosses: Record<string, unknown> | null = null;
+    try {
+      parcelLosses = await runParcelLossCheck();
+      console.log('[Parcels Cron]', JSON.stringify(parcelLosses));
+    } catch (err: any) {
+      console.error('[Parcels Cron] Failed:', err);
+      parcelLosses = { error: 'Parcel loss check failed' };
+    }
+
     if (!isOdooConfigured()) {
       console.log('[DIGI Cron] Odoo is not configured: nothing to sync.');
-      return res.json({ success: true, skipped: 'ODOO_NOT_CONFIGURED' });
+      return res.json({ success: true, skipped: 'ODOO_NOT_CONFIGURED', parcel_losses: parcelLosses });
     }
 
     try {
@@ -497,7 +567,7 @@ export function createServerApp(): Express {
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
       console.log('[DIGI Cron]', JSON.stringify(result));
-      return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result });
+      return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result, parcel_losses: parcelLosses });
     } catch (err: any) {
       console.error('[DIGI Cron] Failed:', err);
       return res.status(500).json({ success: false, error: 'DIGI invoices sync failed' });
@@ -1751,30 +1821,6 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Shipment by hand: old invoice, deleted shipment, Odoo draft…
-  app.post('/api/digi-invoices/:id/create-shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) {
-      return res.status(404).json({ success: false, error: 'Facture introuvable' });
-    }
-    try {
-      const invoice = await getInvoiceForShipment(req.params.id);
-      if (!invoice) {
-        return res.status(404).json({ success: false, error: 'Facture introuvable' });
-      }
-      const shipment = await createShipmentForInvoice(invoice, req.user);
-      if (!shipment) {
-        return res.status(409).json({
-          success: false,
-          error: 'Cette facture a déjà une expédition, ou elle est classée en services.',
-        });
-      }
-      return res.status(201).json({ success: true, shipment, invoice: await getDigiInvoice(req.params.id) });
-    } catch (err: any) {
-      console.error('[DIGI] Create shipment error:', err);
-      return res.status(500).json({ success: false, error: 'Impossible de créer l\'expédition' });
-    }
-  });
-
   // Services only (nothing to ship, manual work) ↔ to ship
   app.patch('/api/digi-invoices/:id/services', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) {
@@ -1807,34 +1853,73 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Group invoices: attach to an existing shipment, or detach (shipment_id null)
-  app.patch('/api/digi-invoices/:id/shipment', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) {
-      return res.status(404).json({ success: false, error: 'Facture introuvable' });
+  // ---------------------------------------------------------------------------
+  // Shipments Orly / Rouen → Mada: grouping of received invoices (Supply Chain)
+  // ---------------------------------------------------------------------------
+
+  const sendGroupingError = (res: any, err: any, fallback: string) => {
+    if (err instanceof ShipmentGroupingError) {
+      return res.status(err.status).json({ success: false, error: err.message, not_received: err.notReceived });
     }
-    const target = req.body?.shipment_id;
-    if (target !== null && (typeof target !== 'string' || !target.trim() || target.length > 50)) {
-      return res.status(400).json({ success: false, error: 'Expédition invalide.' });
-    }
+    console.error('[Shipments] Grouping error:', err);
+    return res.status(500).json({ success: false, error: fallback });
+  };
+
+  /**
+   * New shipment from invoices received at the hub, with its Réf FA DIGI-NXT.
+   * not_received in a 409 answer: invoices to confirm with force (exception).
+   */
+  app.post('/api/shipments/from-invoices', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const body = req.body || {};
+    if (!['Air', 'Sea'].includes(body.mode)) return res.status(400).json({ success: false, error: 'Mode invalide.' });
+    if (!isUuidList(body.invoice_ids)) return res.status(400).json({ success: false, error: 'Sélectionnez les factures.' });
+    const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
     try {
-      if (target !== null && !(await getShipmentByIdFromNeon(target))) {
-        return res.status(404).json({ success: false, error: 'Expédition introuvable' });
-      }
-      const outcome = await assignInvoiceToShipment(req.params.id, target);
-      if (!outcome) {
-        return res.status(404).json({ success: false, error: 'Facture introuvable' });
-      }
-      await writeAuditLog({
-        entityType: 'DIGI_INVOICE',
-        entityId: req.params.id,
-        action: target ? 'ATTACH_DIGI_INVOICE_TO_SHIPMENT' : 'DETACH_DIGI_INVOICE_FROM_SHIPMENT',
-        actor: req.user,
-        details: { from: outcome.previous_shipment_id, to: target },
-      });
-      return res.json({ success: true, ...outcome, invoice: await getDigiInvoice(req.params.id) });
+      const outcome = await createShipmentFromInvoices(
+        {
+          mode: body.mode,
+          ref_fa_digi_nxt: text(body.ref_fa_digi_nxt, 100),
+          bl_awb: text(body.bl_awb, 100),
+          carrier: text(body.carrier, 100),
+          remarks: text(body.remarks, 2000),
+          invoice_ids: body.invoice_ids,
+          force: body.force === true,
+        },
+        req.user
+      );
+      return res.status(201).json({ success: true, ...outcome });
     } catch (err: any) {
-      console.error('[DIGI] Assign shipment error:', err);
-      return res.status(500).json({ success: false, error: 'Impossible de rattacher la facture' });
+      return sendGroupingError(res, err, 'Impossible de créer l\'expédition');
+    }
+  });
+
+  app.post('/api/shipments/:id/invoices', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!isUuidList(req.body?.invoice_ids)) return res.status(400).json({ success: false, error: 'Sélectionnez les factures.' });
+    try {
+      const outcome = await addInvoicesToShipment(req.params.id, req.body.invoice_ids, req.body?.force === true, req.user);
+      return res.json({ success: true, ...outcome });
+    } catch (err: any) {
+      return sendGroupingError(res, err, 'Impossible d\'ajouter les factures');
+    }
+  });
+
+  app.delete('/api/shipments/:id/invoices/:invoiceId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.invoiceId)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    try {
+      const shipment = await removeInvoiceFromShipment(req.params.id, req.params.invoiceId, req.user);
+      return res.json({ success: true, shipment });
+    } catch (err: any) {
+      return sendGroupingError(res, err, 'Impossible de retirer la facture');
+    }
+  });
+
+  // Parcels of the shipment's invoices (arrival check in Madagascar)
+  app.get('/api/shipments/:id/parcels', async (req: any, res) => {
+    try {
+      return res.json({ success: true, parcels: await listParcelsForShipment(req.params.id) });
+    } catch (err: any) {
+      console.error('[Shipments] Parcels error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis de l\'expédition' });
     }
   });
 
@@ -1877,6 +1962,12 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           error: 'Cette facture vient d\'Odoo : elle se modifie dans Odoo, puis se resynchronise.',
         });
       }
+      if (err instanceof WrongInvoiceKindError) {
+        return res.status(409).json({
+          success: false,
+          error: 'Cette facture est une facture hors DIGI : elle se modifie depuis son propre formulaire.',
+        });
+      }
       if (err instanceof DuplicateDigiInvoiceError) {
         return res.status(409).json({
           success: false,
@@ -1885,6 +1976,667 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       console.error('[DIGI] Update invoice error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // "Hors DIGI" invoices, sort, validation
+  // ---------------------------------------------------------------------------
+
+  // Supply Chain's are validated at once; Sourcing's wait for Supply Chain
+  app.post('/api/digi-invoices/direct', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const { value, errors } = validateDirectInvoiceInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    const validated = req.user.role === 'SUPPLY_CHAIN';
+    try {
+      const id = await createDirectInvoice(value, req.user.email, validated);
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: id,
+        action: 'CREATE_DIRECT_INVOICE',
+        actor: req.user,
+        details: { supplier: value.supplier_name, ref: value.ref, amount: value.amount, currency: value.currency, validated },
+      });
+      return res.status(201).json({ success: true, invoice: await getDigiInvoice(id) });
+    } catch (err: any) {
+      if (err instanceof DuplicateDigiInvoiceError) {
+        return res.status(409).json({ success: false, error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.` });
+      }
+      console.error('[Invoices] Create direct invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la facture' });
+    }
+  });
+
+  // Sourcing can only correct its invoices not validated yet
+  app.put('/api/digi-invoices/:id/direct', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const { value, errors } = validateDirectInvoiceInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      const current = await getDigiInvoice(req.params.id);
+      if (!current) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      if (req.user.role !== 'SUPPLY_CHAIN' && current.validation_status === 'validated') {
+        return res.status(403).json({ success: false, error: 'Facture validée : seule la Supply Chain peut la modifier.' });
+      }
+      await updateDirectInvoice(req.params.id, value, req.user.email, req.user.role === 'SUPPLY_CHAIN');
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: 'UPDATE_DIRECT_INVOICE',
+        actor: req.user,
+        details: { supplier: value.supplier_name, ref: value.ref, amount: value.amount, currency: value.currency },
+      });
+      return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      if (err instanceof WrongInvoiceKindError) {
+        return res.status(409).json({ success: false, error: 'Cette facture est une facture DIGI.' });
+      }
+      if (err instanceof DuplicateDigiInvoiceError) {
+        return res.status(409).json({ success: false, error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.` });
+      }
+      console.error('[Invoices] Update direct invoice error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier la facture' });
+    }
+  });
+
+  app.patch('/api/digi-invoices/:id/validation', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const decision = req.body?.decision;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 1000) : '';
+    if (decision !== 'validated' && decision !== 'rejected') {
+      return res.status(400).json({ success: false, error: 'Décision invalide.' });
+    }
+    if (decision === 'rejected' && !reason) {
+      return res.status(400).json({ success: false, error: 'Le motif du refus est obligatoire.' });
+    }
+    try {
+      const outcome = await setInvoiceValidation(req.params.id, decision, reason || null, req.user.email);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Facture hors DIGI introuvable' });
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: decision === 'validated' ? 'VALIDATE_DIRECT_INVOICE' : 'REJECT_DIRECT_INVOICE',
+        actor: req.user,
+        details: { previous: outcome.previous, reason: reason || null },
+      });
+      return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[Invoices] Validation error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la décision' });
+    }
+  });
+
+  // Sort of a DIGI invoice: to_sort / goods (tracked) / services
+  app.patch('/api/digi-invoices/:id/triage', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const triage = req.body?.triage;
+    if (!(INVOICE_TRIAGES as readonly string[]).includes(triage)) {
+      return res.status(400).json({ success: false, error: 'Tri invalide.' });
+    }
+    try {
+      const outcome = await setInvoiceTriage(req.params.id, triage, req.user.email);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: 'SORT_DIGI_INVOICE',
+        actor: req.user,
+        details: { triage, detached_shipment_id: outcome.previous_shipment_id },
+      });
+      return res.json({
+        success: true,
+        detached_shipment_id: outcome.previous_shipment_id,
+        invoice: await getDigiInvoice(req.params.id),
+      });
+    } catch (err: any) {
+      console.error('[Invoices] Sort error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de trier la facture' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Parcels (supplier → Orly)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Invoices of a new parcel: they exist, are not services and have one
+   * supplier. Returns that supplier, or undefined after answering the error.
+   */
+  const checkParcelInvoices = async (invoiceIds: string[], res: any): Promise<string | null | undefined> => {
+    const { supplier, mixed } = await commonSupplierOf(invoiceIds);
+    if (mixed) {
+      res.status(400).json({ success: false, error: 'Un colis ne peut regrouper que des factures d\'un même fournisseur.' });
+      return undefined;
+    }
+    const invoices = await Promise.all(invoiceIds.map((id: string) => getDigiInvoice(id)));
+    if (invoices.some((inv) => !inv)) {
+      res.status(404).json({ success: false, error: 'Facture introuvable' });
+      return undefined;
+    }
+    if (invoices.some((inv) => inv!.triage === 'services')) {
+      res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
+      return undefined;
+    }
+    return supplier;
+  };
+
+  const isUuidList = (ids: unknown): ids is string[] =>
+    Array.isArray(ids) && ids.length > 0 && ids.length <= 100 && ids.every((id) => typeof id === 'string' && UUID_RE.test(id));
+
+  /** Reception date: YYYY-MM-DD, null when absent (today), undefined when invalid or in the future. */
+  const parseReceptionDate = (value: unknown): string | null | undefined => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+    const today = new Date().toISOString().slice(0, 10);
+    return value > today ? undefined : value;
+  };
+
+  /** Trashes photo files in Google Drive; a failure only leaves an orphan file (logged). */
+  const removePhotoObjects = async (keys: string[]) => {
+    if (keys.length === 0 || !isPhotoStorageConfigured()) return;
+    for (const key of keys) {
+      await deletePhotoObject(key).catch((err) => console.error('[Parcels] Photo object not deleted:', key, err?.message));
+    }
+  };
+
+  /**
+   * Carrier of a parcel from the Settings list (or from the number format).
+   * Returns false (and answers 400) when the picked carrier is unknown.
+   */
+  const applyParcelCarrier = async (value: ParcelInput, res: any): Promise<boolean> => {
+    const resolved = await resolveParcelCarrier(value.carrier_name, value.carrier);
+    if (!resolved) {
+      res.status(400).json({
+        success: false,
+        error: `Transporteur « ${value.carrier_name} » inconnu ou désactivé : ajoutez-le dans Paramètres › Transporteurs.`,
+      });
+      return false;
+    }
+    value.carrier_name = resolved.name;
+    if (resolved.trackingCode && isCarrierCode(resolved.trackingCode)) value.carrier = resolved.trackingCode;
+    return true;
+  };
+
+  // Suivi Aérien › Colis vers Orly (read: every role)
+  app.get('/api/parcels', async (_req, res) => {
+    try {
+      // Parcels not confirmed in time become "lost" (alert, claim to the supplier)
+      const settings = await getTrackingSettings();
+      const markedLost = await markOverdueParcelsLost(settings);
+      if (markedLost > 0) {
+        await writeAuditLog({
+          entityType: 'PARCEL',
+          entityId: '*',
+          action: 'AUTO_MARK_PARCELS_LOST',
+          actor: { id: 'system', email: 'alerte-automatique', role: 'SYSTEM' },
+          details: { count: markedLost },
+        });
+      }
+      const [parcels, invoicesWithoutParcel, lateTriage] = await Promise.all([
+        listParcels(),
+        listGoodsInvoicesWithoutParcel(),
+        listLateTriageInvoices(settings),
+      ]);
+      return res.json({
+        success: true,
+        parcels,
+        invoices_without_parcel: invoicesWithoutParcel,
+        late_triage_invoices: lateTriage,
+        photo_storage_configured: isPhotoStorageConfigured(),
+      });
+    } catch (err: any) {
+      console.error('[Parcels] List all error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis' });
+    }
+  });
+
+  app.get('/api/digi-invoices/:id/parcels', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    try {
+      return res.json({ success: true, parcels: await listParcelsForInvoice(req.params.id) });
+    } catch (err: any) {
+      console.error('[Parcels] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis' });
+    }
+  });
+
+  /**
+   * Adds a parcel to invoices of one supplier. A tracking number already known
+   * links the invoices to that parcel (one parcel can cover several invoices).
+   */
+  app.post('/api/parcels', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const invoiceIds = req.body?.invoice_ids;
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0 || invoiceIds.length > 100 || !invoiceIds.every((id) => UUID_RE.test(id))) {
+      return res.status(400).json({ success: false, error: 'Factures du colis invalides.' });
+    }
+    const { value, errors } = validateParcelInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      if (!(await applyParcelCarrier(value, res))) return;
+      const supplier = await checkParcelInvoices(invoiceIds, res);
+      if (supplier === undefined) return;
+      // Parcel created at reception (tracking number unknown until Antoine's photo): Supply Chain only
+      const receivedNow = req.body?.received === true;
+      if (receivedNow && req.user.role !== 'SUPPLY_CHAIN') {
+        return res.status(403).json({ success: false, error: 'Seule la Supply Chain confirme une réception.' });
+      }
+      const receivedAt = receivedNow ? parseReceptionDate(req.body?.received_at) : null;
+      if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
+
+      const { id, existed } = await createParcel(value, invoiceIds, supplier, req.user.email);
+      if (receivedNow) await setParcelStatus(id, 'received', receivedAt, req.user.email);
+      const parcel = await getParcel(id);
+      if (existed && parcel) {
+        // The known parcel must stay single-supplier
+        const check = await commonSupplierOf(parcel.invoices.map((i) => i.id));
+        if (check.mixed) {
+          for (const invoiceId of invoiceIds) await unlinkParcelInvoice(id, invoiceId);
+          return res.status(409).json({
+            success: false,
+            error: `Le n° de suivi ${value.tracking_number} est déjà utilisé par un colis d'un autre fournisseur.`,
+          });
+        }
+      }
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: id,
+        action: existed ? 'LINK_PARCEL_INVOICES' : 'CREATE_PARCEL',
+        actor: req.user,
+        details: {
+          tracking_number: value.tracking_number,
+          carrier: value.carrier,
+          destination: value.destination,
+          invoice_ids: invoiceIds,
+          received: receivedNow,
+        },
+      });
+      return res.status(existed ? 200 : 201).json({ success: true, existed, parcel: await getParcel(id) });
+    } catch (err: any) {
+      console.error('[Parcels] Create error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer le colis' });
+    }
+  });
+
+  app.put('/api/parcels/:id', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const { value, errors } = validateParcelInput(req.body);
+    if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      if (!(await applyParcelCarrier(value, res))) return;
+      const updated = await updateParcel(req.params.id, value, req.user.email);
+      if (!updated) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'UPDATE_PARCEL',
+        actor: req.user,
+        details: { tracking_number: value.tracking_number, carrier: value.carrier, expected_delivery: value.expected_delivery },
+      });
+      return res.json({ success: true, parcel: await getParcel(req.params.id) });
+    } catch (err: any) {
+      if (err instanceof DuplicateParcelError) {
+        return res.status(409).json({ success: false, error: `Le n° de suivi ${value.tracking_number} est déjà utilisé par un autre colis.` });
+      }
+      console.error('[Parcels] Update error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier le colis' });
+    }
+  });
+
+  // Detaches a parcel from one invoice (deleted when it has no invoice left)
+  app.delete('/api/parcels/:id/invoices/:invoiceId', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.invoiceId)) {
+      return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    }
+    try {
+      const parcel = await getParcel(req.params.id);
+      if (!parcel) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      // Proof of reception: only Supply Chain removes a parcel received at Orly
+      if (parcel.status !== 'to_receive' && req.user.role !== 'SUPPLY_CHAIN') {
+        return res.status(403).json({ success: false, error: 'Colis déjà traité à Orly : seule la Supply Chain peut le retirer.' });
+      }
+      const outcome = await unlinkParcelInvoice(req.params.id, req.params.invoiceId);
+      if (!outcome.unlinked) return res.status(404).json({ success: false, error: 'Ce colis n\'est pas rattaché à cette facture' });
+      await removePhotoObjects(outcome.photo_keys);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: outcome.deleted ? 'DELETE_PARCEL' : 'UNLINK_PARCEL_INVOICE',
+        actor: req.user,
+        details: { tracking_number: parcel.tracking_number, invoice_id: req.params.invoiceId },
+      });
+      return res.json({ success: true, deleted: outcome.deleted });
+    } catch (err: any) {
+      console.error('[Parcels] Unlink error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de retirer le colis' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Réception Orly / Rouen (Supply Chain): status and photos
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Status of a parcel at the hub:
+   * - received: confirmed by Antoine (Orly) or at Rouen; date defaults to today;
+   * - search: received but missing on arrival in Madagascar (claim);
+   * - lost: not received (claim to the supplier); to_receive: back to waiting.
+   */
+  app.patch('/api/parcels/:id/status', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const status = req.body?.status;
+    if (!isParcelStatus(status)) return res.status(400).json({ success: false, error: 'État invalide.' });
+    const receivedAt = parseReceptionDate(req.body?.received_at);
+    if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
+    try {
+      const parcel = await getParcel(req.params.id);
+      if (!parcel) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      if (status === 'search' && parcel.status !== 'received' && parcel.status !== 'search') {
+        return res.status(409).json({
+          success: false,
+          error: 'Un avis de recherche concerne un colis reçu : confirmez d\'abord sa réception.',
+        });
+      }
+      const outcome = await setParcelStatus(req.params.id, status, receivedAt, req.user.email);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'SET_PARCEL_STATUS',
+        actor: req.user,
+        details: { from: outcome.previous, to: status, received_at: receivedAt, tracking_number: parcel.tracking_number },
+      });
+      return res.json({ success: true, parcel: await getParcel(req.params.id) });
+    } catch (err: any) {
+      console.error('[Parcels] Status error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier l\'état du colis' });
+    }
+  });
+
+  // Photos with short display URLs (every role, reading is a proof for claims)
+  app.get('/api/parcels/:id/photos', async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    try {
+      const photos = await listParcelPhotos(req.params.id);
+      const configured = isPhotoStorageConfigured();
+      const withUrls = await Promise.all(
+        photos.map(async (p) => ({
+          id: p.id,
+          content_type: p.content_type,
+          size_bytes: p.size_bytes,
+          uploaded_by_email: p.uploaded_by_email,
+          uploaded_at: p.uploaded_at,
+          url: configured ? `/api/photos/${p.id}` : null,
+        }))
+      );
+      return res.json({ success: true, storage_configured: configured, photos: withUrls });
+    } catch (err: any) {
+      console.error('[Parcels] Photos list error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les photos' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Point Antoine (Orly) / reception at Rouen: photos uploaded in one go, then
+  // matched one by one to a parcel (matching confirms the reception)
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/reception-points', async (req: any, res) => {
+    const destination = req.query?.destination ?? 'ORLY';
+    if (!isParcelDestination(destination)) return res.status(400).json({ success: false, error: 'Destination invalide.' });
+    try {
+      return res.json({
+        success: true,
+        points: await listReceptionPoints(destination),
+        storage_configured: isPhotoStorageConfigured(),
+      });
+    } catch (err: any) {
+      console.error('[Points] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les points de réception' });
+    }
+  });
+
+  app.post('/api/reception-points', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const destination = req.body?.destination ?? 'ORLY';
+    if (!isParcelDestination(destination)) return res.status(400).json({ success: false, error: 'Destination invalide.' });
+    const pointDate = parseReceptionDate(req.body?.point_date);
+    if (!pointDate) return res.status(400).json({ success: false, error: 'Date du point invalide (pas dans le futur).' });
+    const notes = typeof req.body?.notes === 'string' && req.body.notes.trim() ? req.body.notes.trim().slice(0, 2000) : null;
+    try {
+      const id = await createReceptionPoint(destination, pointDate, notes, req.user.email);
+      await writeAuditLog({
+        entityType: 'RECEPTION_POINT',
+        entityId: id,
+        action: 'CREATE_RECEPTION_POINT',
+        actor: req.user,
+        details: { destination, point_date: pointDate },
+      });
+      return res.status(201).json({ success: true, point: await getReceptionPoint(id) });
+    } catch (err: any) {
+      console.error('[Points] Create error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de créer le point de réception' });
+    }
+  });
+
+  // The point with its photos (short display URLs)
+  app.get('/api/reception-points/:id', async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
+    try {
+      const point = await getReceptionPoint(req.params.id);
+      if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      const configured = isPhotoStorageConfigured();
+      const photos = await Promise.all(
+        (await listPointPhotos(point.id)).map(async (p) => ({
+          id: p.id,
+          parcel_id: p.parcel_id,
+          content_type: p.content_type,
+          size_bytes: p.size_bytes,
+          uploaded_at: p.uploaded_at,
+          uploaded_by_email: p.uploaded_by_email,
+          linked_by_email: p.linked_by_email,
+          linked_at: p.linked_at,
+          url: configured ? `/api/photos/${p.id}` : null,
+        }))
+      );
+      return res.json({ success: true, point, photos, storage_configured: configured });
+    } catch (err: any) {
+      console.error('[Points] Read error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger le point de réception' });
+    }
+  });
+
+  /**
+   * Uploads one photo of the point (already compressed by the browser) into the
+   * point's Google Drive folder, created at the first photo. Body: the image
+   * itself (Content-Type image/jpeg, png or webp). The database keeps the Drive id.
+   */
+  app.post(
+    '/api/reception-points/:id/photos',
+    requireRole('SUPPLY_CHAIN'),
+    express.raw({ type: [...PHOTO_CONTENT_TYPES], limit: PHOTO_MAX_BYTES }),
+    async (req: any, res) => {
+      if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      if (!isPhotoStorageConfigured()) {
+        return res.status(503).json({ success: false, error: 'Le stockage des photos (Google Drive) n\'est pas configuré.' });
+      }
+      const contentType = String(req.headers['content-type'] || '').split(';')[0].trim();
+      if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType) || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ success: false, error: 'Photo invalide (JPEG, PNG ou WebP attendu).' });
+      }
+      try {
+        const point = await getReceptionPoint(req.params.id);
+        if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+        let folderId = point.drive_folder_id;
+        if (!folderId) {
+          const hub = point.destination === 'ORLY' ? 'Point Antoine' : 'Réception Rouen';
+          folderId = await setPointFolder(point.id, await createPhotoFolder(`${hub} ${point.point_date} (${point.id.slice(0, 8)})`));
+        }
+        const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+        const name = `${point.point_date}_${crypto.randomUUID().slice(0, 8)}.${ext}`;
+        const fileId = await uploadPhoto(folderId, name, contentType, req.body);
+        const id = await addPointPhoto(point.id, fileId, contentType, req.body.length, req.user.email);
+        return res.status(201).json({ success: true, id });
+      } catch (err: any) {
+        console.error('[Points] Upload photo error:', err);
+        return res.status(502).json({ success: false, error: 'Google Drive n\'a pas accepté la photo. Réessayez.' });
+      }
+    }
+  );
+
+  // Shows a photo to a signed-in user (the Drive files are never public)
+  app.get('/api/photos/:photoId', async (req: any, res) => {
+    if (!UUID_RE.test(req.params.photoId)) return res.status(404).end();
+    try {
+      const photo = await getPhotoFile(req.params.photoId);
+      if (!photo || !isPhotoStorageConfigured()) return res.status(404).end();
+      const { data, contentType } = await downloadPhoto(photo.storage_key);
+      res.setHeader('Content-Type', photo.content_type || contentType);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.send(data);
+    } catch (err: any) {
+      console.error('[Photos] Read error:', err?.message || err);
+      return res.status(502).end();
+    }
+  });
+
+  /**
+   * Matches a photo of the point:
+   * - { parcel_id }: an existing parcel (number read on the label);
+   * - { new_parcel: { tracking_number?, invoice_ids } }: a parcel not announced
+   *   (or label unreadable), created for invoices of one supplier;
+   * - { parcel_id: null }: back to "to match" (the parcel keeps its state).
+   * The parcel is confirmed "received" at the point date (unless already received).
+   */
+  app.patch('/api/reception-points/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
+      return res.status(404).json({ success: false, error: 'Photo introuvable' });
+    }
+    try {
+      const point = await getReceptionPoint(req.params.id);
+      if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+
+      if (req.body?.parcel_id === null) {
+        if (!(await linkPointPhoto(point.id, req.params.photoId, null, req.user.email))) {
+          return res.status(404).json({ success: false, error: 'Photo introuvable' });
+        }
+        return res.json({ success: true, parcel: null });
+      }
+
+      let parcelId: string;
+      let created = false;
+      if (typeof req.body?.parcel_id === 'string') {
+        if (!UUID_RE.test(req.body.parcel_id) || !(await getParcel(req.body.parcel_id))) {
+          return res.status(404).json({ success: false, error: 'Colis introuvable' });
+        }
+        parcelId = req.body.parcel_id;
+      } else {
+        const input = req.body?.new_parcel;
+        if (!input || !isUuidList(input.invoice_ids)) {
+          return res.status(400).json({ success: false, error: 'Choisissez la ou les factures de ce colis.' });
+        }
+        const { value, errors } = validateParcelInput({ ...input, destination: point.destination });
+        if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+        if (!(await applyParcelCarrier(value, res))) return;
+        const supplier = await checkParcelInvoices(input.invoice_ids, res);
+        if (supplier === undefined) return;
+        const outcome = await createParcel(value, input.invoice_ids, supplier, req.user.email);
+        parcelId = outcome.id;
+        created = !outcome.existed;
+      }
+
+      if (!(await linkPointPhoto(point.id, req.params.photoId, parcelId, req.user.email))) {
+        return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      }
+      const parcel = await getParcel(parcelId);
+      const confirmed = parcel && parcel.status !== 'received' && parcel.status !== 'search';
+      if (confirmed) await setParcelStatus(parcelId, 'received', point.point_date, req.user.email);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: parcelId,
+        action: 'LINK_POINT_PHOTO',
+        actor: req.user,
+        details: { point_id: point.id, photo_id: req.params.photoId, created, reception_confirmed: Boolean(confirmed) },
+      });
+      return res.json({ success: true, created, reception_confirmed: Boolean(confirmed), parcel: await getParcel(parcelId) });
+    } catch (err: any) {
+      console.error('[Points] Link photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de rattacher la photo' });
+    }
+  });
+
+  app.delete('/api/reception-points/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
+      return res.status(404).json({ success: false, error: 'Photo introuvable' });
+    }
+    try {
+      const key = await deletePointPhoto(req.params.id, req.params.photoId);
+      if (!key) return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      await removePhotoObjects([key]);
+      await writeAuditLog({
+        entityType: 'RECEPTION_POINT',
+        entityId: req.params.id,
+        action: 'DELETE_POINT_PHOTO',
+        actor: req.user,
+        details: { photo_id: req.params.photoId },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Points] Delete photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer la photo' });
+    }
+  });
+
+  app.delete('/api/parcels/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
+      return res.status(404).json({ success: false, error: 'Photo introuvable' });
+    }
+    try {
+      const key = await deleteParcelPhoto(req.params.id, req.params.photoId);
+      if (!key) return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      await removePhotoObjects([key]);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'DELETE_PARCEL_PHOTO',
+        actor: req.user,
+        details: { photo_id: req.params.photoId },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Parcels] Delete photo error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer la photo' });
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tracking settings (Paramètres › Intégrations)
+  // ---------------------------------------------------------------------------
+
+  app.get('/api/settings/tracking', async (_req, res) => {
+    try {
+      return res.json({ success: true, settings: await getTrackingSettings() });
+    } catch (err: any) {
+      console.error('[Settings] Read error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les paramètres' });
+    }
+  });
+
+  app.put('/api/settings/tracking', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const { value, errors } = validateTrackingSettings(req.body);
+    if (errors.length > 0) return res.status(400).json({ success: false, error: errors.join(' ') });
+    try {
+      const settings = await saveTrackingSettings(value, req.user.email);
+      await writeAuditLog({
+        entityType: 'SETTINGS',
+        entityId: 'tracking',
+        action: 'UPDATE_TRACKING_SETTINGS',
+        actor: req.user,
+        details: value as Record<string, unknown>,
+      });
+      return res.json({ success: true, settings });
+    } catch (err: any) {
+      console.error('[Settings] Save error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer les paramètres' });
     }
   });
 
@@ -2022,10 +2774,17 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           message: 'DATABASE_URL (ou POSTGRES_URL) n\'est pas configurée. Passez votre URI Neon pour charger les données réelles.',
         });
       }
-      const shipments = await getShipmentsFromNeon();
-      // Value of each shipment = total of its DIGI invoices
+      // Converts the shipments saved before the parcel model (once) before reading them
       try {
-        const totals = await getInvoiceTotalsByShipment();
+        await ensureDigiInvoicesSchema();
+      } catch (schemaErr) {
+        console.error('[Parcels] Could not prepare the parcel model:', schemaErr);
+      }
+      const shipments = await getShipmentsFromNeon();
+      // Value of each shipment = total of its invoices
+      try {
+        const { usd_eur_rate } = await getTrackingSettings();
+        const totals = await getInvoiceTotalsByShipment(usd_eur_rate);
         for (const shipment of shipments as any[]) {
           const t = totals.get(shipment.id);
           shipment.digi_invoice_count = t?.count ?? 0;
@@ -2081,7 +2840,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!['Air', 'Sea'].includes(data.mode)) missing.push('mode');
       if (!requiredText(data.supplier)) missing.push('supplier');
       if (!requiredText(data.order_reference)) missing.push('order_reference');
-      if (!requiredText(data.global_status)) missing.push('global_status');
+      if (!isShipmentStatus(data.global_status)) missing.push('global_status');
       if (!ANTOINE_STATUSES.includes(data.antoine_status)) {
         missing.push('antoine_status');
       }
@@ -2104,7 +2863,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         });
       }
 
-      const saved = await upsertShipmentInNeon(data);
+      const saved = await upsertShipmentInNeon(applyAutomaticShipmentStatus(data));
 
       // Attach the tracking number(s) typed in the creation form
       if (typeof data.tracking_no === 'string' && data.tracking_no.trim()) {
@@ -2157,7 +2916,10 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         return res.status(404).json({ success: false, error: 'Expédition introuvable' });
       }
 
-      const data = { ...req.body, id: req.params.id };
+      if (req.body?.global_status !== undefined && !isShipmentStatus(req.body.global_status)) {
+        return res.status(400).json({ success: false, error: 'Statut d\'expédition invalide.' });
+      }
+      const data = applyAutomaticShipmentStatus({ ...req.body, id: req.params.id });
       const saved = await upsertShipmentInNeon(data);
 
       // Record which fields changed (names only: values may be large JSON)

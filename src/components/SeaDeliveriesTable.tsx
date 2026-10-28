@@ -25,8 +25,11 @@ interface SeaDeliveriesTableProps {
 export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
   shipment,
   onUpdateShipment,
-  canEdit = true,
+  canEdit: _canEdit = true,
 }) => {
+  // History only: these lines were taken as parcels to Rouen (Suivi Maritime ›
+  // Colis vers Rouen), where the deliveries are tracked now.
+  const canEdit = false;
   const deliveries = shipment.sea_deliveries || [];
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -146,7 +149,8 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
               </span>
             </h4>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Réception des sous-colis en entrepôt avant empotage maritime • Volume total:{' '}
+              Historique en lecture seule : ces lignes ont été reprises en colis, suivis dans Suivi Maritime › Colis
+              vers Rouen • Volume total:{' '}
               <strong className="text-indigo-600 dark:text-indigo-400">{totalVolume.toFixed(2)} m³</strong>
             </p>
           </div>

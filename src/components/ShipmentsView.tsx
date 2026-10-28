@@ -25,6 +25,7 @@ import {
 import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
+import { SHIPMENT_STATUSES } from '../lib/parcelTracking';
 import { formatDate, formatToday } from '../lib/dateFormat';
 import type { DigiValueMatch } from '../lib/digiShipmentValue';
 
@@ -84,7 +85,7 @@ const InlineTextInput: React.FC<{
   );
 };
 
-const matchesSearch = (shp: Shipment, query: string) => {
+export const matchesSearch = (shp: Shipment, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return [
@@ -170,7 +171,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
       // Orly Overdue > 10 days
       if (onlyOrlyOverdue) {
-        const isOrly = shp.global_status === 'Livré Orly' || shp.carrier_status === 'Delivered';
+        const isOrly = shp.global_status === 'En préparation';
         const noMadagascar = !shp.departure_madagascar;
         const hasHubAlert = shp.alerts?.some((a) => a.rule_code === 'R1_HUB_ORLY_TIMEOUT');
         if (!isOrly || !noMadagascar || !hasHubAlert) return false;
@@ -201,9 +202,9 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     onlyDelays ||
     onlyOrlyOverdue;
 
-  // Shipments flagged as "Perdu Orly" for claims
+  // Shipments flagged "Perdu Orly" before the parcel model (new losses are on the parcels)
   const perduOrlyShipments = useMemo(() => {
-    return shipments.filter((s) => s.global_status === 'Perdu Orly');
+    return shipments.filter((s) => s.legacy_global_status === 'Perdu Orly');
   }, [shipments]);
 
   const totalPerduValue = useMemo(() => {
@@ -310,7 +311,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             )}
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Filtrage dynamique, suivi transporteurs, contrôle Ref FA (DIGI-NXT) et détection automatique "Perdu Orly"
+            Filtrage dynamique, suivi transporteurs, expéditions Orly → Madagascar et contrôle Ref FA (DIGI-NXT)
           </p>
         </div>
 
@@ -330,10 +331,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
           {/* Claim Button */}
           <button
             id="shipments-btn-generate-claim"
-            onClick={() => {
-              setSelectedGlobalStatus('Perdu Orly');
-              setShowClaimModal(true);
-            }}
+            onClick={() => setShowClaimModal(true)}
             className="flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-rose-700 dark:border-rose-800 dark:bg-rose-700 dark:hover:bg-rose-800"
             title="Afficher le tableau officiel de réclamation des colis Perdu Orly"
           >
@@ -393,13 +391,12 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               onChange={(e) => setSelectedGlobalStatus(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
-              <option value="all">Tous les statuts Orly - Mada</option>
-              <option value="Attente confirmation transitaire">Attente confirmation transitaire</option>
-              <option value="Reçu et expédié">Reçu et expédié</option>
-              <option value="En livraison vers Orly">En livraison vers Orly</option>
-              <option value="Bloqué douane">Bloqué douane</option>
-              <option value="Perdu Orly">Perdu Orly</option>
-              <option value="Livré entrepôt">Livré entrepôt</option>
+              <option value="all">Tous les statuts d'expédition</option>
+              {SHIPMENT_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -481,10 +478,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                     </th>
                   </>
                 )}
-                <th className="px-3 py-3 font-semibold">Statut Orly - Mada</th>
+                <th className="px-3 py-3 font-semibold">Statut de l'expédition</th>
                 {modeFilter === 'Air' && (
                   <th className="px-3 py-3 font-semibold text-amber-700 dark:text-amber-400">
-                    Date Scan Orly (Manuelle)
+                    Remise / scan Orly
                   </th>
                 )}
                 <th className="px-3 py-3 font-semibold text-indigo-700 dark:text-indigo-400">
@@ -538,7 +535,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                   const isOrlyBlocked = shp.alerts?.some(
                     (a) => a.rule_code === 'R1_HUB_ORLY_TIMEOUT'
                   );
-                  const isPerduOrly = shp.global_status === 'Perdu Orly';
+                  const isPerduOrly = shp.legacy_global_status === 'Perdu Orly';
                   const isExpanded = shp.mode === 'Sea' && expandedSeaIds.includes(shp.id);
 
                   return (
@@ -653,25 +650,22 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                               }
                             }}
                             className={`rounded-lg px-2 py-1 text-[10px] font-bold border shadow-2xs focus:outline-none ${
-                              shp.global_status === 'Livré entrepôt' || shp.global_status === 'Livré Client/Entrepôt'
+                              shp.global_status === 'Livrée entrepôt'
                                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
-                                : shp.global_status === 'Reçu et expédié'
+                                : shp.global_status === 'Expédiée vers Mada'
                                 ? 'bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-300'
-                                : shp.global_status === 'Attente confirmation transitaire'
+                                : shp.global_status === 'En préparation'
                                 ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300'
-                                : shp.global_status === 'Perdu Orly'
-                                ? 'bg-rose-100 text-rose-900 border-rose-500 font-extrabold dark:bg-rose-950 dark:text-rose-200'
-                                : shp.global_status === 'Bloqué Douane' || shp.global_status === 'Bloqué douane'
+                                : shp.global_status === 'Bloquée douane'
                                 ? 'bg-rose-50 text-rose-800 border-rose-300 dark:bg-rose-950 dark:text-rose-300'
                                 : 'bg-blue-50 text-blue-800 border-blue-300 dark:bg-blue-950 dark:text-blue-300'
                             }`}
                           >
-                            <option value="Attente confirmation transitaire">Attente confirmation transitaire</option>
-                            <option value="Reçu et expédié">Reçu et expédié</option>
-                            <option value="En livraison vers Orly">En livraison vers Orly</option>
-                            <option value="Bloqué douane">Bloqué douane</option>
-                            <option value="Perdu Orly">Perdu Orly</option>
-                            <option value="Livré entrepôt">Livré entrepôt</option>
+                            {SHIPMENT_STATUSES.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
                           </select>
                         </td>
 

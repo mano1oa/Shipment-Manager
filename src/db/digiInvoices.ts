@@ -3,6 +3,10 @@ import { getDb } from './neon.js';
 import { ensureNeonSchema } from './shipments.js';
 import { isServiceLabel, mergeServiceLines, trackingSupplierName } from '../lib/digiInvoices.js';
 import type { DigiInvoiceInput, DigiInvoiceLineInput } from '../lib/digiInvoices.js';
+import { initParcelSchema } from './parcelSchema.js';
+import { amountInEur } from '../lib/parcelTracking.js';
+import type { Currency, InvoiceTriage, ValidationStatus } from '../lib/parcelTracking.js';
+import type { DirectInvoiceInput } from '../lib/directInvoices.js';
 
 /**
  * DIGI LOGISTIC invoices addressed to NextHope ("colis à suivre").
@@ -71,6 +75,20 @@ export interface DigiInvoiceRecord {
   no_shipment: boolean;
   /** At least one item line (not a fee/service line). */
   has_items: boolean;
+  /** False for a "hors DIGI" invoice entered by hand (amount + currency, no lines). */
+  is_digi: boolean;
+  /** Hors DIGI: amount in `currency`. DIGI: total of the lines (EUR). */
+  currency: Currency;
+  buyer: string | null;
+  validation_status: ValidationStatus;
+  rejection_reason: string | null;
+  validated_by_email: string | null;
+  validated_at: string | null;
+  /** Manual sort: only "goods" invoices are tracked (parcels, loss alerts). */
+  triage: InvoiceTriage;
+  triaged_at: string | null;
+  parcel_count: number;
+  parcel_received_count: number;
   created_by_email: string | null;
   updated_by_email: string | null;
   created_at: string;
@@ -87,6 +105,13 @@ export class DuplicateDigiInvoiceError extends Error {
 export class ReadOnlyDigiInvoiceError extends Error {
   constructor() {
     super('Odoo invoices are read-only');
+  }
+}
+
+/** A DIGI invoice edited as "hors DIGI", or the reverse. */
+export class WrongInvoiceKindError extends Error {
+  constructor() {
+    super('Wrong invoice kind (DIGI / hors DIGI)');
   }
 }
 
@@ -190,6 +215,9 @@ async function initDigiInvoicesSchema(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_digi_odoo_sync_runs_started
       ON digi_odoo_sync_runs (started_at DESC);
   `;
+
+  // Parcel model: "hors DIGI" invoices, sort, parcels (v3)
+  await initParcelSchema();
 }
 
 /**
@@ -246,6 +274,11 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     is_service: Boolean(line.is_service),
   }));
 
+  const isDigi = row.is_digi !== false;
+  const linesTotal = lines.some((l) => l.price_subtotal !== null)
+    ? Math.round(lines.reduce((sum, l) => sum + (l.price_subtotal ?? 0), 0) * 100) / 100
+    : null;
+
   return {
     id: row.id,
     source: row.source,
@@ -261,15 +294,24 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     odoo_state: row.odoo_state,
     odoo_missing: row.odoo_missing,
     odoo_synced_at: row.odoo_synced_at,
-    amount_total: lines.some((l) => l.price_subtotal !== null)
-      ? Math.round(lines.reduce((sum, l) => sum + (l.price_subtotal ?? 0), 0) * 100) / 100
-      : null,
+    amount_total: isDigi ? linesTotal : toNumber(row.amount),
     shipment_id: row.shipment_id,
     shipment_exists: Boolean(row.shipment_exists),
     shipment_mode: row.shipment_mode ?? null,
     shipment_global_status: row.shipment_global_status ?? null,
     no_shipment: Boolean(row.no_shipment),
     has_items: lines.some((l) => !l.is_service),
+    is_digi: isDigi,
+    currency: isDigi ? 'EUR' : (row.currency as Currency) || 'EUR',
+    buyer: row.buyer ?? null,
+    validation_status: (row.validation_status as ValidationStatus) || 'validated',
+    rejection_reason: row.rejection_reason ?? null,
+    validated_by_email: row.validated_by_email ?? null,
+    validated_at: row.validated_at ?? null,
+    triage: (row.triage as InvoiceTriage) || (row.no_shipment ? 'services' : 'to_sort'),
+    triaged_at: row.triaged_at ?? null,
+    parcel_count: Number(row.parcel_count) || 0,
+    parcel_received_count: Number(row.parcel_received_count) || 0,
     created_by_email: row.created_by_email,
     updated_by_email: row.updated_by_email,
     created_at: row.created_at,
@@ -285,6 +327,13 @@ const SELECT_WITH_LINES = `
     i.amazon_order_ref, i.sale_move_ref, i.odoo_move_id, i.odoo_move_name,
     i.odoo_state, i.odoo_missing, i.odoo_synced_at,
     i.shipment_id, i.no_shipment,
+    i.is_digi, i.amount, i.currency, i.buyer, i.validation_status, i.rejection_reason,
+    i.validated_by_email, i.validated_at, i.triage, i.triaged_at,
+    (SELECT COUNT(*)::int FROM parcel_invoices pi WHERE pi.invoice_id = i.id) AS parcel_count,
+    (
+      SELECT COUNT(*)::int FROM parcel_invoices pi JOIN parcels p ON p.id = pi.parcel_id
+      WHERE pi.invoice_id = i.id AND p.status IN ('received', 'search')
+    ) AS parcel_received_count,
     (s.id IS NOT NULL) AS shipment_exists, s.mode AS shipment_mode, s.global_status AS shipment_global_status,
     i.created_by_email, i.updated_by_email, i.created_at, i.updated_at,
     COALESCE(
@@ -412,9 +461,10 @@ export async function updateDigiInvoice(
   await ensureDigiInvoicesSchema();
   const sql = getDb();
 
-  const rows = await sql`SELECT source FROM digi_invoices WHERE id = ${id}`;
+  const rows = await sql`SELECT source, is_digi FROM digi_invoices WHERE id = ${id}`;
   if (!rows[0]) return false;
   if (rows[0].source === 'odoo') throw new ReadOnlyDigiInvoiceError();
+  if (rows[0].is_digi === false) throw new WrongInvoiceKindError();
 
   const existing = await findBySupplierAndRef(input.supplier_name, input.ref);
   if (existing && existing.id !== id) throw new DuplicateDigiInvoiceError(existing.id);
@@ -750,11 +800,163 @@ export async function setInvoiceNoShipment(
   await sql`
     UPDATE digi_invoices SET
       no_shipment = ${noShipment},
+      triage = CASE WHEN ${noShipment} THEN 'services' WHEN triage = 'services' THEN 'to_sort' ELSE triage END,
+      triaged_at = NOW(),
       shipment_id = CASE WHEN ${noShipment} THEN NULL ELSE shipment_id END,
       updated_at = NOW()
     WHERE id = ${id}
   `;
   return { previous_shipment_id: noShipment ? (before[0].shipment_id as string | null) : null };
+}
+
+/**
+ * Sorts a DIGI invoice: goods (tracked: parcels, loss alerts), services (out
+ * of tracking, detached from its shipment) or back to "to sort".
+ * `no_shipment` mirrors "services" for the screens not yet using the sort.
+ */
+export async function setInvoiceTriage(
+  id: string,
+  triage: InvoiceTriage,
+  actorEmail: string
+): Promise<{ previous_shipment_id: string | null } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const services = triage === 'services';
+  const before = await sql`SELECT shipment_id FROM digi_invoices WHERE id = ${id}`;
+  if (!before[0]) return null;
+  await sql`
+    UPDATE digi_invoices SET
+      triage = ${triage},
+      triaged_at = NOW(),
+      no_shipment = ${services},
+      shipment_id = CASE WHEN ${services} THEN NULL ELSE shipment_id END,
+      updated_by_email = ${actorEmail},
+      updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return { previous_shipment_id: services ? (before[0].shipment_id as string | null) : null };
+}
+
+// ---------------------------------------------------------------------------
+// "Hors DIGI" invoices
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a "hors DIGI" invoice. Supply Chain's are validated at once; the
+ * ones entered by Sourcing wait for Supply Chain ("pending").
+ * Throws DuplicateDigiInvoiceError when the same supplier + ref already exists.
+ */
+export async function createDirectInvoice(
+  input: DirectInvoiceInput,
+  actorEmail: string,
+  validated: boolean
+): Promise<string> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+
+  const existing = await findBySupplierAndRef(input.supplier_name, input.ref);
+  if (existing) throw new DuplicateDigiInvoiceError(existing.id);
+
+  const id = crypto.randomUUID();
+  try {
+    await sql`
+      INSERT INTO digi_invoices (
+        id, source, is_digi, supplier_name, ref, invoice_date, amount, currency, buyer,
+        triage, triaged_at, validation_status, validated_by_email, validated_at,
+        created_by_email, updated_by_email
+      ) VALUES (
+        ${id}, 'manual', FALSE, ${input.supplier_name}, ${input.ref}, ${input.invoice_date},
+        ${input.amount}, ${input.currency}, ${input.buyer},
+        'goods', NOW(), ${validated ? 'validated' : 'pending'},
+        ${validated ? actorEmail : null}, ${validated ? new Date().toISOString() : null},
+        ${actorEmail}, ${actorEmail}
+      )
+    `;
+  } catch (err: any) {
+    if (err?.code === '23505') {
+      const raced = await findBySupplierAndRef(input.supplier_name, input.ref);
+      if (raced) throw new DuplicateDigiInvoiceError(raced.id);
+    }
+    throw err;
+  }
+  return id;
+}
+
+/**
+ * Updates a "hors DIGI" invoice. A refused invoice that is corrected goes
+ * back to "pending" (Sourcing) or is validated (Supply Chain).
+ * Returns false when the invoice does not exist.
+ */
+export async function updateDirectInvoice(
+  id: string,
+  input: DirectInvoiceInput,
+  actorEmail: string,
+  validated: boolean
+): Promise<boolean> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+
+  const rows = await sql`SELECT is_digi, validation_status FROM digi_invoices WHERE id = ${id}`;
+  if (!rows[0]) return false;
+  if (rows[0].is_digi !== false) throw new WrongInvoiceKindError();
+
+  const existing = await findBySupplierAndRef(input.supplier_name, input.ref);
+  if (existing && existing.id !== id) throw new DuplicateDigiInvoiceError(existing.id);
+
+  const resubmitted = rows[0].validation_status === 'rejected';
+  const nextStatus: ValidationStatus = resubmitted ? (validated ? 'validated' : 'pending') : rows[0].validation_status;
+  try {
+    await sql`
+      UPDATE digi_invoices SET
+        supplier_name = ${input.supplier_name},
+        ref = ${input.ref},
+        invoice_date = ${input.invoice_date},
+        amount = ${input.amount},
+        currency = ${input.currency},
+        buyer = ${input.buyer},
+        validation_status = ${nextStatus},
+        rejection_reason = CASE WHEN ${resubmitted} THEN NULL ELSE rejection_reason END,
+        validated_by_email = CASE WHEN ${nextStatus === 'validated' && resubmitted} THEN ${actorEmail} ELSE validated_by_email END,
+        validated_at = CASE WHEN ${nextStatus === 'validated' && resubmitted} THEN NOW() ELSE validated_at END,
+        updated_by_email = ${actorEmail},
+        updated_at = NOW()
+      WHERE id = ${id}
+    `;
+  } catch (err: any) {
+    if (err?.code === '23505') {
+      const raced = await findBySupplierAndRef(input.supplier_name, input.ref);
+      if (raced) throw new DuplicateDigiInvoiceError(raced.id);
+    }
+    throw err;
+  }
+  return true;
+}
+
+/**
+ * Supply Chain decision on a pending "hors DIGI" invoice. A refused invoice
+ * cannot enter a shipment until it is corrected and validated.
+ * Returns null when the invoice does not exist or is not a "hors DIGI" one.
+ */
+export async function setInvoiceValidation(
+  id: string,
+  decision: 'validated' | 'rejected',
+  reason: string | null,
+  actorEmail: string
+): Promise<{ previous: ValidationStatus } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const before = await sql`SELECT validation_status FROM digi_invoices WHERE id = ${id} AND NOT is_digi`;
+  if (!before[0]) return null;
+  await sql`
+    UPDATE digi_invoices SET
+      validation_status = ${decision},
+      rejection_reason = ${decision === 'rejected' ? reason : null},
+      validated_by_email = ${actorEmail},
+      validated_at = NOW(),
+      updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return { previous: before[0].validation_status as ValidationStatus };
 }
 
 export async function listDigiInvoicesForShipment(shipmentId: string): Promise<DigiInvoiceRecord[]> {
@@ -768,24 +970,30 @@ export async function listDigiInvoicesForShipment(shipmentId: string): Promise<D
 }
 
 /**
- * Value of each shipment from its DIGI invoices: shipment id → {count, total}.
+ * Value of each shipment from its invoices: shipment id → {count, total}.
+ * DIGI invoice = total of its lines; "hors DIGI" = its amount, USD converted
+ * with the rate of the settings (left out while no rate is set).
  */
-export async function getInvoiceTotalsByShipment(): Promise<Map<string, { count: number; total: number | null }>> {
+export async function getInvoiceTotalsByShipment(
+  usdEurRate: number | null
+): Promise<Map<string, { count: number; total: number | null }>> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
   const rows = await sql`
-    SELECT i.shipment_id, COUNT(DISTINCT i.id)::int AS count, SUM(l.price_subtotal)::float AS total
+    SELECT i.shipment_id, i.is_digi, i.amount::float AS amount, i.currency,
+      (SELECT SUM(l.price_subtotal)::float FROM digi_invoice_lines l WHERE l.invoice_id = i.id) AS lines_total
     FROM digi_invoices i
-    LEFT JOIN digi_invoice_lines l ON l.invoice_id = i.id
     WHERE i.shipment_id IS NOT NULL
-    GROUP BY i.shipment_id
   `;
-  return new Map(
-    rows.map((r: any) => [
-      r.shipment_id as string,
-      { count: r.count, total: r.total === null ? null : Math.round(r.total * 100) / 100 },
-    ])
-  );
+  const totals = new Map<string, { count: number; total: number | null }>();
+  for (const r of rows as any[]) {
+    const value = r.is_digi === false ? amountInEur(r.amount, r.currency, usdEurRate) : r.lines_total;
+    const entry = totals.get(r.shipment_id) ?? { count: 0, total: null };
+    entry.count += 1;
+    if (value !== null && value !== undefined) entry.total = Math.round(((entry.total ?? 0) + value) * 100) / 100;
+    totals.set(r.shipment_id, entry);
+  }
+  return totals;
 }
 
 /**

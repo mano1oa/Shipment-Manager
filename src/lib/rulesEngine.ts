@@ -116,90 +116,42 @@ export function evaluateShipmentRules(
 } {
   const allAlerts: ShipmentAlert[] = [];
 
-  // Helper to check if a shipment is considered received
-  const isShipmentReceived = (s: Shipment): boolean => {
-    return (
-      s.global_status === 'Reçu et expédié' ||
-      s.global_status === 'Livré entrepôt' ||
-      s.carrier_status === 'Delivered' ||
-      Boolean(s.orly_scan_date && s.orly_scan_date.trim() !== '') ||
-      Boolean(s.mada_receipt_date && s.mada_receipt_date.trim() !== '') ||
-      s.orly_shipment_status === 'Scanné & Expédié Orly'
-    );
-  };
-
-  // Group shipments by ref_fa_digi_nxt
-  const faGroups: Record<string, { received: boolean; total: number; receivedCount: number }> = {};
-  shipments.forEach((s) => {
-    if (s.ref_fa_digi_nxt && s.ref_fa_digi_nxt.trim() !== '') {
-      const key = s.ref_fa_digi_nxt.trim().toUpperCase();
-      if (!faGroups[key]) {
-        faGroups[key] = { received: false, total: 0, receivedCount: 0 };
-      }
-      faGroups[key].total += 1;
-      if (isShipmentReceived(s)) {
-        faGroups[key].received = true;
-        faGroups[key].receivedCount += 1;
-      }
-    }
-  });
+  // Parcel losses (before Orly, "Avis de recherche") are alerts on the parcels,
+  // not on the shipments: the former "Perdu Orly" rule (same Réf FA) is gone.
 
   const updatedShipments = shipments.map((shipment) => {
     const alerts: ShipmentAlert[] = [];
     const today = new Date().toISOString().split('T')[0];
 
-    // RULE 5: Ref FA (DIGI - NXT) Mismatch (Identical FA Ref with unreceived lines when other lines are received)
-    if (shipment.ref_fa_digi_nxt && shipment.ref_fa_digi_nxt.trim() !== '') {
-      const key = shipment.ref_fa_digi_nxt.trim().toUpperCase();
-      const group = faGroups[key];
-      if (group && group.received && !isShipmentReceived(shipment)) {
-        shipment.global_status = 'Perdu Orly';
-      }
-    }
-
-    // CONDITION 1 : Statut Orly - Mada = Perdu Orly
-    if (shipment.global_status === 'Perdu Orly') {
-      const alertId = `ALT-LOST-${shipment.id}`;
-      const faValue = shipment.ref_fa_digi_nxt || shipment.invoice_no || 'N/A';
-      const shipmentValue = valueOf(shipment);
-      const relanceMsg = `🚨 COLIS MANQUANT A LA RECEPTION - PERDU ORLY
-👉 Veuillez transmettre le dossier de réclamation pour indemnisation.
-- Réf FA: ${faValue} / Commande : ${shipment.order_reference || 'N/A'}
-- Fournisseur: ${shipment.supplier || 'N/A'} / Transporteur: ${shipment.carrier || 'N/A'}
-- N° Suivi: ${shipment.tracking_no || 'N/A'}
-- Valeur: ${shipmentValue ? shipmentValue.toLocaleString('fr-FR') + ' €' : 'N/A'}`;
-
+    // CONDITION 0 : expédition reprise de l'ancien modèle, pas partie → à regrouper ou supprimer
+    if (shipment.needs_review && shipment.global_status === 'En préparation') {
       alerts.push({
-        id: alertId,
+        id: `ALT-REVIEW-${shipment.id}`,
         shipment_id: shipment.id,
         tracking_no: shipment.tracking_no,
-        severity: 'critical',
-        rule_code: 'R5_PERDU_ORLY',
-        title: '🚨 COLIS MANQUANT A LA RECEPTION - PERDU ORLY',
-        reason: 'Colis manquant à la réception - déclaré Perdu Orly.',
+        severity: 'warning',
+        rule_code: 'R0_LEGACY_REVIEW',
+        title: 'Expédition à revoir (ancien modèle)',
+        reason: `Créée avant le suivi par colis (ancien statut : ${shipment.legacy_global_status || 'non défini'}) et pas encore partie.`,
         created_at: today,
         resolved: false,
-        suggested_action: 'Veuillez transmettre le dossier de réclamation pour indemnisation.',
-        relance_draft: relanceMsg,
+        suggested_action: 'Regrouper ses factures dans l’expédition Orly → Mada de la semaine, ou la supprimer.',
       });
     }
 
-    // CONDITION 2 : Date statut transporteur + 10, mais statut Orly - Mada différent de "Reçu et expédié"
-    const carrierStatusDate =
-      shipment.carrier_status_date ||
-      shipment.actual_delivery ||
-      shipment.updated_at ||
-      shipment.created_at;
-    const daysSinceCarrierStatus = calculateDaysBetween(carrierStatusDate);
-
-    if (daysSinceCarrierStatus >= 10 && shipment.global_status !== 'Reçu et expédié') {
+    // CONDITION 2 : expédition aérienne en préparation depuis 10 jours ou plus, sans départ vers Madagascar
+    const daysInPreparation = calculateDaysBetween(shipment.created_at);
+    if (
+      shipment.mode === 'Air' &&
+      shipment.global_status === 'En préparation' &&
+      !shipment.needs_review &&
+      daysInPreparation >= 10
+    ) {
       const alertId = `ALT-ORLY-${shipment.id}`;
-      const relanceMsg = `⚠️ COLIS EN ATTENTE D'EXPEDITION
-👉 Livré à Orly depuis ${daysSinceCarrierStatus} jours sans départ vers Madagascar. Merci de confirmer la prise en charge par le transitaire et la date de vol/départ programmée.
-- Fournisseur : ${shipment.supplier || 'N/A'}
-- Transporteur: ${shipment.carrier || 'N/A'}
-- N° Suivi: ${shipment.tracking_no || 'N/A'}
-- Colis/BL: ${shipment.bl_awb || shipment.tracking_no || 'N/A'}`;
+      const relanceMsg = `⚠️ EXPEDITION EN ATTENTE DE DEPART
+👉 En préparation à Orly depuis ${daysInPreparation} jours sans départ vers Madagascar. Merci de confirmer la prise en charge par le transitaire et la date de vol/départ programmée.
+- Réf FA: ${shipment.ref_fa_digi_nxt || 'N/A'}
+- LTA: ${shipment.bl_awb || 'N/A'}`;
 
       alerts.push({
         id: alertId,
@@ -207,8 +159,8 @@ export function evaluateShipmentRules(
         tracking_no: shipment.tracking_no,
         severity: 'critical',
         rule_code: 'R1_HUB_ORLY_TIMEOUT',
-        title: '⚠️ COLIS EN ATTENTE D\'EXPEDITION',
-        reason: `Statut transporteur depuis ${daysSinceCarrierStatus} jours sans départ vers Madagascar (Statut Orly - Mada ≠ Reçu et expédié).`,
+        title: '⚠️ EXPEDITION EN ATTENTE DE DEPART',
+        reason: `En préparation depuis ${daysInPreparation} jours sans départ vers Madagascar.`,
         created_at: today,
         resolved: false,
         suggested_action: 'Merci de confirmer la prise en charge par le transitaire et la date de vol/départ programmée.',
@@ -217,7 +169,7 @@ export function evaluateShipmentRules(
     }
 
     // CONDITION 3 : Blocage douanier. Expédition retenue par les services de douane. Facture ou document manquant.
-    if (shipment.customs_status === 'Bloqué Douane' || shipment.global_status === 'Bloqué douane') {
+    if (shipment.customs_status === 'Bloqué Douane' || shipment.global_status === 'Bloquée douane') {
       const alertId = `ALT-CUST-${shipment.id}`;
       const relanceMsg = `🛑 *ALERTE DOUANE - Expédition Bloquée*
 Bloqué aux douanes d'origine ou d'arrivée. Documents complémentaires requis.
@@ -245,6 +197,7 @@ Bloqué aux douanes d'origine ou d'arrivée. Documents complémentaires requis.
     if (
       shipment.eta &&
       shipment.carrier_status !== 'Delivered' &&
+      shipment.global_status !== 'Livrée entrepôt' &&
       new Date(shipment.eta) < new Date(today)
     ) {
       const overdueDays = calculateDaysBetween(shipment.eta);
