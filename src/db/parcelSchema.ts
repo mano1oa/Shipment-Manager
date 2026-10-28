@@ -10,7 +10,7 @@ import { convertLegacyShipmentStatus } from '../lib/parcelTracking.js';
  *   currency, buyer, Supply Chain validation) and the manual sort (triage).
  * - parcels: one row per parcel (tracking number, may be unknown until Orly).
  * - parcel_invoices: a parcel covers 1..n invoices, an invoice has 1..n parcels.
- * - parcel_photos: Antoine's photos (object storage key only, never the image).
+ * - parcel_photos: Antoine's photos (storage_key = Google Drive file id, never the image).
  */
 export async function initParcelSchema(): Promise<void> {
   const sql = getDb();
@@ -105,6 +105,8 @@ export async function initParcelSchema(): Promise<void> {
     );
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_reception_points_date ON reception_points (destination, point_date DESC);`;
+  // Google Drive folder of the point (created at the first photo)
+  await sql`ALTER TABLE reception_points ADD COLUMN IF NOT EXISTS drive_folder_id VARCHAR(100);`;
   // A photo of a point is not matched yet: parcel_id stays NULL until then
   await sql`ALTER TABLE parcel_photos ALTER COLUMN parcel_id DROP NOT NULL;`;
   await sql`

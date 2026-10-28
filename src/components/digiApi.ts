@@ -264,7 +264,7 @@ export const createReceivedParcel = (input: ParcelInput, invoiceIds: string[], r
 
 export interface ParcelPhoto {
   id: string;
-  /** Short-lived display URL (null when the storage is not configured). */
+  /** Authenticated display route (null when the storage is not configured). */
   url: string | null;
   content_type: string | null;
   size_bytes: number | null;
@@ -311,25 +311,15 @@ export const fetchReceptionPoint = (id: string) =>
   apiJson<{ point: ReceptionPoint; photos: PointPhoto[]; storage_configured: boolean }>(`/api/reception-points/${id}`);
 
 /**
- * Uploads one photo of a point: presigned URL from the API, PUT straight to
- * the private bucket, then the key is recorded. The image never goes through the server.
+ * Uploads one compressed photo of a point: the server stores it in the point's
+ * Google Drive folder (shared drive) and keeps only its Drive id.
  */
-export async function uploadPointPhoto(pointId: string, photo: Blob): Promise<void> {
-  const upload = await apiJson<{ key: string; url: string; method: string; headers: Record<string, string> }>(
-    `/api/reception-points/${pointId}/photos/upload-url`,
-    { method: 'POST', body: JSON.stringify({ content_type: photo.type, size_bytes: photo.size }) }
-  );
-  const res = await fetch(upload.url, {
-    method: upload.method || 'PUT',
-    headers: { 'Content-Type': photo.type, ...upload.headers },
+export const uploadPointPhoto = (pointId: string, photo: Blob) =>
+  apiJson<{ id: string }>(`/api/reception-points/${pointId}/photos`, {
+    method: 'POST',
+    headers: { 'Content-Type': photo.type },
     body: photo,
   });
-  if (!res.ok) throw new Error(`Envoi de la photo refusé par le stockage (${res.status}).`);
-  await apiJson(`/api/reception-points/${pointId}/photos`, {
-    method: 'POST',
-    body: JSON.stringify({ key: upload.key, content_type: photo.type, size_bytes: photo.size }),
-  });
-}
 
 export type PointPhotoLink =
   | { parcel_id: string | null }

@@ -95,11 +95,14 @@ import {
   addPointPhoto,
   linkPointPhoto,
   deletePointPhoto,
+  setPointFolder,
+  getPhotoFile,
 } from './db/receptionPoints.js';
 import {
   isPhotoStorageConfigured,
-  presignPhotoUpload,
-  presignPhotoView,
+  createPhotoFolder,
+  uploadPhoto,
+  downloadPhoto,
   deletePhotoObject,
   PHOTO_CONTENT_TYPES,
   PHOTO_MAX_BYTES,
@@ -2109,7 +2112,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     return value > today ? undefined : value;
   };
 
-  /** Removes photo objects from the bucket; a failure only leaves an orphan object (logged). */
+  /** Trashes photo files in Google Drive; a failure only leaves an orphan file (logged). */
   const removePhotoObjects = async (keys: string[]) => {
     if (keys.length === 0 || !isPhotoStorageConfigured()) return;
     for (const key of keys) {
@@ -2343,7 +2346,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           size_bytes: p.size_bytes,
           uploaded_by_email: p.uploaded_by_email,
           uploaded_at: p.uploaded_at,
-          url: configured ? await presignPhotoView(p.storage_key).catch(() => null) : null,
+          url: configured ? `/api/photos/${p.id}` : null,
         }))
       );
       return res.json({ success: true, storage_configured: configured, photos: withUrls });
@@ -2412,7 +2415,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           uploaded_by_email: p.uploaded_by_email,
           linked_by_email: p.linked_by_email,
           linked_at: p.linked_at,
-          url: configured ? await presignPhotoView(p.storage_key).catch(() => null) : null,
+          url: configured ? `/api/photos/${p.id}` : null,
         }))
       );
       return res.json({ success: true, point, photos, storage_configured: configured });
@@ -2422,51 +2425,58 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Step 1 of an upload: a presigned PUT URL for one compressed photo (browser → bucket)
-  app.post('/api/reception-points/:id/photos/upload-url', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
-    if (!isPhotoStorageConfigured()) {
-      return res.status(503).json({ success: false, error: 'Le stockage des photos (Neon Object Storage) n\'est pas configuré.' });
+  /**
+   * Uploads one photo of the point (already compressed by the browser) into the
+   * point's Google Drive folder, created at the first photo. Body: the image
+   * itself (Content-Type image/jpeg, png or webp). The database keeps the Drive id.
+   */
+  app.post(
+    '/api/reception-points/:id/photos',
+    requireRole('SUPPLY_CHAIN'),
+    express.raw({ type: [...PHOTO_CONTENT_TYPES], limit: PHOTO_MAX_BYTES }),
+    async (req: any, res) => {
+      if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      if (!isPhotoStorageConfigured()) {
+        return res.status(503).json({ success: false, error: 'Le stockage des photos (Google Drive) n\'est pas configuré.' });
+      }
+      const contentType = String(req.headers['content-type'] || '').split(';')[0].trim();
+      if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType) || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ success: false, error: 'Photo invalide (JPEG, PNG ou WebP attendu).' });
+      }
+      try {
+        const point = await getReceptionPoint(req.params.id);
+        if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+        let folderId = point.drive_folder_id;
+        if (!folderId) {
+          const hub = point.destination === 'ORLY' ? 'Point Antoine' : 'Réception Rouen';
+          folderId = await setPointFolder(point.id, await createPhotoFolder(`${hub} ${point.point_date} (${point.id.slice(0, 8)})`));
+        }
+        const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
+        const name = `${point.point_date}_${crypto.randomUUID().slice(0, 8)}.${ext}`;
+        const fileId = await uploadPhoto(folderId, name, contentType, req.body);
+        const id = await addPointPhoto(point.id, fileId, contentType, req.body.length, req.user.email);
+        return res.status(201).json({ success: true, id });
+      } catch (err: any) {
+        console.error('[Points] Upload photo error:', err);
+        return res.status(502).json({ success: false, error: 'Google Drive n\'a pas accepté la photo. Réessayez.' });
+      }
     }
-    const contentType = req.body?.content_type;
-    const size = req.body?.size_bytes;
-    if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType)) {
-      return res.status(400).json({ success: false, error: 'Format de photo non accepté (JPEG, PNG ou WebP).' });
-    }
-    if (!Number.isInteger(size) || size <= 0 || size > PHOTO_MAX_BYTES) {
-      return res.status(400).json({ success: false, error: 'Photo trop lourde (5 Mo maximum après compression).' });
-    }
-    try {
-      if (!(await getReceptionPoint(req.params.id))) return res.status(404).json({ success: false, error: 'Point introuvable' });
-      const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';
-      const key = `points/${req.params.id}/${crypto.randomUUID()}.${ext}`;
-      const upload = await presignPhotoUpload(key, contentType);
-      return res.json({ success: true, key, url: upload.url, method: upload.method, headers: upload.headers });
-    } catch (err: any) {
-      console.error('[Points] Upload URL error:', err);
-      return res.status(502).json({ success: false, error: 'Le stockage des photos ne répond pas. Réessayez.' });
-    }
-  });
+  );
 
-  // Step 2: records the uploaded photo (the database keeps the key only)
-  app.post('/api/reception-points/:id/photos', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
-    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
-    const key = req.body?.key;
-    const contentType = req.body?.content_type;
-    const size = req.body?.size_bytes;
-    // Only a key issued for this point by the upload-url step
-    const keyRe = new RegExp(`^points/${req.params.id}/[0-9a-f-]{36}\\.(jpg|png|webp)$`);
-    if (typeof key !== 'string' || !keyRe.test(key)) return res.status(400).json({ success: false, error: 'Photo invalide.' });
-    if (!(PHOTO_CONTENT_TYPES as readonly string[]).includes(contentType) || !Number.isInteger(size) || size > PHOTO_MAX_BYTES) {
-      return res.status(400).json({ success: false, error: 'Photo invalide.' });
-    }
+  // Shows a photo to a signed-in user (the Drive files are never public)
+  app.get('/api/photos/:photoId', async (req: any, res) => {
+    if (!UUID_RE.test(req.params.photoId)) return res.status(404).end();
     try {
-      if (!(await getReceptionPoint(req.params.id))) return res.status(404).json({ success: false, error: 'Point introuvable' });
-      const id = await addPointPhoto(req.params.id, key, contentType, size, req.user.email);
-      return res.status(201).json({ success: true, id });
+      const photo = await getPhotoFile(req.params.photoId);
+      if (!photo || !isPhotoStorageConfigured()) return res.status(404).end();
+      const { data, contentType } = await downloadPhoto(photo.storage_key);
+      res.setHeader('Content-Type', photo.content_type || contentType);
+      res.setHeader('Cache-Control', 'private, max-age=86400');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      return res.send(data);
     } catch (err: any) {
-      console.error('[Points] Add photo error:', err);
-      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la photo' });
+      console.error('[Photos] Read error:', err?.message || err);
+      return res.status(502).end();
     }
   });
 

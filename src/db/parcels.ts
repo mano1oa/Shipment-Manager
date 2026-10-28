@@ -291,7 +291,7 @@ export async function unlinkParcelInvoice(
       AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
     RETURNING id
   `;
-  // Photos of a deleted parcel: their objects are to be removed from the bucket
+  // Photos of a deleted parcel: their Drive files are to be trashed
   const deleted = orphan.length > 0;
   return { unlinked: true, deleted, photo_keys: deleted ? keys.map((k: any) => k.storage_key as string) : [] };
 }

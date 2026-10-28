@@ -293,8 +293,8 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
         <div className="space-y-2 px-4 pt-3">
           {!configured && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
-              Le stockage des photos (Neon Object Storage) n'est pas encore configuré : variables NEON_API_KEY,
-              NEON_STORAGE_PROJECT_ID, NEON_STORAGE_BRANCH_ID et NEON_STORAGE_BUCKET côté serveur.
+              Le stockage des photos (Google Drive partagé) n'est pas encore configuré : variables GOOGLE_SERVICE_ACCOUNT_EMAIL,
+              GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY et GOOGLE_DRIVE_PHOTOS_FOLDER_ID côté serveur.
             </div>
           )}
           {error && (
