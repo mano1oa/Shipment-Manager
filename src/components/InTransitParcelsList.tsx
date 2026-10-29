@@ -6,7 +6,7 @@ import { Parcel, formatDate } from './digiApi';
 import { parcelMatches } from './ParcelsBoardView';
 
 /** Where a parcel stands between the supplier and Madagascar. */
-type Stage = 'to_hub' | 'at_hub' | 'to_mada' | 'customs' | 'search';
+type Stage = 'to_hub' | 'at_hub' | 'to_mada' | 'customs' | 'search' | 'lost';
 
 const STAGE_LABELS: Record<Stage, (hub: string) => string> = {
   to_hub: (hub) => `En route vers ${hub}`,
@@ -14,6 +14,7 @@ const STAGE_LABELS: Record<Stage, (hub: string) => string> = {
   to_mada: () => 'En route vers Madagascar',
   customs: () => 'Bloqué en douane',
   search: () => 'Avis de recherche',
+  lost: (hub) => `Perdu avant ${hub}`,
 };
 
 const STAGE_BADGES: Record<Stage, string> = {
@@ -21,16 +22,17 @@ const STAGE_BADGES: Record<Stage, string> = {
   at_hub: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
   to_mada: 'bg-[#EAD7F9] text-[#623387] dark:bg-purple-950 dark:text-[#B688FF]',
   customs: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  search: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300',
+  search: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
+  lost: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300',
 };
 
 /**
- * Stage of a parcel, or null once it is over: lost before the hub, or its
- * shipment delivered to the Madagascar warehouse (an "avis de recherche" stays
- * open until it is settled).
+ * Stage of a parcel, or null once its shipment is delivered to the Madagascar
+ * warehouse. Lost parcels and "avis de recherche" stay listed: they never
+ * reached Madagascar.
  */
 function stageOf(p: Parcel, shipments: Shipment[]): Stage | null {
-  if (p.status === 'lost') return null;
+  if (p.status === 'lost') return 'lost';
   if (p.status === 'search') return 'search';
   if (p.status === 'to_receive') return 'to_hub';
   if (shipments.some((s) => s.global_status === 'Livrée entrepôt')) return null;
@@ -88,7 +90,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
   const rows = useMemo(() => inTransitRows(parcels || [], destination, shipments), [parcels, destination, shipments]);
 
   const counts = useMemo(() => {
-    const c: Record<Stage, number> = { to_hub: 0, at_hub: 0, to_mada: 0, customs: 0, search: 0 };
+    const c: Record<Stage, number> = { to_hub: 0, at_hub: 0, to_mada: 0, customs: 0, search: 0, lost: 0 };
     rows.forEach((r) => c[r.stage]++);
     return c;
   }, [rows]);
@@ -106,7 +108,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
     <div className="space-y-3">
       <p className="text-xs text-slate-500 dark:text-slate-400">
         Tous les colis vers {hub} pas encore arrivés à Madagascar : en route vers {hub}, en attente de départ, puis en
-        route vers Madagascar.
+        route vers Madagascar — y compris les colis perdus avant {hub} et les avis de recherche.
       </p>
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:flex-wrap lg:items-center dark:border-slate-800 dark:bg-slate-800">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">

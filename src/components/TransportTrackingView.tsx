@@ -48,7 +48,7 @@ export const TransportTrackingView: React.FC<Props> = ({
     [shipmentsProps.shipments, mode, search]
   );
   const parcelCount = useMemo(
-    () => (parcels || []).filter((p) => p.destination === destination && p.status === 'to_receive' && parcelMatches(p, search)).length,
+    () => (parcels || []).filter((p) => p.destination === destination && parcelMatches(p, search)).length,
     [parcels, destination, search]
   );
 
@@ -73,7 +73,7 @@ export const TransportTrackingView: React.FC<Props> = ({
       label: `Colis vers ${hub}`,
       icon: Package,
       count: parcelCount,
-      hint: search ? 'à recevoir trouvé(s)' : 'à recevoir',
+      hint: search ? 'trouvé(s)' : 'colis',
     },
     {
       key: 'shipments',
