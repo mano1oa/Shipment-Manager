@@ -110,7 +110,7 @@ export const DigiInvoiceFormModal: React.FC<Props> = ({ invoice, defaultDestinat
       <div className="w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900 my-8">
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#623387] text-white shadow-sm">
               <FilePlus2 className="h-5 w-5" />
             </div>
             <div>
@@ -274,7 +274,7 @@ export const DigiInvoiceFormModal: React.FC<Props> = ({ invoice, defaultDestinat
             <button
               type="submit"
               disabled={saving}
-              className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 font-bold text-white shadow-md hover:bg-[#522870] disabled:opacity-50"
+              className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 font-bold text-white shadow-md hover:bg-[#522870] disabled:opacity-50"
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               Enregistrer

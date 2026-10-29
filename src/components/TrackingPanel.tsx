@@ -65,7 +65,7 @@ const STATUS_LABELS: Record<TrackingStatus, string> = {
 const STATUS_STYLES: Record<TrackingStatus, string> = {
   UNKNOWN: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-900 dark:text-slate-400 dark:border-slate-700',
   INFO_RECEIVED: 'bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-900',
-  IN_TRANSIT: 'bg-indigo-50 text-indigo-800 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300 dark:border-indigo-900',
+  IN_TRANSIT: 'bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-900',
   OUT_FOR_DELIVERY: 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-900',
   DELIVERED: 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-900',
   EXCEPTION: 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-900',
@@ -276,7 +276,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
     <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-800">
       <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-700">
         <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <Truck className="h-4 w-4 text-[#643288]" /> Suivi transporteur
+          <Truck className="h-4 w-4 text-[#623387]" /> Suivi transporteur
         </h3>
         {canEdit && hasAutomated && (
           <button
@@ -377,7 +377,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                   <button
                     type="button"
                     onClick={() => setExpandedId(expanded ? null : n.id)}
-                    className="flex items-center gap-1 text-[11px] font-semibold text-[#643288] dark:text-purple-300"
+                    className="flex items-center gap-1 text-[11px] font-semibold text-[#623387] dark:text-[#B688FF]"
                   >
                     {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                     Historique ({nEvents.length})
@@ -396,7 +396,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                 {expanded && (
                   <div className="mt-2 space-y-2">
                     {eventFormFor === n.id && (
-                      <div className="grid grid-cols-1 gap-2 rounded-lg border border-[#643288]/30 bg-white p-2.5 sm:grid-cols-2 dark:border-purple-900/60 dark:bg-slate-800">
+                      <div className="grid grid-cols-1 gap-2 rounded-lg border border-[#623387]/30 bg-white p-2.5 sm:grid-cols-2 dark:border-purple-900/60 dark:bg-slate-800">
                         <input
                           type="datetime-local"
                           value={eventAt}
@@ -445,7 +445,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                             type="button"
                             onClick={() => handleSaveEvent(n.id)}
                             disabled={savingEvent}
-                            className="flex items-center gap-1 rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                            className="flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-bold text-white disabled:opacity-50"
                           >
                             {savingEvent ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
                             Enregistrer
@@ -517,7 +517,7 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                   type="button"
                   onClick={handleAdd}
                   disabled={adding || !detected?.number}
-                  className="flex items-center justify-center gap-1 rounded-lg bg-[#643288] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                  className="flex items-center justify-center gap-1 rounded-lg bg-[#623387] px-3 py-2 text-[11px] font-bold text-white hover:bg-[#522870] disabled:opacity-50"
                 >
                   {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
                   Ajouter un n° de suivi

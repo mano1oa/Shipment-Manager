@@ -134,32 +134,32 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
   const totalReceived = deliveries.filter((d) => d.recep_rouen === 'Oui').length;
 
   return (
-    <div className="mt-3 rounded-2xl border border-indigo-100 bg-slate-50/70 p-4 shadow-inner dark:border-indigo-950 dark:bg-slate-900/80">
+    <div className="mt-3 rounded-2xl border border-sky-100 bg-slate-50/70 p-4 shadow-inner dark:border-sky-950 dark:bg-slate-900/80">
       {/* Sub-table Header & Summaries */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pb-3 border-b border-indigo-100 dark:border-slate-800">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pb-3 border-b border-sky-100 dark:border-slate-800">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-sky-600 text-white shadow-xs">
             <Package className="h-4 w-4" />
           </div>
           <div>
             <h4 className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
-              Suivi des Livraisons chez le Transitaire (Hub de Rouen)
-              <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+              Suivi des livraisons chez le transitaire (hub de Rouen)
+              <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-800 dark:bg-sky-950 dark:text-sky-300">
                 {deliveries.length} ligne{deliveries.length > 1 ? 's' : ''}
               </span>
             </h4>
             <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Historique en lecture seule : ces lignes ont été reprises en colis, suivis dans Suivi Maritime › Colis
+              Historique en lecture seule : ces lignes ont été reprises en colis, suivis dans Suivi maritime › Colis
               vers Rouen • Volume total:{' '}
-              <strong className="text-indigo-600 dark:text-indigo-400">{totalVolume.toFixed(2)} m³</strong>
+              <strong className="text-sky-600 dark:text-sky-400">{totalVolume.toFixed(2)} m³</strong>
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           {/* Summary Badge */}
-          <div className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-            <span>Statut Réception Rouen:</span>
+          <div className="flex items-center gap-1.5 rounded-xl border border-sky-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 shadow-2xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+            <span>Statut réception Rouen:</span>
             <span
               className={`rounded-md px-1.5 py-0.5 text-[10px] font-mono font-extrabold ${
                 totalReceived === deliveries.length && deliveries.length > 0
@@ -174,9 +174,9 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
           {canEdit && (
             <button
               onClick={handleAddRow}
-              className="flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-indigo-700"
+              className="flex items-center gap-1 rounded-xl bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition hover:bg-sky-700"
             >
-              <Plus className="h-3.5 w-3.5" /> Ajouter une Ligne
+              <Plus className="h-3.5 w-3.5" /> Ajouter une ligne
             </button>
           )}
         </div>
@@ -193,9 +193,9 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
               <th className="px-3 py-2 min-w-[90px] text-center">Vol. est. (m³)</th>
               <th className="px-3 py-2 min-w-[130px]">Fournisseurs</th>
               <th className="px-3 py-2 min-w-[160px]">Livraison</th>
-              <th className="px-3 py-2 min-w-[130px]">N° Suivi Transporteur</th>
+              <th className="px-3 py-2 min-w-[130px]">N° suivi transporteur</th>
               <th className="px-3 py-2 min-w-[110px]">Transporteur</th>
-              <th className="px-3 py-2 min-w-[170px]">Statut Livraison</th>
+              <th className="px-3 py-2 min-w-[170px]">Statut livraison</th>
               <th className="px-3 py-2 min-w-[120px] text-center">Récep à Rouen</th>
               <th className="px-3 py-2 min-w-[150px]">Remarque</th>
               {canEdit && <th className="px-3 py-2 text-right w-20">Actions</th>}
@@ -209,7 +209,7 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
                   {canEdit && (
                     <button
                       onClick={handleAddRow}
-                      className="ml-2 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+                      className="ml-2 font-bold text-sky-600 hover:underline dark:text-sky-400"
                     >
                       + Ajouter la première ligne
                     </button>
@@ -225,7 +225,7 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
                   <tr
                     key={item.id}
                     className={`transition hover:bg-slate-50/80 dark:hover:bg-slate-900/60 ${
-                      isEditing ? 'bg-indigo-50/50 dark:bg-indigo-950/30' : ''
+                      isEditing ? 'bg-sky-50/50 dark:bg-sky-950/30' : ''
                     }`}
                   >
                     {/* N° (Automatique) */}
@@ -319,7 +319,7 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
                           className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold ${
                             item.delivery_type === 'Livraison par fournisseur'
                               ? 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
-                              : 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'
+                              : 'bg-[#EAD7F9] text-[#623387] dark:bg-purple-950 dark:text-[#B688FF]'
                           }`}
                         >
                           <Truck className="h-3 w-3" /> {item.delivery_type}
@@ -328,7 +328,7 @@ export const SeaDeliveriesTable: React.FC<SeaDeliveriesTableProps> = ({
                     </td>
 
                     {/* N° de suivi transporteur */}
-                    <td className="px-3 py-2.5 font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                    <td className="px-3 py-2.5 font-mono font-bold text-sky-600 dark:text-sky-400">
                       {isEditing ? (
                         <input
                           type="text"

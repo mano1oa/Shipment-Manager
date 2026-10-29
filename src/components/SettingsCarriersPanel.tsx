@@ -16,11 +16,11 @@ type CarrierItem = {
 const MODE_LABELS: Record<CarrierTransportMode, string> = {
   Air: 'Aérien',
   Sea: 'Maritime',
-  BOTH: 'Aérien & Maritime',
+  BOTH: 'Aérien et maritime',
 };
 
 const fieldClass =
-  'rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#643288] focus:outline-none focus:ring-2 focus:ring-[#643288]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
+  'rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#623387] focus:outline-none focus:ring-2 focus:ring-[#623387]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 
 const connectorLabel = (code: string | null) => (code ? CARRIER_LABELS[code as CarrierCode] || code : null);
 
@@ -174,7 +174,7 @@ export const SettingsCarriersPanel: React.FC = () => {
           <button
             type="submit"
             disabled={creating || !newName.trim()}
-            className="flex items-center justify-center gap-1.5 rounded-lg bg-[#643288] px-4 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-[#623387] px-4 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
           >
             {creating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
             Ajouter
@@ -286,7 +286,7 @@ export const SettingsCarriersPanel: React.FC = () => {
                                   tracking_carrier_code: editConnector || null,
                                 })
                               }
-                              className="rounded-lg bg-[#643288] p-1.5 text-white hover:bg-[#522870] disabled:opacity-50"
+                              className="rounded-lg bg-[#623387] p-1.5 text-white hover:bg-[#522870] disabled:opacity-50"
                               title="Enregistrer"
                             >
                               {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}

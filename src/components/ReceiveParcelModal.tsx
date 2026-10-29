@@ -150,7 +150,7 @@ export const ReceiveParcelModal: React.FC<Props> = ({ destination, onClose, onSa
                       type="checkbox"
                       checked={selected.has(inv.id)}
                       onChange={() => toggle(inv.id)}
-                      className="h-4 w-4 accent-[#643288]"
+                      className="h-4 w-4 accent-[#623387]"
                     />
                     <span className="font-semibold">{inv.ref || '—'}</span>
                     <span className="text-slate-500">

@@ -111,7 +111,7 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
         {isSupplyChain && (
           <button
             onClick={() => setAdding(true)}
-            className="flex items-center gap-1 rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
+            className="flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
           >
             <Plus className="h-3 w-3" /> Ajouter des factures
           </button>

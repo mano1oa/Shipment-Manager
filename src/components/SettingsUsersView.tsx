@@ -203,12 +203,12 @@ export function SettingsUsersView({ currentUserId }: { currentUserId: string }) 
   }
 
   const fieldClass =
-    'rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#643288] focus:outline-none focus:ring-2 focus:ring-[#643288]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
+    'rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-[#623387] focus:outline-none focus:ring-2 focus:ring-[#623387]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 
   return (
     <SettingsCard
       icon={Users}
-      title="Utilisateurs & accès"
+      title="Utilisateurs et accès"
       description="Comptes et rôles de Shipment Manager. Chaque utilisateur change son mot de passe depuis son profil (en haut à droite)."
     >
       {error && (
@@ -261,7 +261,7 @@ export function SettingsUsersView({ currentUserId }: { currentUserId: string }) 
         <button
           type="submit"
           disabled={creating}
-          className="flex items-center justify-center gap-1.5 rounded-lg bg-[#643288] px-4 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-[#623387] px-4 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
         >
           <UserPlus className="h-3.5 w-3.5" />
           {creating ? 'Création...' : 'Créer l’utilisateur'}
@@ -429,7 +429,7 @@ export function SettingsUsersView({ currentUserId }: { currentUserId: string }) 
                 <button
                   type="submit"
                   disabled={resetting}
-                  className="rounded-xl bg-[#643288] px-5 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                  className="rounded-xl bg-[#623387] px-5 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
                 >
                   {resetting ? 'Enregistrement...' : 'Réinitialiser'}
                 </button>

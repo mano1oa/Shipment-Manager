@@ -100,7 +100,7 @@ const NO_SUPPLIER = '— Sans fournisseur —';
 const supplierOf = (inv: DigiInvoice) => inv.supplier_display || NO_SUPPLIER;
 
 const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
-  odoo: 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300',
+  odoo: 'bg-[#EAD7F9] text-[#623387] dark:bg-purple-950 dark:text-[#B688FF]',
   excel: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300',
   manual: 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
@@ -301,6 +301,11 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return counts;
   }, [invoices]);
 
+  // "À trier" is hidden when empty: open on the goods instead
+  useEffect(() => {
+    if (!loading && section === 'to_sort' && sectionCounts.to_sort === 0) setSection('goods');
+  }, [loading, section, sectionCounts.to_sort]);
+
   const suppliers = useMemo(
     () => Array.from(new Set<string>(sectionInvoices.map(supplierOf))).sort((a, b) => a.localeCompare(b, 'fr')),
     [sectionInvoices]
@@ -446,7 +451,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       return (
         <button
           onClick={() => onOpenShipment(inv.shipment_id!)}
-          className="text-left font-mono font-semibold text-[#643288] hover:underline dark:text-purple-300"
+          className="text-left font-mono font-semibold text-[#623387] hover:underline dark:text-[#B688FF]"
           title={inv.shipment_global_status || undefined}
         >
           {inv.shipment_id}
@@ -487,7 +492,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
   const bulkButton =
     'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40';
   const selectClass =
-    'rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+    'rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
   const renderInvoice = (inv: DigiInvoice) => {
     const isOpen = expanded.has(inv.id);
@@ -500,7 +505,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
           onClick={() => toggle(inv.id)}
           className={`cursor-pointer transition ${
             isSelected
-              ? 'bg-purple-50/70 hover:bg-purple-50 dark:bg-purple-950/30 dark:hover:bg-purple-950/40'
+              ? 'bg-[#F8EEFF]/70 hover:bg-[#F8EEFF] dark:bg-purple-950/30 dark:hover:bg-purple-950/40'
               : 'hover:bg-slate-50/90 dark:hover:bg-slate-700/40'
           }`}
         >
@@ -605,7 +610,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                 <button
                   onClick={() => openParcelForm([inv])}
                   title="Ajouter un colis (n° de suivi)"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
                 >
                   <Package className="h-4 w-4" />
                 </button>
@@ -615,7 +620,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   onClick={() => handleTriage(inv, 'goods')}
                   disabled={busyId === inv.id}
                   title="Marchandises : suivre ses colis jusqu'à Orly"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
                 >
                   <PackageCheck className="h-4 w-4" />
                 </button>
@@ -625,7 +630,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   onClick={() => handleTriage(inv, 'services')}
                   disabled={busyId === inv.id}
                   title="Services : pas de colis"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
                 >
                   <Wrench className="h-4 w-4" />
                 </button>
@@ -635,7 +640,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   onClick={() => handleTriage(inv, 'to_sort')}
                   disabled={busyId === inv.id}
                   title="Remettre à trier"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] disabled:opacity-50 dark:hover:bg-slate-700"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
                 >
                   <Undo2 className="h-4 w-4" />
                 </button>
@@ -644,7 +649,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                 <button
                   onClick={() => (inv.is_digi ? setEditing(inv) : setEditingDirect(inv))}
                   title="Modifier"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
                 >
                   <Pencil className="h-4 w-4" />
                 </button>
@@ -754,7 +759,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900 dark:text-white">
-            <ReceiptText className="h-6 w-6 text-[#643288]" /> Factures fournisseurs
+            <ReceiptText className="h-6 w-6 text-[#623387]" /> Factures fournisseurs
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Factures DIGI LOGISTIC à destination de <strong>{destination}</strong> (Odoo, import Excel, saisie) et
@@ -789,7 +794,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                 ? 'Récupérer les factures depuis Odoo DIGI LOGISTIC'
                 : 'Connexion Odoo non configurée (variables ODOO_* côté serveur)'
             }
-            className={`${button} bg-[#643288] text-white hover:bg-[#522870]`}
+            className={`${button} bg-[#623387] text-white hover:bg-[#522870]`}
           >
             {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Synchroniser Odoo
@@ -808,7 +813,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
           </button>
           <button
             onClick={() => setEditingDirect('new')}
-            className={`${button} border border-[#643288] bg-white text-[#643288] hover:bg-purple-50 dark:bg-slate-800 dark:text-purple-300`}
+            className={`${button} border border-[#623387] bg-white text-[#623387] hover:bg-[#F8EEFF] dark:bg-slate-800 dark:text-[#B688FF]`}
           >
             <FileText className="h-4 w-4" /> Facture hors DIGI
           </button>
@@ -838,8 +843,8 @@ export const DigiInvoicesView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Sections */}
-      <div className="flex gap-1 rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
+      {/* Sections: "À trier" only when it holds invoices */}
+      <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
         {(
           [
             ['to_sort', 'À trier'],
@@ -847,20 +852,23 @@ export const DigiInvoicesView: React.FC<Props> = ({
             ['services', 'Services'],
             ['validation', 'Hors DIGI à valider'],
           ] as [Section, string][]
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setSection(key)}
-            className={`rounded-lg px-3 py-1.5 transition ${
-              section === key
-                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-            }`}
-          >
-            {label} <span className="ml-1 text-slate-400">{sectionCounts[key]}</span>
-          </button>
-        ))}
+        )
+          .filter(([key]) => key !== 'to_sort' || sectionCounts.to_sort > 0)
+          .map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setSection(key)}
+              className={`shrink-0 rounded-lg px-3 py-1.5 transition ${
+                section === key
+                  ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                  : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
+              }`}
+            >
+              {label} <span className="ml-1 text-slate-400">{sectionCounts[key]}</span>
+            </button>
+          ))}
       </div>
+
       <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
         {section === 'to_sort' &&
           `Factures DIGI pas encore triées : aucune alerte de perte tant qu'elles ne sont pas classées en marchandises. Signalées « Tri en retard » après ${settings?.triage_alert_days ?? 3} jours.`}
@@ -876,13 +884,13 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
       {/* Filters */}
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:flex-wrap lg:items-center dark:border-slate-800 dark:bg-slate-800">
-        <div className="relative min-w-[16rem] flex-1">
+        <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Fournisseur, référence, commande Amazon, facture vente, produit…"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
         </div>
         <select
@@ -929,7 +937,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
             type="checkbox"
             checked={groupBySupplier}
             onChange={(e) => setGroupBySupplier(e.target.checked)}
-            className="h-4 w-4 accent-[#643288]"
+            className="h-4 w-4 accent-[#623387]"
           />
           Grouper par fournisseur
         </label>
@@ -940,11 +948,11 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
       {/* Actions on the selected invoices */}
       {(selectedInvoices.length > 0 || bulkProgress) && (
-        <div className="sticky top-20 z-10 flex flex-col gap-3 rounded-2xl border border-[#643288]/40 bg-purple-50 p-3 shadow-md lg:flex-row lg:items-center dark:border-purple-800 dark:bg-slate-900">
+        <div className="sticky top-20 z-10 flex flex-col gap-3 rounded-2xl border border-[#623387]/40 bg-[#F8EEFF] p-3 shadow-md lg:flex-row lg:items-center dark:border-purple-800 dark:bg-slate-900">
           <div className="flex flex-1 items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-100">
             {bulkProgress ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin text-[#643288]" /> {bulkProgress}
+                <Loader2 className="h-4 w-4 animate-spin text-[#623387]" /> {bulkProgress}
               </>
             ) : (
               <>
@@ -966,7 +974,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   onClick={() => handleBulkTriage('goods')}
                   disabled={toGoods.length === 0}
                   title="Marchandises : leurs colis sont suivis jusqu'à Orly"
-                  className={`${bulkButton} bg-[#643288] text-white hover:bg-[#522870]`}
+                  className={`${bulkButton} bg-[#623387] text-white hover:bg-[#522870]`}
                 >
                   <PackageCheck className="h-3.5 w-3.5" /> Marchandises ({toGoods.length})
                 </button>
@@ -976,7 +984,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   onClick={() => openParcelForm(forParcel)}
                   disabled={forParcel.length === 0}
                   title="Un colis (n° de suivi) pour les factures sélectionnées d'un même fournisseur"
-                  className={`${bulkButton} bg-[#643288] text-white hover:bg-[#522870]`}
+                  className={`${bulkButton} bg-[#623387] text-white hover:bg-[#522870]`}
                 >
                   <Package className="h-3.5 w-3.5" /> Ajouter un colis ({forParcel.length})
                 </button>
@@ -1216,6 +1224,6 @@ const SelectBox: React.FC<{ state: boolean | 'mixed'; label: string; onChange: (
       if (el) el.indeterminate = state === 'mixed';
     }}
     onChange={() => onChange(state !== true)}
-    className="h-4 w-4 cursor-pointer accent-[#643288]"
+    className="h-4 w-4 cursor-pointer accent-[#623387]"
   />
 );

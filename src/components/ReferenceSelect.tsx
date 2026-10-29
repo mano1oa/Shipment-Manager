@@ -122,7 +122,7 @@ export const ReferenceSelect: React.FC<ReferenceSelectProps> = ({
           {onCreate && <option value={CREATE_VALUE}>+ Ajouter un {entityLabel}…</option>}
         </select>
       ) : (
-        <div className="mt-1 space-y-2 rounded-xl border border-[#643288]/30 bg-purple-50/40 p-2.5 dark:border-purple-900/60 dark:bg-slate-800">
+        <div className="mt-1 space-y-2 rounded-xl border border-[#623387]/30 bg-[#F8EEFF]/40 p-2.5 dark:border-purple-900/60 dark:bg-slate-800">
           <input
             type="text"
             autoFocus
@@ -172,7 +172,7 @@ export const ReferenceSelect: React.FC<ReferenceSelectProps> = ({
               type="button"
               onClick={handleCreate}
               disabled={submitting}
-              className="flex items-center gap-1 rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+              className="flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#522870] disabled:opacity-50"
             >
               {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
               Ajouter

@@ -45,7 +45,7 @@ const GLOBAL_STATUSES: readonly GlobalStatus[] = SHIPMENT_STATUSES;
 const CUSTOMS_STATUSES: Shipment['customs_status'][] = ['Non Requis', 'En cours', 'Dédouané', 'Bloqué Douane'];
 
 const inputClass =
-  'mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white';
+  'mt-1 w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-900 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white';
 const cardClass = 'rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-800/60';
 const amountFormat = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -239,7 +239,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               <button
                 type="button"
                 onClick={() => (isEditing ? handleSave() : setIsEditing(true))}
-                className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#522870]"
+                className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#522870]"
               >
                 {isEditing ? (
                   <>
@@ -289,7 +289,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                             <button
                               onClick={() => handleSendChat(activeAlert.relance_draft!)}
                               disabled={dispatchingChat}
-                              className="flex items-center gap-1 rounded-lg bg-[#643288] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#522870] disabled:opacity-50"
+                              className="flex items-center gap-1 rounded-lg bg-[#623387] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#522870] disabled:opacity-50"
                             >
                               <Send className="h-3 w-3" />
                               {dispatchingChat ? 'Envoi...' : 'Envoyer Google Chat'}
@@ -352,7 +352,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 )}
               </Field>
 
-              <Field label={isSea ? 'BL & conteneur' : 'LTA'}>
+              <Field label={isSea ? 'BL et conteneur' : 'LTA'}>
                 {isEditing ? (
                   <>
                     <input

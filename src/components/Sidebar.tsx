@@ -27,6 +27,9 @@ interface SidebarProps {
   onNewShipment: () => void;
   canEdit: boolean;
   currentRole: UserRole;
+  /** Phone / tablet: the menu is open over the page. */
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -36,25 +39,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onNewShipment,
   canEdit,
   currentRole,
+  mobileOpen,
+  onCloseMobile,
 }) => {
   const navItems = [
     {
       id: 'dashboard' as NavTab,
-      label: 'Tableau de bord & KPI',
+      label: 'Tableau de bord et KPI',
       icon: LayoutDashboard,
       badge: null,
       allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
     },
     {
       id: 'air' as NavTab,
-      label: 'Suivi Aérien',
+      label: 'Suivi aérien',
       icon: Plane,
       badge: 'Air',
       allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
     },
     {
       id: 'sea' as NavTab,
-      label: 'Suivi Maritime',
+      label: 'Suivi maritime',
       icon: Ship,
       badge: 'Sea',
       allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
@@ -68,7 +73,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'alerts' as NavTab,
-      label: 'Centre d’Alertes',
+      label: 'Centre d’alertes',
       icon: AlertTriangle,
       badge: criticalAlertsCount > 0 ? `${criticalAlertsCount}` : null,
       badgeColor: 'bg-rose-500 text-white',
@@ -88,49 +93,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
   );
 
   return (
+    <>
+    {/* Phone / tablet: the menu slides over the page, behind a dimmed backdrop */}
+    {mobileOpen && (
+      <div className="fixed inset-0 top-16 z-30 bg-slate-900/40 lg:hidden" onClick={onCloseMobile} aria-hidden="true" />
+    )}
     <aside
       id="main-sidebar"
-      className="sticky top-16 h-[calc(100vh-4rem)] w-64 shrink-0 flex flex-col justify-between border-r border-slate-200 bg-slate-50/50 p-4 transition-colors dark:border-slate-800 dark:bg-slate-900/50 overflow-y-auto z-20"
+      className={`fixed left-0 top-16 z-40 h-[calc(100dvh-4rem)] w-64 shrink-0 flex flex-col justify-between border-r border-slate-200 bg-slate-50 p-4 transition-transform dark:border-slate-800 dark:bg-slate-900 overflow-y-auto lg:sticky lg:z-20 lg:translate-x-0 lg:bg-slate-50/50 lg:dark:bg-slate-900/50 ${
+        mobileOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full'
+      }`}
     >
       <div className="space-y-6">
         {/* New Shipment Button */}
         {currentRole === 'supply_chain' && (
           <button
             id="sidebar-btn-new-shipment"
-            onClick={onNewShipment}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#643288] py-2.5 text-sm font-semibold text-white shadow-md shadow-[#643288]/25 transition hover:bg-[#522870] active:scale-95"
+            onClick={() => {
+              onNewShipment();
+              onCloseMobile();
+            }}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#623387] py-2.5 text-sm font-semibold text-white shadow-md shadow-[#623387]/25 transition hover:bg-[#522870] active:scale-95"
           >
             <PlusCircle className="h-4 w-4" />
-            Nouvelle Expédition
+            Nouvelle expédition
           </button>
         )}
-
-        {/* Role Badge Indicator */}
-        <div className="rounded-xl border border-slate-200 bg-white/80 p-2.5 dark:border-slate-800 dark:bg-slate-800/50">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-medium text-slate-500 dark:text-slate-400">Profil Actif:</span>
-            <span
-              className={`font-bold px-2 py-0.5 rounded-full text-[10px] ${
-                currentRole === 'supply_chain'
-                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
-                  : currentRole === 'sourcing'
-                  ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                  : 'bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300'
-              }`}
-            >
-              {currentRole === 'supply_chain'
-                ? 'Supply Chain'
-                : currentRole === 'sourcing'
-                ? 'Sourcing'
-                : 'Direction (Lecture seule)'}
-            </span>
-          </div>
-        </div>
 
         {/* Navigation Menu */}
         <nav className="space-y-1">
           <p className="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-            Navigation Principale
+            Navigation
           </p>
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
@@ -139,10 +132,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 id={`sidebar-tab-${item.id}`}
-                onClick={() => onTabChange(item.id)}
+                onClick={() => {
+                  onTabChange(item.id);
+                  onCloseMobile();
+                }}
                 className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${
                   isActive
-                    ? 'bg-[#643288] text-white shadow-sm font-semibold'
+                    ? 'bg-[#623387] text-white shadow-sm font-semibold'
                     : 'text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white'
                 }`}
               >
@@ -177,13 +173,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* System Status / Architecture Info */}
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-800/80">
         <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
-          <Database className="h-4 w-4 text-[#643288]" />
-          Base Données & API
+          <Database className="h-4 w-4 text-[#623387]" />
+          Base de données et API
         </div>
         <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
           Neon PostgreSQL • Odoo DIGI LOGISTIC
         </p>
       </div>
     </aside>
+    </>
   );
 };

@@ -216,8 +216,8 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     if (perduOrlyShipments.length === 0) return;
     let text = `TABLEAU OFFICIEL DE RÉCLAMATION COLIS PERDUS ORLY\n`;
     text += `Date de génération: ${formatToday()}\n`;
-    text += `Nombre de colis: ${perduOrlyShipments.length} | Valeur Totale: ${totalPerduValue.toLocaleString()} €\n\n`;
-    text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transporteur | N° Suivi / LTA | Valeur (€) | Remarques\n`;
+    text += `Nombre de colis: ${perduOrlyShipments.length} | Valeur totale: ${totalPerduValue.toLocaleString()} €\n\n`;
+    text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transporteur | N° suivi / LTA | Valeur (€) | Remarques\n`;
     text += `----------------------------------------------------------------------------------------------------\n`;
     perduOrlyShipments.forEach((s) => {
       text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${valueOf(s)} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
@@ -238,21 +238,21 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       'ID',
       'Mode',
       'Fournisseur',
-      'Ref Commande',
+      'Ref commande',
       'Facture',
       'Valeur EUR',
-      'N° Suivi',
+      'N° suivi',
       'LTA_BL',
       'Transporteur',
-      'Statut Livraison Transporteur',
-      'Date Statut Transporteur',
-      'Statut Expédition Orly',
-      'Statut Métier Global',
-      'Date Scan Orly Manuelle',
+      'Statut livraison transporteur',
+      'Date statut transporteur',
+      'Statut expédition Orly',
+      'Statut métier global',
+      'Date scan Orly manuelle',
       'Ref FA (DIGI-NXT)',
       'Départ Mada',
       'ETA MADA S du',
-      'Date Recep Mada',
+      'Date récep Mada',
       'Remarques',
     ];
 
@@ -300,18 +300,18 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
           <h1 className="flex items-center gap-2 text-xl font-extrabold text-slate-900 dark:text-white">
             {modeFilter === 'Air' ? (
               <>
-                <Plane className="h-6 w-6 text-sky-600" /> Suivi des Expéditions Aériennes
+                <Plane className="h-6 w-6 text-sky-600" /> Suivi des expéditions aériennes
               </>
             ) : modeFilter === 'Sea' ? (
               <>
-                <Ship className="h-6 w-6 text-indigo-600" /> Suivi des Expéditions Maritimes
+                <Ship className="h-6 w-6 text-sky-600" /> Suivi des expéditions maritimes
               </>
             ) : (
-              <>Toutes les Expéditions ({filteredShipments.length})</>
+              <>Toutes les expéditions ({filteredShipments.length})</>
             )}
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Filtrage dynamique, suivi transporteurs, expéditions Orly → Madagascar et contrôle Ref FA (DIGI-NXT)
+            Filtrage dynamique, suivi transporteurs, expéditions Orly → Madagascar et contrôle réf FA (DIGI-NXT)
           </p>
         </div>
 
@@ -321,10 +321,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             <button
               id="shipments-btn-new-shipment"
               onClick={onNewShipment}
-              className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#522870] active:scale-95"
+              className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3.5 py-2 text-xs font-bold text-white shadow-xs transition hover:bg-[#522870] active:scale-95"
               title="Ajouter une nouvelle expédition"
             >
-              <PlusCircle className="h-4 w-4" /> Nouvelle Expédition
+              <PlusCircle className="h-4 w-4" /> Nouvelle expédition
             </button>
           )}
 
@@ -361,10 +361,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
             <input
               type="text"
-              placeholder="Chercher N°, Ref FA, Fournisseur..."
+              placeholder="Chercher n°, réf FA, fournisseur..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-3 text-xs text-slate-800 placeholder-slate-400 focus:border-[#643288] focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-3 text-xs text-slate-800 placeholder-slate-400 focus:border-[#623387] focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             />
           </div>
 
@@ -373,7 +373,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             <select
               value={selectedCarrier}
               onChange={(e) => setSelectedCarrier(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
               <option value="all">Tous les transporteurs</option>
               {carriersList.map((c) => (
@@ -389,7 +389,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             <select
               value={selectedGlobalStatus}
               onChange={(e) => setSelectedGlobalStatus(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs font-semibold text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
               <option value="all">Tous les statuts d'expédition</option>
               {SHIPMENT_STATUSES.map((s) => (
@@ -405,7 +405,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
             <select
               value={selectedSupplier}
               onChange={(e) => setSelectedSupplier(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
               <option value="all">Tous les fournisseurs</option>
               {suppliersList.map((sup) => (
@@ -423,7 +423,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                 type="checkbox"
                 checked={onlyOrlyOverdue}
                 onChange={(e) => setOnlyOrlyOverdue(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300 text-[#643288] focus:ring-[#643288]"
+                className="h-4 w-4 rounded border-slate-300 text-[#623387] focus:ring-[#623387]"
               />
               Orly &gt; 10j
             </label>
@@ -464,17 +464,17 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               <tr>
                 <th className="px-3 py-3 font-semibold">Mode</th>
                 <th className="px-3 py-3 font-semibold">Fournisseur</th>
-                <th className="px-3 py-3 font-semibold">Réf Facture & Commande</th>
+                <th className="px-3 py-3 font-semibold">Réf facture et commande</th>
                 <th className="px-3 py-3 font-semibold">Valeur (€)</th>
-                <th className="px-3 py-3 font-semibold">N° Suivi & LTA/BL</th>
+                <th className="px-3 py-3 font-semibold">N° suivi et LTA/BL</th>
                 <th className="px-3 py-3 font-semibold">Transporteur</th>
                 {modeFilter === 'Air' && (
                   <>
                     <th className="px-3 py-3 font-semibold text-sky-700 dark:text-sky-400">
-                      Statut Livraison Transporteur
+                      Statut livraison transporteur
                     </th>
                     <th className="px-3 py-3 font-semibold text-sky-700 dark:text-sky-400">
-                      Date Statut Transporteur
+                      Date statut transporteur
                     </th>
                   </>
                 )}
@@ -484,7 +484,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                     Remise / scan Orly
                   </th>
                 )}
-                <th className="px-3 py-3 font-semibold text-indigo-700 dark:text-indigo-400">
+                <th className="px-3 py-3 font-semibold text-sky-700 dark:text-sky-400">
                   Ref FA (DIGI - NXT)
                 </th>
                 <th className="px-3 py-3 font-semibold">DEPART MADA</th>
@@ -521,9 +521,9 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                       {onNewShipment && (
                         <button
                           onClick={onNewShipment}
-                          className="mt-1 flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#522870]"
+                          className="mt-1 flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-[#522870]"
                         >
-                          <PlusCircle className="h-4 w-4" /> Créer une Expédition
+                          <PlusCircle className="h-4 w-4" /> Créer une expédition
                         </button>
                       )}
                     </div>
@@ -559,7 +559,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                               <Plane className="h-3 w-3" /> AIR
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded-lg bg-indigo-100 px-2 py-1 text-[10px] font-bold text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300">
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-sky-100 px-2 py-1 text-[10px] font-bold text-sky-800 dark:bg-sky-950 dark:text-sky-300">
                               <Ship className="h-3 w-3" /> SEA
                             </span>
                           )}
@@ -589,7 +589,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                 <>
                                   <div>{digiAmountFormat.format(digi.amount)} €</div>
                                   <div
-                                    className="font-sans text-[10px] font-medium text-indigo-600 dark:text-indigo-400"
+                                    className="font-sans text-[10px] font-medium text-sky-600 dark:text-sky-400"
                                     title="Total des factures DIGI LOGISTIC → NextHope de cette expédition"
                                   >
                                     {digi.invoiceLabel}
@@ -603,7 +603,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                         {/* Tracking & BL */}
                         <td className="px-3 py-3">
-                          <div className="font-mono font-bold text-[#643288] dark:text-pink-400">
+                          <div className="font-mono font-bold text-[#623387] dark:text-[#ED5DB2]">
                             {shp.tracking_no}
                           </div>
                           <div className="text-[10px] text-slate-500 font-mono">
@@ -653,7 +653,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                               shp.global_status === 'Livrée entrepôt'
                                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
                                 : shp.global_status === 'Expédiée vers Mada'
-                                ? 'bg-indigo-50 text-indigo-800 border-indigo-300 dark:bg-indigo-950 dark:text-indigo-300'
+                                ? 'bg-sky-50 text-sky-800 border-sky-300 dark:bg-sky-950 dark:text-sky-300'
                                 : shp.global_status === 'En préparation'
                                 ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300'
                                 : shp.global_status === 'Bloquée douane'
@@ -710,7 +710,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                 });
                               }
                             }}
-                            className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1 font-mono text-[11px] text-slate-800 shadow-2xs focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1 font-mono text-[11px] text-slate-800 shadow-2xs focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
                         </td>
 
@@ -737,7 +737,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             const etaMada = calculateEtaMadaSDu(shp.orly_scan_date);
                             const isParti = etaMada && etaMada !== 'Non parti';
                             return isParti ? (
-                              <span className="text-indigo-600 dark:text-indigo-400 font-medium">
+                              <span className="text-sky-600 dark:text-sky-400 font-medium">
                                 {formatDate(etaMada)}
                               </span>
                             ) : (
@@ -795,7 +795,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                 });
                               }
                             }}
-                            className="w-32 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-800 shadow-2xs focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                            className="w-32 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-800 shadow-2xs focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
                         </td>
 
@@ -805,7 +805,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             {shp.mode === 'Sea' && (
                               <button
                                 onClick={(e) => toggleExpandSea(shp.id, e)}
-                                className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-700 transition hover:bg-indigo-100 dark:border-indigo-900 dark:bg-indigo-950 dark:text-indigo-300"
+                                className="flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-1 text-[11px] font-bold text-sky-700 transition hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950 dark:text-sky-300"
                                 title="Afficher le suivi livraisons transitaire Rouen"
                               >
                                 <Package className="h-3 w-3" />
@@ -827,7 +827,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                                 e.stopPropagation();
                                 onSelectShipment(shp);
                               }}
-                              className="rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-[#522870]"
+                              className="rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-[#522870]"
                             >
                               Consulter
                             </button>
@@ -839,7 +839,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                         <tr>
                           <td
                             colSpan={modeFilter === 'Air' ? 18 : 14}
-                            className="bg-indigo-50/30 p-3 dark:bg-slate-900/80 border-t border-b border-indigo-100 dark:border-slate-800"
+                            className="bg-sky-50/30 p-3 dark:bg-slate-900/80 border-t border-b border-sky-100 dark:border-slate-800"
                           >
                             <SeaDeliveriesTable
                               shipment={shp}
@@ -870,7 +870,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                 </div>
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                    Tableau Officiel de Réclamation — Colis "Perdu Orly"
+                    Tableau officiel de réclamation — colis "Perdu Orly"
                   </h2>
                   <p className="text-xs text-rose-700 dark:text-rose-300">
                     Généré à des fins de contentieux, litige et remboursement auprès du transporteur / hub Orly.
@@ -891,7 +891,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30">
                   <div className="text-xs font-semibold text-rose-700 dark:text-rose-400">
-                    Colis Perdus Identifiés
+                    Colis perdus identifiés
                   </div>
                   <div className="text-2xl font-black text-rose-900 dark:text-rose-100 mt-1">
                     {perduOrlyShipments.length} colis
@@ -900,7 +900,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                 <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
                   <div className="text-xs font-semibold text-amber-700 dark:text-amber-400">
-                    Valeur Totale Préjudice
+                    Valeur totale préjudice
                   </div>
                   <div className="text-2xl font-black text-amber-900 dark:text-amber-100 mt-1">
                     {totalPerduValue.toLocaleString()} €
@@ -909,10 +909,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
                   <div className="text-xs font-semibold text-slate-600 dark:text-slate-400">
-                    Motif de Réclamation
+                    Motif de réclamation
                   </div>
                   <div className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-1">
-                    Rupture de traçabilité Hub Orly / Incohérence Facture FA (DIGI-NXT)
+                    Rupture de traçabilité hub Orly / incohérence facture FA (DIGI-NXT)
                   </div>
                 </div>
               </div>
@@ -922,7 +922,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                     <FileSpreadsheet className="h-4 w-4 text-rose-600" />
-                    Bordereau Récapitulatif des Envois non Reçus
+                    Bordereau récapitulatif des envois non reçus
                   </h3>
                   <span className="text-xs text-slate-500 font-mono">
                     Date: {formatToday()}
@@ -933,14 +933,14 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold dark:bg-slate-900 dark:text-slate-300">
                       <tr>
-                        <th className="px-3 py-2.5">N° Expédition</th>
-                        <th className="px-3 py-2.5 text-indigo-700 dark:text-indigo-400">
+                        <th className="px-3 py-2.5">N° expédition</th>
+                        <th className="px-3 py-2.5 text-sky-700 dark:text-sky-400">
                           Ref FA (DIGI - NXT)
                         </th>
-                        <th className="px-3 py-2.5">Ref Commande / Facture</th>
+                        <th className="px-3 py-2.5">Ref commande / facture</th>
                         <th className="px-3 py-2.5">Fournisseur</th>
                         <th className="px-3 py-2.5">Transporteur</th>
-                        <th className="px-3 py-2.5">N° Suivi & LTA</th>
+                        <th className="px-3 py-2.5">N° suivi et LTA</th>
                         <th className="px-3 py-2.5 text-right">Valeur (€)</th>
                         <th className="px-3 py-2.5">Remarques</th>
                       </tr>
@@ -958,7 +958,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             <td className="px-3 py-2.5 font-bold font-mono text-slate-900 dark:text-slate-100">
                               {s.id}
                             </td>
-                            <td className="px-3 py-2.5 font-mono font-extrabold text-indigo-700 dark:text-indigo-300">
+                            <td className="px-3 py-2.5 font-mono font-extrabold text-sky-700 dark:text-sky-300">
                               {s.ref_fa_digi_nxt || '—'}
                             </td>
                             <td className="px-3 py-2.5">
@@ -967,14 +967,14 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             </td>
                             <td className="px-3 py-2.5 font-medium">{s.supplier}</td>
                             <td className="px-3 py-2.5">{s.carrier}</td>
-                            <td className="px-3 py-2.5 font-mono font-bold text-[#643288] dark:text-pink-400">
+                            <td className="px-3 py-2.5 font-mono font-bold text-[#623387] dark:text-[#ED5DB2]">
                               {s.tracking_no}
                             </td>
                             <td className="px-3 py-2.5 text-right font-mono font-black text-rose-700 dark:text-rose-400">
                               {`${valueOf(s).toLocaleString('fr-FR')} €`}
                             </td>
                             <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">
-                              {s.remarks || 'Colis non réceptionné au Hub Orly'}
+                              {s.remarks || 'Colis non réceptionné au hub Orly'}
                             </td>
                           </tr>
                         ))
@@ -1009,7 +1009,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                   disabled={perduOrlyShipments.length === 0}
                   className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-2xs hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  <Download className="h-4 w-4" /> Exporter le Bordereau CSV
+                  <Download className="h-4 w-4" /> Exporter le bordereau CSV
                 </button>
                 <button
                   onClick={() => window.print()}
@@ -1019,7 +1019,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                 </button>
                 <button
                   onClick={() => setShowClaimModal(false)}
-                  className="rounded-xl bg-[#643288] px-5 py-2 text-xs font-bold text-white hover:bg-[#522870]"
+                  className="rounded-xl bg-[#623387] px-5 py-2 text-xs font-bold text-white hover:bg-[#522870]"
                 >
                   Fermer
                 </button>

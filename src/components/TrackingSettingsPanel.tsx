@@ -128,7 +128,7 @@ export const TrackingSettingsPanel: React.FC = () => {
             <button
               type="submit"
               disabled={saving}
-              className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+              className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
             </button>

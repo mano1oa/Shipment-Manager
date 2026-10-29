@@ -71,7 +71,7 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-extrabold text-slate-900 dark:text-white">
-            <ShieldAlert className="h-6 w-6 text-rose-600" /> Centre de Traitement des Alertes & Anomalies
+            <ShieldAlert className="h-6 w-6 text-rose-600" /> Centre de traitement des alertes et anomalies
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Détection automatique selon les règles métier (Orly &gt; 10j, blocages douaniers, retards)
@@ -210,7 +210,7 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
                         </span>
                       )}
                       <span className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400">
-                        Code Règle: {alt.rule_code}
+                        Code règle: {alt.rule_code}
                       </span>
                     </div>
 
@@ -261,7 +261,7 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
                         onClick={() => onResolveAlert(alt.id)}
                         className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition"
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Marquer Résolu
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Marquer résolu
                       </button>
                     )}
                   </div>
@@ -272,7 +272,7 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
                   <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3.5 dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
                       <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                        <Send className="h-3.5 w-3.5 text-[#643288]" /> Proposition de Message Google Chat (N8N)
+                        <Send className="h-3.5 w-3.5 text-[#623387]" /> Proposition de message Google Chat (N8N)
                       </span>
                       <div className="flex gap-2">
                         <button
@@ -292,10 +292,10 @@ export const AlertsCenterView: React.FC<AlertsCenterViewProps> = ({
                         <button
                           onClick={() => handleSendChat(alt.id, alt.relance_draft!)}
                           disabled={dispatchingId === alt.id}
-                          className="flex items-center gap-1 rounded-lg bg-[#643288] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#522870] disabled:opacity-50"
+                          className="flex items-center gap-1 rounded-lg bg-[#623387] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#522870] disabled:opacity-50"
                         >
                           <Send className="h-3 w-3" />
-                          {dispatchingId === alt.id ? 'Envoi...' : 'Envoyer au Chat'}
+                          {dispatchingId === alt.id ? 'Envoi...' : 'Envoyer au chat'}
                         </button>
                       </div>
                     </div>

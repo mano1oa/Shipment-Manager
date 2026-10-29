@@ -8,9 +8,12 @@ import {
   Zap,
   RefreshCw,
   Database,
+  Menu,
+  X,
 } from 'lucide-react';
 import { UserRole } from '../types';
 import { UserProfileMenu } from './UserProfileMenu';
+import nexthopeLogotype from '../assets/nexthope-logotype.png';
 
 interface NavbarProps {
   currentRole: UserRole;
@@ -34,6 +37,9 @@ interface NavbarProps {
   dbConnected?: boolean | null;
   isLoadingDb?: boolean;
   onRefreshDb?: () => void;
+  /** Phone / tablet: opens or closes the side menu. */
+  onToggleMobileNav: () => void;
+  mobileNavOpen: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -52,6 +58,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   dbConnected = null,
   isLoadingDb = false,
   onRefreshDb,
+  onToggleMobileNav,
+  mobileNavOpen,
 }) => {
   const roleLabel =
     currentRole === 'supply_chain' ? 'Supply Chain' : currentRole === 'sourcing' ? 'Sourcing' : 'Direction';
@@ -62,86 +70,38 @@ export const Navbar: React.FC<NavbarProps> = ({
       className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur transition-colors dark:border-slate-800 dark:bg-slate-900/95 sm:px-6"
     >
       {/* Brand & NEXTHOPE Logo */}
-      <div className="flex items-center gap-3">
-        {/* Authentic NEXTHOPE Brand Logo */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center">
-            <svg
-              viewBox="0 0 240 55"
-              className="h-8 sm:h-9 w-auto select-none"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-label="NextHope Logo"
-            >
-              {/* "next" in purple */}
-              <text
-                x="0"
-                y="41"
-                fontFamily="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                fontWeight="900"
-                fontSize="42"
-                className="fill-[#602880] dark:fill-purple-300"
-                letterSpacing="-1.5px"
-              >
-                next
-              </text>
+      <div className="flex min-w-0 items-center gap-4">
+        <button
+          onClick={onToggleMobileNav}
+          className="rounded-xl p-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 lg:hidden"
+          aria-label={mobileNavOpen ? 'Fermer le menu' : 'Ouvrir le menu'}
+          aria-expanded={mobileNavOpen}
+        >
+          {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+        {/* NextHope logotype (charte 2026: at least 50 px high on screen; white monochrome
+            version on the dark theme, since it may only sit on white, violet or magenta).
+            Sideways clear space about the height of its "o" (~18 px at this size). */}
+        <div className="flex items-center gap-5">
+          <img
+            src={nexthopeLogotype}
+            alt="NextHope"
+            className="h-[50px] w-auto shrink-0 select-none dark:brightness-0 dark:invert"
+            draggable={false}
+          />
 
-              {/* "h" in purple */}
-              <text
-                x="91"
-                y="41"
-                fontFamily="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                fontWeight="900"
-                fontSize="42"
-                className="fill-[#602880] dark:fill-purple-300"
-                letterSpacing="-1.5px"
-              >
-                h
-              </text>
-
-              {/* Stylized Node "o" Icon in Magenta */}
-              <g transform="translate(133, 26)">
-                {/* Node Stems */}
-                <line x1="0" y1="0" x2="-12" y2="-12" stroke="#A91869" strokeWidth="4.5" strokeLinecap="round" />
-                <line x1="0" y1="0" x2="15" y2="-15" stroke="#A91869" strokeWidth="5.5" strokeLinecap="round" />
-                <line x1="0" y1="0" x2="-15" y2="15" stroke="#A91869" strokeWidth="5.5" strokeLinecap="round" />
-                <line x1="0" y1="0" x2="11" y2="11" stroke="#A91869" strokeWidth="4.5" strokeLinecap="round" />
-                {/* Center Ring */}
-                <circle cx="0" cy="0" r="9" stroke="#A91869" strokeWidth="5.5" className="fill-white dark:fill-slate-900" />
-                {/* Outer Node Orbs */}
-                <circle cx="-12" cy="-12" r="5" fill="#A91869" />
-                <circle cx="15" cy="-15" r="6.5" fill="#A91869" />
-                <circle cx="-15" cy="15" r="7" fill="#A91869" />
-                <circle cx="11" cy="11" r="4.5" fill="#A91869" />
-              </g>
-
-              {/* "pe" in purple */}
-              <text
-                x="162"
-                y="41"
-                fontFamily="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-                fontWeight="900"
-                fontSize="42"
-                className="fill-[#602880] dark:fill-purple-300"
-                letterSpacing="-1.5px"
-              >
-                pe
-              </text>
-            </svg>
-          </div>
-
-          <div className="flex items-center gap-2.5 border-l border-slate-200 dark:border-slate-800 pl-3">
+          <div className="hidden items-center gap-2.5 border-l border-slate-200 pl-5 dark:border-slate-800 md:flex">
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-white">
                   Shipment Manager
                 </span>
-                <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-[#643288]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#643288] dark:bg-[#643288]/30 dark:text-pink-300">
+                <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-[#623387]/10 px-2 py-0.5 text-[10px] font-extrabold text-[#623387] dark:bg-[#623387]/30 dark:text-[#ED5DB2]">
                   <Zap className="h-3 w-3" /> Supply Chain
                 </span>
               </div>
               <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                Pilotage & Suivi des Expéditions
+                Pilotage et suivi des expéditions
               </p>
             </div>
           </div>
@@ -155,16 +115,16 @@ export const Navbar: React.FC<NavbarProps> = ({
           <input
             id="global-search-input"
             type="text"
-            placeholder="Rechercher par N° Suivi, BL/AWB, Fournisseur..."
+            placeholder="Rechercher par n° de suivi, BL/AWB, fournisseur..."
             value={globalSearch}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-4 text-xs text-slate-800 placeholder-slate-400 transition focus:border-[#643288] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#643288]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:bg-slate-900"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-9 pr-4 text-xs text-slate-800 placeholder-slate-400 transition focus:border-[#623387] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#623387]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:bg-slate-900"
           />
         </div>
       </div>
 
       {/* Actions, SYNC button & Role Switcher */}
-      <div className="flex items-center gap-2.5">
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
         {/* Database Neon / Local Indicator */}
         <div
           onClick={onRefreshDb}
@@ -173,7 +133,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               ? 'Connecté en direct à Neon PostgreSQL via DATABASE_URL / POSTGRES_URL. Cliquez pour recharger.'
               : 'Base Neon non joignable : aucune donnée chargée. Cliquez pour réessayer.'
           }
-          className={`hidden sm:flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition ${
+          className={`hidden lg:flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[11px] font-semibold cursor-pointer transition ${
             dbConnected
               ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
               : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
@@ -195,7 +155,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           id="nav-btn-ai-assistant"
           onClick={onOpenAssistant}
-          className="relative flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#643288] to-[#A91869] px-3 py-1.5 text-xs font-semibold text-white shadow-md transition hover:opacity-95 hover:shadow-lg active:scale-95"
+          className="relative hidden items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#623387] to-[#9E1B65] px-3 py-1.5 text-xs font-semibold text-white shadow-md transition hover:opacity-95 hover:shadow-lg active:scale-95 sm:flex"
         >
           <Bot className="h-4 w-4" />
           <span className="hidden sm:inline">Shipment AI</span>
@@ -205,7 +165,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           id="nav-btn-alerts"
           onClick={onOpenAlerts}
-          className="relative rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+          className="relative hidden rounded-xl border border-slate-200 bg-slate-50 p-2 sm:block text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
           title="Centre d'alertes"
         >
           <Bell className="h-4 w-4" />
@@ -220,7 +180,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           id="nav-btn-theme-toggle"
           onClick={onToggleDarkMode}
-          className="rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white"
+          className="hidden rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-white sm:block"
           title="Basculer le thème"
         >
           {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
