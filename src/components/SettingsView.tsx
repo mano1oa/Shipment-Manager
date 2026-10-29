@@ -8,7 +8,7 @@ import { TrackingSettingsPanel } from './TrackingSettingsPanel';
 type SettingsSection = 'users' | 'carriers' | 'integrations' | 'database';
 
 const SECTIONS: { id: SettingsSection; label: string; hint: string; icon: React.ElementType }[] = [
-  { id: 'users', label: 'Utilisateurs & accès', hint: 'Comptes, rôles, activation', icon: Users },
+  { id: 'users', label: 'Utilisateurs et accès', hint: 'Comptes, rôles, activation', icon: Users },
   { id: 'carriers', label: 'Transporteurs', hint: 'Liste et suivi automatique', icon: Truck },
   { id: 'integrations', label: 'Intégrations', hint: 'N8N, Google Chat, Sheets, seuils', icon: Workflow },
   { id: 'database', label: 'Base de données', hint: 'Neon PostgreSQL', icon: Server },
@@ -22,7 +22,7 @@ export const SettingsView: React.FC<{ currentUserId: string }> = ({ currentUserI
     <div className="space-y-6">
       <div>
         <h1 className="flex items-center gap-2 text-xl font-extrabold text-slate-900 dark:text-white">
-          <Settings className="h-6 w-6 text-[#643288]" /> Paramètres
+          <Settings className="h-6 w-6 text-[#623387]" /> Paramètres
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400">
           Configuration de Shipment Manager : accès, transporteurs, intégrations et base de données.
@@ -41,14 +41,14 @@ export const SettingsView: React.FC<{ currentUserId: string }> = ({ currentUserI
                 onClick={() => setSection(s.id)}
                 className={`flex shrink-0 items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition lg:w-full ${
                   active
-                    ? 'border-[#643288] bg-[#643288] text-white shadow-sm'
-                    : 'border-slate-200 bg-white text-slate-700 hover:border-[#643288]/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200'
+                    ? 'border-[#623387] bg-[#623387] text-white shadow-sm'
+                    : 'border-slate-200 bg-white text-slate-700 hover:border-[#623387]/50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200'
                 }`}
               >
-                <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-[#643288] dark:text-purple-300'}`} />
+                <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-[#623387] dark:text-[#B688FF]'}`} />
                 <span>
                   <span className="block text-xs font-bold">{s.label}</span>
-                  <span className={`hidden text-[10px] lg:block ${active ? 'text-purple-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                  <span className={`hidden text-[10px] lg:block ${active ? 'text-[#F8EEFF]' : 'text-slate-500 dark:text-slate-400'}`}>
                     {s.hint}
                   </span>
                 </span>

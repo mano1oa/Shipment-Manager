@@ -48,7 +48,7 @@ export const ParcelPhotosModal: React.FC<Props> = ({ parcel, canEdit, onClose, o
       <div className="my-8 w-full max-w-3xl rounded-3xl border border-slate-200 bg-white p-6 text-xs shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#623387] text-white shadow-sm">
               <Camera className="h-5 w-5" />
             </div>
             <div>

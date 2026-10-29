@@ -69,7 +69,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
       {/* View Header */}
       <div>
         <h1 className="flex items-center gap-2 text-xl font-extrabold text-slate-900 dark:text-white">
-          <BarChart3 className="h-6 w-6 text-[#643288]" /> Analyses de Performance & Scorecards Transporteurs
+          <BarChart3 className="h-6 w-6 text-[#623387]" /> Analyses de performance et scorecards transporteurs
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400">
           Suivi des SLAs, temps de transit moyens, taux de retards et performance des fournisseurs
@@ -81,7 +81,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
         {/* Carrier SLA Table */}
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
           <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700">
-            <Award className="h-4 w-4 text-[#A91869]" /> Respect des SLAs par Transporteur
+            <Award className="h-4 w-4 text-[#9E1B65]" /> Respect des SLAs par transporteur
           </h2>
 
           <div className="mt-4 overflow-x-auto">
@@ -89,9 +89,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] dark:bg-slate-900/60 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Transporteur</th>
-                  <th className="px-3 py-2 font-semibold">Mode Principal</th>
+                  <th className="px-3 py-2 font-semibold">Mode principal</th>
                   <th className="px-3 py-2 font-semibold text-center">Expéditions</th>
-                  <th className="px-3 py-2 font-semibold text-center">À l'Heure</th>
+                  <th className="px-3 py-2 font-semibold text-center">À l'heure</th>
                   <th className="px-3 py-2 font-semibold text-center">Retards</th>
                   <th className="px-3 py-2 text-right font-semibold">Taux SLA</th>
                 </tr>
@@ -161,7 +161,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
         <div className="space-y-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
             <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700">
-              <PieChart className="h-4 w-4 text-[#643288]" /> Top Fournisseurs
+              <PieChart className="h-4 w-4 text-[#623387]" /> Top fournisseurs
             </h2>
 
             <div className="mt-4 space-y-3">
@@ -176,14 +176,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
                   className="flex items-center justify-between rounded-xl bg-slate-50 p-2.5 text-xs dark:bg-slate-900/60"
                 >
                   <div className="flex items-center gap-2">
-                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#643288] text-[10px] font-bold text-white">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#623387] text-[10px] font-bold text-white">
                       {idx + 1}
                     </span>
                     <span className="font-bold text-slate-800 dark:text-slate-200">
                       {sup.supplier}
                     </span>
                   </div>
-                  <span className="font-mono font-bold text-[#643288] dark:text-pink-400">
+                  <span className="font-mono font-bold text-[#623387] dark:text-[#ED5DB2]">
                     {sup.count} expéditions
                   </span>
                 </div>
@@ -193,19 +193,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              SLA Moyen de Transit
+              SLA moyen de transit
             </h3>
             <div className="mt-3 space-y-2">
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Vol Aérien Express (CDG -&gt; TNR)</span>
+                <span className="text-slate-500">Vol aérien express (CDG -&gt; TNR)</span>
                 <span className="font-bold text-slate-900 dark:text-white">4.2 jours</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Transit Maritime (SHA -&gt; TMM)</span>
+                <span className="text-slate-500">Transit maritime (SHA -&gt; TMM)</span>
                 <span className="font-bold text-slate-900 dark:text-white">32.5 jours</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Temps Moyen Dédouanement Ivato</span>
+                <span className="text-slate-500">Temps moyen dédouanement Ivato</span>
                 <span className="font-bold text-slate-900 dark:text-white">1.8 jours</span>
               </div>
             </div>

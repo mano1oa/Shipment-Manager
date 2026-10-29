@@ -69,7 +69,7 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
         {canEdit && (
           <button
             onClick={() => setForm('new')}
-            className="inline-flex items-center gap-1 rounded-lg bg-[#643288] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
+            className="inline-flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
           >
             <Plus className="h-3 w-3" /> Colis
           </button>
@@ -122,7 +122,7 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
                       <button
                         onClick={() => setPhotosOf(p)}
                         title="Voir les photos"
-                        className="ml-1 inline-flex items-center gap-0.5 text-[10px] text-slate-400 hover:text-[#643288]"
+                        className="ml-1 inline-flex items-center gap-0.5 text-[10px] text-slate-400 hover:text-[#623387]"
                       >
                         <Camera className="h-3 w-3" /> {p.photo_count}
                       </button>
@@ -139,7 +139,7 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
                       <button
                         onClick={() => setForm(p)}
                         title="Modifier le colis"
-                        className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-[#643288] dark:hover:bg-slate-700"
+                        className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </button>

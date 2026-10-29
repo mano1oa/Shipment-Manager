@@ -79,6 +79,64 @@ async function driveError(res: Response, action: string): Promise<PhotoStorageEr
   return new PhotoStorageError(`Google Drive ${action} ${res.status} : ${data?.error?.message || ''}`);
 }
 
+export interface PhotoStorageCheck {
+  ok: boolean;
+  /** One line per step, in order: configuration, authentication, photos folder. */
+  steps: { label: string; ok: boolean; detail: string }[];
+}
+
+/**
+ * Checks the Drive set-up step by step (variables, service account sign-in,
+ * access to the photos folder and right to add files in it), to tell Supply
+ * Chain what to fix when photos are not stored.
+ */
+export async function checkPhotoStorage(): Promise<PhotoStorageCheck> {
+  const steps: PhotoStorageCheck['steps'] = [];
+  const done = () => ({ ok: steps.every((s) => s.ok), steps });
+  const c = config();
+  steps.push({
+    label: 'Variables',
+    ok: Boolean(c),
+    detail: c
+      ? `Compte de service ${c.email}, dossier ${c.folder}`
+      : 'GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY et GOOGLE_DRIVE_PHOTOS_FOLDER_ID sont requises',
+  });
+  if (!c) return done();
+
+  try {
+    await accessToken();
+    steps.push({ label: 'Authentification Google', ok: true, detail: 'Jeton obtenu' });
+  } catch (err: any) {
+    steps.push({ label: 'Authentification Google', ok: false, detail: err.message });
+    return done();
+  }
+
+  const res = await driveFetch(
+    `${DRIVE_API}/files/${encodeURIComponent(c.folder)}?supportsAllDrives=true&fields=id,name,mimeType,driveId,trashed,capabilities(canAddChildren)`
+  );
+  if (!res.ok) {
+    const err = await driveError(res, 'accès au dossier');
+    steps.push({
+      label: 'Dossier des photos',
+      ok: false,
+      detail: `${err.message} — vérifiez l'id du dossier et que le compte de service est membre du Drive partagé`,
+    });
+    return done();
+  }
+  const folder: any = await res.json();
+  const problems: string[] = [];
+  if (folder.trashed) problems.push('le dossier est dans la corbeille');
+  if (folder.mimeType !== FOLDER_MIME && folder.id !== folder.driveId) problems.push("l'id ne désigne pas un dossier");
+  if (!folder.driveId) problems.push("le dossier est dans « Mon Drive », pas dans un Drive partagé (un compte de service n'y a pas d'espace)");
+  if (!folder.capabilities?.canAddChildren) problems.push('le compte de service ne peut pas y ajouter de fichiers (rôle « Gestionnaire de contenu » requis)');
+  steps.push({
+    label: 'Dossier des photos',
+    ok: problems.length === 0,
+    detail: problems.length === 0 ? `« ${folder.name} » (Drive partagé), écriture autorisée` : `« ${folder.name} » : ${problems.join(' ; ')}`,
+  });
+  return done();
+}
+
 /** Creates a folder under the photos folder (one per point Antoine). Returns its id. */
 export async function createPhotoFolder(name: string): Promise<string> {
   const c = config();

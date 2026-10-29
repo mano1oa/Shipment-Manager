@@ -11,6 +11,7 @@ import {
   Loader2,
   PackagePlus,
   Plus,
+  ShieldCheck,
   Trash2,
   Unlink,
   Upload,
@@ -23,7 +24,9 @@ import {
   DigiInvoice,
   Parcel,
   PointPhoto,
+  PhotoStorageCheck,
   ReceptionPoint,
+  checkPhotoStorage,
   createReceptionPoint,
   deletePointPhoto,
   fetchDigiInvoices,
@@ -74,6 +77,19 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const [check, setCheck] = useState<PhotoStorageCheck | 'running' | null>(null);
+  /** Photos the browser could not display (Drive file missing or unreadable). */
+  const [brokenPhotos, setBrokenPhotos] = useState<Set<string>>(new Set());
+  const markBroken = (id: string) => setBrokenPhotos((prev) => new Set(prev).add(id));
+
+  const runCheck = async () => {
+    setCheck('running');
+    try {
+      setCheck(await checkPhotoStorage());
+    } catch (err: any) {
+      setCheck({ ok: false, steps: [{ label: 'Diagnostic', ok: false, detail: err.message }] });
+    }
+  };
 
   // Match form of the current photo
   const [number, setNumber] = useState('');
@@ -265,7 +281,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
             <ArrowLeft className="h-5 w-5" />
           </button>
         )}
-        <Camera className="h-5 w-5 text-[#643288]" />
+        <Camera className="h-5 w-5 text-[#623387]" />
         <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
           {title}
           {current && ` du ${formatDate(current.point.point_date)}`}
@@ -289,8 +305,34 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
         </button>
       </div>
 
-      {(error || message || !configured) && (
+      {(error || message || !configured || check) && (
         <div className="space-y-2 px-4 pt-3">
+          {check && (
+            <div className="rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-slate-900 dark:text-white">Vérification de Google Drive</span>
+                <button onClick={() => setCheck(null)} title="Fermer" className="rounded-lg p-1 text-slate-400 hover:text-slate-700">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              {check === 'running' ? (
+                <p className="mt-1 flex items-center gap-1.5 text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Vérification en cours…
+                </p>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {check.steps.map((s) => (
+                    <li key={s.label} className={`flex items-start gap-1.5 ${s.ok ? 'text-emerald-700 dark:text-emerald-300' : 'text-rose-700 dark:text-rose-300'}`}>
+                      {s.ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+                      <span>
+                        <strong>{s.label} :</strong> {s.detail}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
           {!configured && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
               Le stockage des photos (Google Drive partagé) n'est pas encore configuré : variables GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -334,7 +376,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
               <button
                 onClick={handleCreate}
                 disabled={!newDate}
-                className="mb-0.5 flex items-center gap-1.5 rounded-xl bg-[#643288] px-4 py-2.5 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                className="mb-0.5 flex items-center gap-1.5 rounded-xl bg-[#623387] px-4 py-2.5 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
               >
                 <Plus className="h-4 w-4" /> Créer le point
               </button>
@@ -395,11 +437,19 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
               <button
                 onClick={() => fileInput.current?.click()}
                 disabled={progress !== null || !configured}
-                className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
               >
                 {progress ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />} Déposer les photos
               </button>
               <span className="text-slate-500">{progress || 'ou glissez-les ici (toutes d\'un coup)'}</span>
+              <button
+                onClick={runCheck}
+                disabled={check === 'running'}
+                title="Vérifier la connexion à Google Drive (compte de service, dossier, droits)"
+                className="flex items-center gap-1 rounded-lg px-2 py-1 font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+              >
+                <ShieldCheck className="h-3.5 w-3.5" /> Vérifier Google Drive
+              </button>
               <label className="ml-auto flex cursor-pointer items-center gap-1.5 font-semibold text-slate-600 dark:text-slate-300">
                 <input
                   type="checkbox"
@@ -408,7 +458,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     setOnlyToMatch(e.target.checked);
                     setIndex(0);
                   }}
-                  className="h-4 w-4 accent-[#643288]"
+                  className="h-4 w-4 accent-[#623387]"
                 />
                 À rattacher seulement
               </label>
@@ -421,10 +471,21 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     ? 'Déposez toutes les photos du point.'
                     : 'Toutes les photos sont rattachées. Décochez « À rattacher seulement » pour les revoir.'}
                 </p>
-              ) : photo.url ? (
-                <img src={photo.url} alt="Photo du point" className="max-h-full max-w-full object-contain" />
+              ) : photo.url && !brokenPhotos.has(photo.id) ? (
+                <img
+                  src={photo.url}
+                  alt="Photo du point"
+                  onError={() => markBroken(photo.id)}
+                  className="max-h-full max-w-full object-contain"
+                />
               ) : (
-                <ImageOff className="h-10 w-10 text-slate-500" />
+                <div className="flex flex-col items-center gap-2 p-6 text-center text-slate-300">
+                  <ImageOff className="h-10 w-10 text-slate-500" />
+                  <span>Photo introuvable dans Google Drive.</span>
+                  <button onClick={runCheck} className="font-semibold text-white underline">
+                    Vérifier Google Drive
+                  </button>
+                </div>
               )}
               {visible.length > 1 && (
                 <>
@@ -461,11 +522,11 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     key={p.id}
                     onClick={() => setIndex(i)}
                     className={`relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 ${
-                      photo?.id === p.id ? 'border-[#643288]' : 'border-transparent'
+                      photo?.id === p.id ? 'border-[#623387]' : 'border-transparent'
                     }`}
                   >
-                    {p.url ? (
-                      <img src={p.url} alt="" className="h-full w-full object-cover" loading="lazy" />
+                    {p.url && !brokenPhotos.has(p.id) ? (
+                      <img src={p.url} alt="" onError={() => markBroken(p.id)} className="h-full w-full object-cover" loading="lazy" />
                     ) : (
                       <span className="flex h-full w-full items-center justify-center bg-slate-200 dark:bg-slate-800">
                         <ImageOff className="h-4 w-4 text-slate-400" />
@@ -548,7 +609,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                             <button
                               key={s.id}
                               onClick={() => setNumber(s.tracking_number || '')}
-                              className="block w-full rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-[#643288] dark:border-slate-700"
+                              className="block w-full rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-[#623387] dark:border-slate-700"
                             >
                               <span className="font-mono font-semibold">{s.tracking_number}</span>
                               <span className="ml-2 text-slate-500">{s.supplier_name || '—'}</span>
@@ -592,7 +653,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                                 type="checkbox"
                                 checked={chosenInvoices.has(inv.id)}
                                 onChange={() => toggleInvoice(inv.id)}
-                                className="h-4 w-4 accent-[#643288]"
+                                className="h-4 w-4 accent-[#623387]"
                               />
                               <span className="font-semibold">{inv.ref || '—'}</span>
                               <span className="text-slate-500">
@@ -611,7 +672,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                           )
                         }
                         disabled={saving || chosenInvoices.size === 0}
-                        className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#643288] px-3 py-2.5 font-bold text-white hover:bg-[#522870] disabled:opacity-40"
+                        className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2.5 font-bold text-white hover:bg-[#522870] disabled:opacity-40"
                       >
                         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}
                         Créer le colis et rattacher ({chosenInvoices.size})

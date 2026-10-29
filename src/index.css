@@ -3,3 +3,14 @@
 /* Dark mode follows the .dark class set on <html> by the theme toggle
    (Tailwind v4 defaults to the OS preference otherwise). */
 @custom-variant dark (&:where(.dark, .dark *));
+
+/* NextHope charte 2026: Helvetica Now Display (licensed font, used when
+   installed), then the closest system fonts. */
+@theme {
+  --font-sans: "Helvetica Now Display", "Helvetica Neue", Helvetica, Arial, ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Charte NextHope 2026 (référence ; le code utilise ces valeurs en hex) :
+   violet #623387 (#A175E0, #B688FF) · magenta #9E1B65 (#D14F98, #ED5DB2) ·
+   blanc #FFFFFF (#F7F7F7, #E2E2E2) · secondaires : bleu ciel #43A0D9,
+   lavande #D7BCE8, menthe #62D18F · dégradé principal violet → magenta. */

@@ -55,7 +55,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ user, roleLabe
         aria-expanded={open}
         className="flex items-center gap-2 rounded-xl p-1 pr-2 transition hover:bg-slate-100 dark:hover:bg-slate-800"
       >
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#643288]/10 text-[11px] font-extrabold text-[#643288] dark:bg-[#643288]/30 dark:text-purple-200">
+        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#623387]/10 text-[11px] font-extrabold text-[#623387] dark:bg-[#623387]/30 dark:text-[#D7BCE8]">
           {initials}
         </span>
         <span className="hidden max-w-[160px] text-left lg:block">
@@ -71,13 +71,13 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ user, roleLabe
           className="absolute right-0 top-full z-50 mt-2 w-64 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900"
         >
           <div className="flex items-center gap-3 border-b border-slate-100 px-3 pb-3 pt-1 dark:border-slate-800">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#643288] text-sm font-extrabold text-white">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#623387] text-sm font-extrabold text-white">
               {initials}
             </span>
             <div className="min-w-0">
               <p className="truncate text-sm font-bold text-slate-900 dark:text-white">{user.display_name}</p>
               <p className="truncate text-[11px] text-slate-500 dark:text-slate-400">{user.email}</p>
-              <span className="mt-1 inline-block rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+              <span className="mt-1 inline-block rounded-full bg-[#EAD7F9] px-2 py-0.5 text-[10px] font-bold text-[#623387] dark:bg-purple-950 dark:text-[#B688FF]">
                 {roleLabel}
               </span>
             </div>
@@ -93,7 +93,7 @@ export const UserProfileMenu: React.FC<UserProfileMenuProps> = ({ user, roleLabe
                 setShowPasswordModal(true);
               }}
             >
-              <KeyRound className="h-4 w-4 text-[#643288] dark:text-purple-300" /> Changer le mot de passe
+              <KeyRound className="h-4 w-4 text-[#623387] dark:text-[#B688FF]" /> Changer le mot de passe
             </button>
             <button type="button" role="menuitem" className={itemClass} onClick={onToggleDarkMode}>
               {darkMode ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-slate-500" />}
@@ -166,14 +166,14 @@ const ChangePasswordModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
   }
 
   const fieldClass =
-    'mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-900 focus:border-[#643288] focus:outline-none focus:ring-2 focus:ring-[#643288]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
+    'mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-900 focus:border-[#623387] focus:outline-none focus:ring-2 focus:ring-[#623387]/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
       <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#623387] text-white">
               <KeyRound className="h-5 w-5" />
             </div>
             <div>
@@ -200,7 +200,7 @@ const ChangePasswordModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-xl bg-[#643288] px-5 py-2 text-xs font-bold text-white hover:bg-[#522870]"
+                className="rounded-xl bg-[#623387] px-5 py-2 text-xs font-bold text-white hover:bg-[#522870]"
               >
                 Fermer
               </button>
@@ -260,7 +260,7 @@ const ChangePasswordModal: React.FC<{ onClose: () => void }> = ({ onClose }) => 
               <button
                 type="submit"
                 disabled={saving}
-                className="flex items-center gap-2 rounded-xl bg-[#643288] px-5 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-[#623387] px-5 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
               >
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
               </button>

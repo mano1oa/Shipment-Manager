@@ -132,6 +132,9 @@ useEffect(() => {
     }
   };
 
+  /** Phone / tablet: side menu opened from the top bar. */
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   // Parcels (supplier → Orly / Rouen): tabs of the air / sea tracking and parcel alerts
   const [parcelsOverview, setParcelsOverview] = useState<ParcelsOverview | null>(null);
   const [parcelsLoading, setParcelsLoading] = useState(false);
@@ -559,9 +562,11 @@ if (!authUser) {
 }
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-slate-100 font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100 flex flex-col">
+    <div className="h-dvh w-full overflow-hidden bg-[#F7F7F7] font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100 flex flex-col">
       {/* Top Navigation Bar */}
       <Navbar
+        onToggleMobileNav={() => setMobileNavOpen((open) => !open)}
+        mobileNavOpen={mobileNavOpen}
         currentRole={currentRole}
         authUser={authUser}
         onLogout={handleLogout}
@@ -589,10 +594,12 @@ if (!authUser) {
           onNewShipment={() => openNewShipment()}
           canEdit={canEdit}
           currentRole={currentRole}
+          mobileOpen={mobileNavOpen}
+          onCloseMobile={() => setMobileNavOpen(false)}
         />
 
         {/* Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
           {shipmentsError && (
             <div className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
               <div className="flex items-center gap-3">
@@ -619,7 +626,7 @@ if (!authUser) {
                 <div role="tablist" className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs dark:border-slate-800 dark:bg-slate-900">
                   {([
                     { id: 'overview', label: "Vue d'ensemble", icon: LayoutDashboard },
-                    { id: 'analytics', label: 'Analyses & SLAs', icon: BarChart3 },
+                    { id: 'analytics', label: 'Analyses et SLAs', icon: BarChart3 },
                   ] as const).map((t) => {
                     const Icon = t.icon;
                     const active = dashboardTab === t.id;
@@ -632,7 +639,7 @@ if (!authUser) {
                         onClick={() => setDashboardTab(t.id)}
                         className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition ${
                           active
-                            ? 'bg-[#643288] text-white shadow-sm'
+                            ? 'bg-[#623387] text-white shadow-sm'
                             : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
                         }`}
                       >

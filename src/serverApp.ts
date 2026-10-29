@@ -102,6 +102,8 @@ import {
   uploadPhoto,
   downloadPhoto,
   deletePhotoObject,
+  checkPhotoStorage,
+  PhotoStorageError,
   PHOTO_CONTENT_TYPES,
   PHOTO_MAX_BYTES,
 } from './services/photoStorage.js';
@@ -2477,10 +2479,22 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         return res.status(201).json({ success: true, id });
       } catch (err: any) {
         console.error('[Points] Upload photo error:', err);
-        return res.status(502).json({ success: false, error: 'Google Drive n\'a pas accepté la photo. Réessayez.' });
+        // The Drive refusal says what to fix (folder, rights, quota): shown to Supply Chain
+        const detail = err instanceof PhotoStorageError ? ` (${err.message})` : '';
+        return res.status(502).json({ success: false, error: `Google Drive n'a pas accepté la photo${detail}.` });
       }
     }
   );
+
+  // Step-by-step check of the Google Drive set-up (Supply Chain)
+  app.get('/api/photos/diagnostic', requireRole('SUPPLY_CHAIN'), async (_req, res) => {
+    try {
+      return res.json({ success: true, ...(await checkPhotoStorage()) });
+    } catch (err: any) {
+      console.error('[Photos] Diagnostic error:', err);
+      return res.status(500).json({ success: false, error: err?.message || 'Diagnostic impossible' });
+    }
+  });
 
   // Shows a photo to a signed-in user (the Drive files are never public)
   app.get('/api/photos/:photoId', async (req: any, res) => {

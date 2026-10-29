@@ -121,7 +121,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
     const auditUserMsg: Message = {
       id: `usr-audit-${Date.now()}`,
       sender: 'user',
-      text: '⚡ [Aura-Audit] Générer un Rapport Exécutif Complet de la Supply Chain',
+      text: '⚡ [Aura-Audit] Générer un rapport exécutif complet de la Supply Chain',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
@@ -186,7 +186,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
           onClick={() => onOpenChange(true)}
           title="Ouvrir Shipment AI"
           aria-label="Ouvrir l'assistant Shipment AI"
-          className="fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#643288] to-[#A91869] text-white shadow-xl shadow-[#643288]/30 transition hover:scale-105 active:scale-95"
+          className="fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#623387] to-[#9E1B65] text-white shadow-xl shadow-[#623387]/30 transition hover:scale-105 active:scale-95"
         >
           <Bot className="h-6 w-6" />
           {loading && <span className="absolute right-1 top-1 h-3 w-3 animate-pulse rounded-full bg-amber-300 ring-2 ring-white" />}
@@ -201,7 +201,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
         }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-[#643288] to-[#A91869] px-4 py-3 text-white">
+        <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-[#623387] to-[#9E1B65] px-4 py-3 text-white">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/20">
               <Bot className="h-5 w-5" />
@@ -210,7 +210,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
               <h2 className="flex items-center gap-1.5 text-sm font-extrabold">
                 Shipment AI <Sparkles className="h-3.5 w-3.5 text-amber-300" />
               </h2>
-              <p className="text-[10px] text-purple-100">Assistant Supply Chain (Gemini)</p>
+              <p className="text-[10px] text-[#F8EEFF]">Assistant Supply Chain (Gemini)</p>
             </div>
           </div>
 
@@ -244,7 +244,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
             >
               <div
                 className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white ${
-                  msg.sender === 'user' ? 'bg-slate-800 dark:bg-slate-700' : 'bg-[#643288]'
+                  msg.sender === 'user' ? 'bg-slate-800 dark:bg-slate-700' : 'bg-[#623387]'
                 }`}
               >
                 {msg.sender === 'user' ? <User className="h-3.5 w-3.5" /> : <Bot className="h-3.5 w-3.5" />}
@@ -253,7 +253,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
               <div
                 className={`relative max-w-[85%] rounded-2xl p-3 text-xs leading-relaxed ${
                   msg.sender === 'user'
-                    ? 'rounded-tr-none bg-[#643288] text-white'
+                    ? 'rounded-tr-none bg-[#623387] text-white'
                     : 'rounded-tl-none bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-100'
                 }`}
               >
@@ -284,7 +284,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
 
           {loading && (
             <div className="flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#643288] text-white">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#623387] text-white">
                 <Bot className="h-3.5 w-3.5 animate-spin" />
               </div>
               <div className="rounded-2xl bg-slate-100 p-2.5 text-xs text-slate-500 dark:bg-slate-800 dark:text-slate-400">
@@ -302,7 +302,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
                 key={idx}
                 onClick={() => handleSendMessage(qp)}
                 disabled={loading}
-                className="shrink-0 rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#643288] hover:text-[#643288] disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-pink-400"
+                className="shrink-0 rounded-xl border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:border-[#623387] hover:text-[#623387] disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-pink-400"
               >
                 ⚡ {qp}
               </button>
@@ -325,14 +325,14 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
               value={inputPrompt}
               onChange={(e) => setInputPrompt(e.target.value)}
               disabled={loading}
-              className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-[#643288] focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+              className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-[#623387] focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
             />
             <button
               type="submit"
               disabled={loading || !inputPrompt.trim()}
               title="Envoyer"
               aria-label="Envoyer"
-              className="flex items-center justify-center rounded-xl bg-[#643288] p-2.5 text-white shadow transition hover:bg-[#522870] disabled:opacity-50"
+              className="flex items-center justify-center rounded-xl bg-[#623387] p-2.5 text-white shadow transition hover:bg-[#522870] disabled:opacity-50"
             >
               <Send className="h-4 w-4" />
             </button>

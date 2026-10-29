@@ -155,7 +155,7 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
             </p>
           </div>
 
-          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 p-5 font-semibold text-slate-600 hover:border-[#643288] hover:text-[#643288] dark:border-slate-700 dark:text-slate-300">
+          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 p-5 font-semibold text-slate-600 hover:border-[#623387] hover:text-[#623387] dark:border-slate-700 dark:text-slate-300">
             {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             {fileName ? `Fichier : ${fileName} — choisir un autre fichier` : 'Choisir un fichier .xlsx ou .csv'}
             <input
@@ -201,7 +201,7 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
             <>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
-                  { label: 'Factures à importer', value: parsed.invoices.length, tone: 'text-[#643288]' },
+                  { label: 'Factures à importer', value: parsed.invoices.length, tone: 'text-[#623387]' },
                   { label: 'Lignes de produits', value: totalLines, tone: 'text-slate-800 dark:text-slate-100' },
                   {
                     label: `Hors ${destination} (ignorées)`,
@@ -308,7 +308,7 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
                 type="button"
                 onClick={handleImport}
                 disabled={!parsed || parsed.invoices.length === 0 || tooMany || importing}
-                className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 font-bold text-white shadow-md hover:bg-[#522870] disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 font-bold text-white shadow-md hover:bg-[#522870] disabled:opacity-50"
               >
                 {importing && <Loader2 className="h-4 w-4 animate-spin" />}
                 Importer {parsed ? parsed.invoices.length : ''} facture(s)

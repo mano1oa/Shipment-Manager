@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react';
+import nexthopeLogotype from '../assets/nexthope-logotype.png';
 
 interface LoginViewProps {
   onLoginSuccess: (user: {
@@ -58,11 +59,12 @@ export default function LoginView({
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+    <div className="min-h-dvh bg-[#F7F7F7] flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-8">
           <div className="mb-8">
-            <p className="text-sm font-medium text-blue-600 mb-2">
+            <img src={nexthopeLogotype} alt="NextHope" className="mb-6 h-[50px] w-auto select-none" draggable={false} />
+            <p className="text-sm font-medium text-[#623387] mb-2">
               Supply Chain Control Tower
             </p>
 
@@ -96,7 +98,7 @@ export default function LoginView({
                 onChange={(event) =>
                   setEmail(event.target.value)
                 }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-[#623387] focus:ring-2 focus:ring-[#623387]/15"
                 placeholder="nom@entreprise.com"
               />
             </div>
@@ -118,7 +120,7 @@ export default function LoginView({
                 onChange={(event) =>
                   setPassword(event.target.value)
                 }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-[#623387] focus:ring-2 focus:ring-[#623387]/15"
                 placeholder="Votre mot de passe"
               />
             </div>
@@ -132,7 +134,7 @@ export default function LoginView({
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="w-full rounded-lg bg-[#623387] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#522870] disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {loading
                 ? 'Connexion...'

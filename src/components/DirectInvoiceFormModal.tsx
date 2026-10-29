@@ -75,7 +75,7 @@ export const DirectInvoiceFormModal: React.FC<Props> = ({ invoice, isSupplyChain
       >
         <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#623387] text-white shadow-sm">
               <FileText className="h-5 w-5" />
             </div>
             <div>
@@ -183,7 +183,7 @@ export const DirectInvoiceFormModal: React.FC<Props> = ({ invoice, isSupplyChain
           <button
             type="submit"
             disabled={saving}
-            className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
           >
             {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
           </button>

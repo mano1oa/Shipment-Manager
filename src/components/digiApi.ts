@@ -366,6 +366,14 @@ export const uploadPointPhoto = (pointId: string, photo: Blob) =>
     body: photo,
   });
 
+export interface PhotoStorageCheck {
+  ok: boolean;
+  steps: { label: string; ok: boolean; detail: string }[];
+}
+
+/** Step-by-step check of the Google Drive set-up (Supply Chain). */
+export const checkPhotoStorage = () => apiJson<PhotoStorageCheck>('/api/photos/diagnostic');
+
 export type PointPhotoLink =
   | { parcel_id: string | null }
   | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } };
@@ -431,6 +439,6 @@ export const ODOO_STATE_LABELS: Record<string, string> = {
 };
 
 const inputBase =
-  'w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white';
+  'w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 export const inputClass = `mt-1 ${inputBase}`;
 export const cellInputClass = inputBase;

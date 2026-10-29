@@ -26,7 +26,7 @@ export const SettingsCard: React.FC<{
   description?: React.ReactNode;
   actions?: React.ReactNode;
   children: React.ReactNode;
-}> = ({ icon: Icon, iconClass = 'bg-[#643288]/10 text-[#643288] dark:bg-[#643288]/30 dark:text-purple-200', title, description, actions, children }) => (
+}> = ({ icon: Icon, iconClass = 'bg-[#623387]/10 text-[#623387] dark:bg-[#623387]/30 dark:text-[#D7BCE8]', title, description, actions, children }) => (
   <section className="rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-900">
     <div className="flex flex-col gap-3 border-b border-slate-100 p-5 dark:border-slate-800 md:flex-row md:items-center md:justify-between">
       <div className="flex items-start gap-3">
@@ -143,10 +143,10 @@ export const NeonDatabasePanel: React.FC = () => {
       <SettingsCard
         icon={Server}
         iconClass="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400"
-        title="Base de données Neon (PostgreSQL Serverless)"
+        title="Base de données Neon (PostgreSQL serverless)"
         description={
           <>
-            Connexion directe sans ORM via driver HTTP Serverless (
+            Connexion directe sans ORM via driver HTTP serverless (
             <code className="font-mono text-[11px] text-emerald-600">@neondatabase/serverless</code>)
           </>
         }
@@ -163,7 +163,7 @@ export const NeonDatabasePanel: React.FC = () => {
       >
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">État Connexion</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">État connexion</span>
             <div className="mt-1 flex items-center gap-2">
               {dbStatus?.connected ? (
                 <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 dark:text-emerald-400">
@@ -189,9 +189,9 @@ export const NeonDatabasePanel: React.FC = () => {
           </div>
 
           <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Version Moteur</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Version moteur</span>
             <div className="mt-1 truncate font-mono text-xs text-slate-700 dark:text-slate-300" title={dbStatus?.version}>
-              {dbStatus?.version ? dbStatus.version.split(' ')[0] + ' ' + (dbStatus.version.split(' ')[1] || '') : 'PostgreSQL Serverless'}
+              {dbStatus?.version ? dbStatus.version.split(' ')[0] + ' ' + (dbStatus.version.split(' ')[1] || '') : 'PostgreSQL serverless'}
             </div>
           </div>
         </div>
@@ -299,7 +299,7 @@ export const IntegrationsPanel: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          message: '🧪 Test d\'intégration N8N -> Google Chat Webhook depuis Shipment Manager (Paramètres)',
+          message: '🧪 Test d\'intégration N8N -> webhook Google Chat depuis Shipment Manager (Paramètres)',
           recipientSpace: 'SupplyChain-Alerts',
         }),
       });
@@ -320,14 +320,14 @@ export const IntegrationsPanel: React.FC = () => {
     <div className="space-y-6">
       <SettingsCard
         icon={Workflow}
-        iconClass="bg-pink-50 text-[#A91869] dark:bg-pink-950/40 dark:text-pink-300"
-        title="Intégration N8N & Webhook Google Chat"
+        iconClass="bg-pink-50 text-[#9E1B65] dark:bg-pink-950/40 dark:text-[#ED5DB2]"
+        title="Intégration N8N et webhook Google Chat"
         description="Relances et alertes envoyées dans l'espace Google Chat de la Supply Chain."
         actions={
           <button
             onClick={handleTestN8NWebhook}
             disabled={testingWebhook}
-            className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" />
             {testingWebhook ? 'Test en cours...' : 'Tester le webhook'}

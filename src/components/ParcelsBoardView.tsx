@@ -176,7 +176,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
     'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700';
 
   const selectClass =
-    'rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
+    'rounded-xl border border-slate-200 bg-slate-50 py-2 px-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
   return (
     <div className="space-y-4">
@@ -197,7 +197,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
             <button
               onClick={() => setPointOpen(true)}
               title="Déposer toutes les photos du point, puis les rattacher une à une (confirme les réceptions)"
-              className="flex items-center gap-1.5 rounded-xl bg-[#643288] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
+              className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
             >
               <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
             </button>
@@ -221,7 +221,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
             key={t.key}
             onClick={() => setStatusFilter(t.key)}
             className={`rounded-2xl border bg-white p-3 text-left shadow-xs transition dark:bg-slate-800 ${
-              statusFilter === t.key ? 'border-[#643288] ring-1 ring-[#643288]' : 'border-slate-200 dark:border-slate-700'
+              statusFilter === t.key ? 'border-[#623387] ring-1 ring-[#623387]' : 'border-slate-200 dark:border-slate-700'
             }`}
           >
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t.label}</div>
@@ -252,13 +252,13 @@ export const ParcelsBoardView: React.FC<Props> = ({
       )}
 
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-800">
-        <div className="relative min-w-[16rem] flex-1">
+        <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="N° de suivi, fournisseur, facture, expédition…"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-800 focus:border-[#643288] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
         </div>
         <select value={supplierFilter} onChange={(e) => setSupplierFilter(e.target.value)} className={`max-w-[16rem] ${selectClass}`}>
@@ -436,7 +436,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                               <button
                                 key={id}
                                 onClick={() => onOpenShipment(id)}
-                                className="mr-1 font-mono font-semibold text-[#643288] hover:underline dark:text-purple-300"
+                                className="mr-1 font-mono font-semibold text-[#623387] hover:underline dark:text-[#B688FF]"
                               >
                                 {id}
                               </button>
@@ -447,7 +447,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           <button
                             onClick={() => setPhotosOf(p)}
                             title="Voir les photos"
-                            className={`${iconButton} hover:text-[#643288]`}
+                            className={`${iconButton} hover:text-[#623387]`}
                           >
                             <Camera className="h-4 w-4" />
                           </button>
@@ -486,7 +486,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                               onClick={() => backToReceive(p)}
                               disabled={busy !== null}
                               title="Remettre à recevoir"
-                              className={`${iconButton} hover:text-[#643288]`}
+                              className={`${iconButton} hover:text-[#623387]`}
                             >
                               <Undo2 className="h-4 w-4" />
                             </button>

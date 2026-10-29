@@ -108,7 +108,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
       return;
     }
     if (!shipment && !refFa.trim()) {
-      setError('La Réf FA DIGI-NXT (facture de vente) est obligatoire.');
+      setError('La réf FA DIGI-NXT (facture de vente) est obligatoire.');
       return;
     }
     setSaving(true);
@@ -141,7 +141,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
       <div className="my-8 w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-6 text-xs shadow-2xl dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-100 pb-4 dark:border-slate-800">
           <div className="flex items-center gap-2.5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#643288] text-white shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[#623387] text-white shadow-sm">
               <Layers className="h-5 w-5" />
             </div>
             <div>
@@ -203,7 +203,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
               type="checkbox"
               checked={onlyReceived}
               onChange={(e) => setOnlyReceived(e.target.checked)}
-              className="h-4 w-4 accent-[#643288]"
+              className="h-4 w-4 accent-[#623387]"
             />
             Reçues à {hub} seulement (tous les colis)
           </label>
@@ -230,7 +230,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
                       checked={all}
                       disabled={ids.length === 0}
                       onChange={() => toggle(ids, !all)}
-                      className="h-4 w-4 accent-[#643288]"
+                      className="h-4 w-4 accent-[#623387]"
                     />
                     {supplier}
                     <span className="font-semibold text-slate-500">{list.length} facture(s)</span>
@@ -250,7 +250,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
                           checked={selected.has(inv.id)}
                           disabled={!selectable(inv)}
                           onChange={() => toggle([inv.id], !selected.has(inv.id))}
-                          className="h-4 w-4 accent-[#643288]"
+                          className="h-4 w-4 accent-[#623387]"
                         />
                         <span className="w-32 font-semibold">{inv.ref || '—'}</span>
                         <span className="w-24 text-slate-500">{formatDate(inv.invoice_date)}</span>
@@ -328,7 +328,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
               <button
                 onClick={() => submit(false)}
                 disabled={saving || selectedInvoices.length === 0}
-                className="flex items-center gap-2 rounded-xl bg-[#643288] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
               >
                 {saving && <Loader2 className="h-4 w-4 animate-spin" />}
                 {shipment ? 'Ajouter à l\'expédition' : 'Créer l\'expédition'}
