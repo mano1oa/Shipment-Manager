@@ -1,4 +1,4 @@
-import { createSign } from 'crypto';
+import { createPrivateKey, createSign } from 'crypto';
 
 /**
  * Antoine's parcel photos: Google Drive, in a shared drive (Google Workspace).
@@ -26,10 +26,53 @@ export const PHOTO_MAX_BYTES = 4 * 1024 * 1024;
 
 export class PhotoStorageError extends Error {}
 
+const PEM_RE = /-----BEGIN ([A-Z ]*PRIVATE KEY)-----([\s\S]*?)-----END \1-----/;
+
+/**
+ * The private key as pasted in the hosting variables, made into a PEM. Accepts
+ * the forms met in practice: "\n" kept literally (Vercel), surrounding quotes
+ * copied from the JSON file, the whole JSON key file, line breaks turned into
+ * spaces, or the PEM encoded in base64.
+ */
+export function normalizePrivateKey(raw: string | undefined): string | undefined {
+  let key = raw?.trim();
+  if (!key) return undefined;
+  if (key.startsWith('{')) {
+    try {
+      key = String(JSON.parse(key).private_key ?? '').trim();
+    } catch {
+      // not JSON after all: read as is
+    }
+  }
+  key = key.replace(/^["']|["']$/g, '').replace(/\\r/g, '').replace(/\\n/g, '\n').replace(/\r\n/g, '\n').trim();
+  if (!key.includes('-----BEGIN') && /^[A-Za-z0-9+/=\s]+$/.test(key)) {
+    const decoded = Buffer.from(key, 'base64').toString('utf8');
+    if (decoded.includes('-----BEGIN')) key = decoded.trim();
+  }
+  // Rebuild the PEM body (64 characters per line) whatever the separators became
+  const m = key.match(PEM_RE);
+  if (!m) return key;
+  const body = m[2].replace(/[^A-Za-z0-9+/=]/g, '');
+  return `-----BEGIN ${m[1]}-----\n${body.match(/.{1,64}/g)?.join('\n') ?? ''}\n-----END ${m[1]}-----\n`;
+}
+
+/** What is wrong with the key, without ever showing it (diagnostic). */
+function describeKeyProblem(key: string): string | null {
+  try {
+    createPrivateKey(key);
+    return null;
+  } catch {
+    if (!key.includes('-----BEGIN')) {
+      return "la clé ne contient pas « -----BEGIN PRIVATE KEY----- » : collez la valeur « private_key » du fichier JSON du compte de service";
+    }
+    if (!PEM_RE.test(key)) return 'la ligne « -----END PRIVATE KEY----- » manque : la clé a été tronquée au collage';
+    return 'la clé est illisible (caractères manquants ou modifiés) : recollez-la depuis le fichier JSON, ou créez une nouvelle clé';
+  }
+}
+
 function config() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
-  // Vercel variables keep "\n" literally: restore the PEM line breaks
-  const key = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, '\n').trim();
+  const key = normalizePrivateKey(process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY);
   const folder = process.env.GOOGLE_DRIVE_PHOTOS_FOLDER_ID?.trim();
   if (!email || !key || !folder) return null;
   return { email, key, folder };
@@ -102,6 +145,14 @@ export async function checkPhotoStorage(): Promise<PhotoStorageCheck> {
       : 'GOOGLE_SERVICE_ACCOUNT_EMAIL, GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY et GOOGLE_DRIVE_PHOTOS_FOLDER_ID sont requises',
   });
   if (!c) return done();
+
+  const keyProblem = describeKeyProblem(c.key);
+  steps.push({
+    label: 'Clé privée',
+    ok: keyProblem === null,
+    detail: keyProblem ?? 'Format reconnu',
+  });
+  if (keyProblem) return done();
 
   try {
     await accessToken();
