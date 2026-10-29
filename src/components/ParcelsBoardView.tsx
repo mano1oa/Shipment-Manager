@@ -16,11 +16,12 @@ import {
 } from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
-import { InvoiceWithoutParcel, Parcel, formatDate, setParcelStatus } from './digiApi';
+import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
 import { ReceptionPointView } from './ReceptionPointView';
+import { useParcelStatusActions } from './useParcelStatusActions';
 
 type StatusFilter = 'open' | ParcelStatus | 'all';
 
@@ -77,52 +78,13 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const today = new Date().toISOString().slice(0, 10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [receptionDate, setReceptionDate] = useState(today);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
   const [receiving, setReceiving] = useState(false);
   const [pointOpen, setPointOpen] = useState(false);
 
-  /** Changes the state of parcels one by one and reports the failures. */
-  const changeStatus = async (list: Parcel[], status: ParcelStatus, label: string) => {
-    setActionError(null);
-    setActionMessage(null);
-    const failures: string[] = [];
-    for (let i = 0; i < list.length; i++) {
-      setBusy(`${label} : ${i + 1} / ${list.length}…`);
-      try {
-        await setParcelStatus(list[i].id, status, status === 'received' ? receptionDate : null);
-      } catch (err: any) {
-        failures.push(`${list[i].tracking_number || list[i].supplier_name || list[i].id} (${err.message})`);
-      }
-    }
-    setBusy(null);
-    setSelected(new Set());
-    if (failures.length > 0) setActionError(`${failures.length} colis non traité(s) : ${failures.join(' ; ')}`);
-    if (list.length > failures.length) setActionMessage(`${list.length - failures.length} colis : ${label.toLowerCase()}.`);
-    onReload();
-  };
-
-  const confirmReception = (list: Parcel[]) => {
-    if (!window.confirm(`Confirmer la réception à ${hub} de ${list.length} colis, le ${formatDate(receptionDate)} ?`)) return;
-    changeStatus(list, 'received', 'Réception confirmée');
-  };
-
-  const openSearch = (p: Parcel) => {
-    if (!window.confirm(`Ouvrir un avis de recherche : le colis ${p.tracking_number || ''} a été reçu à ${hub} mais n'est pas arrivé à Madagascar ?`)) return;
-    changeStatus([p], 'search', 'Avis de recherche ouvert');
-  };
-
-  const declareLost = (p: Parcel) => {
-    if (!window.confirm(`Déclarer le colis ${p.tracking_number || ''} perdu avant ${hub} (réclamation fournisseur) ?`)) return;
-    changeStatus([p], 'lost', `Déclaré perdu avant ${hub}`);
-  };
-
-  const backToReceive = (p: Parcel) => {
-    if (!window.confirm(`Remettre le colis ${p.tracking_number || ''} « à recevoir » ? La date de réception est effacée.`)) return;
-    changeStatus([p], 'to_receive', 'Remis à recevoir');
-  };
+  const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
+    useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
+  const confirmReception = (list: Parcel[]) => actions.confirmReception(list, receptionDate);
 
   const own = useMemo(() => (parcels || []).filter((p) => p.destination === destination), [parcels, destination]);
   const overdue = (p: Parcel) => isParcelOverdue(p, parcelInvoiceDate(p), today, settings);

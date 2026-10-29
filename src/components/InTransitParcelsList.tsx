@@ -1,9 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle2, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { Shipment } from '../types';
 import { Parcel, formatDate } from './digiApi';
+import { ParcelFormModal } from './ParcelFormModal';
+import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { parcelMatches } from './ParcelsBoardView';
+import { useParcelStatusActions } from './useParcelStatusActions';
 
 /** Where a parcel stands between the supplier and Madagascar. */
 type Stage = 'to_hub' | 'at_hub' | 'to_mada' | 'customs' | 'search' | 'lost';
@@ -70,6 +73,10 @@ interface Props {
   /** Search typed in the top bar. */
   globalSearch: string;
   onOpenShipment: (shipmentId: string) => void;
+  /** Supply Chain / Sourcing: edits the parcel (n° de suivi, transporteur, date…). */
+  canEdit: boolean;
+  /** Supply Chain: confirms receptions, photos, avis de recherche. */
+  isSupplyChain: boolean;
 }
 
 /** Suivi aérien / maritime › En cours d'acheminement: every parcel not yet received in Madagascar. */
@@ -82,10 +89,19 @@ export const InTransitParcelsList: React.FC<Props> = ({
   onReload,
   globalSearch,
   onOpenShipment,
+  canEdit,
+  isSupplyChain,
 }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
+  const [editing, setEditing] = useState<Parcel | null>(null);
+  const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const { busy, actionError, actionMessage, setActionMessage, confirmReception, openSearch, declareLost, backToReceive } =
+    useParcelStatusActions(hub, onReload);
+  const iconButton =
+    'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700';
 
   const rows = useMemo(() => inTransitRows(parcels || [], destination, shipments), [parcels, destination, shipments]);
 
@@ -142,6 +158,14 @@ export const InTransitParcelsList: React.FC<Props> = ({
         <span className="text-xs font-semibold text-slate-500">{filtered.length} colis</span>
       </div>
 
+      {busy && (
+        <p className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> {busy}
+        </p>
+      )}
+      {actionError && <p className="text-xs font-semibold text-rose-600">{actionError}</p>}
+      {actionMessage && <p className="text-xs font-semibold text-emerald-600">{actionMessage}</p>}
+
       {error && (
         <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
           <AlertCircle className="h-4 w-4 shrink-0" />
@@ -160,18 +184,19 @@ export const InTransitParcelsList: React.FC<Props> = ({
                 <th className="px-3 py-3">Étape</th>
                 <th className="px-3 py-3">Livraison prévue</th>
                 <th className="px-3 py-3">Expédition</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {parcels === null ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center">
+                  <td colSpan={7} className="px-4 py-10 text-center">
                     {error ? '—' : <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" />}
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
                     {rows.length === 0 ? 'Aucun colis en cours d’acheminement.' : 'Aucun colis ne correspond à vos filtres.'}
                   </td>
                 </tr>
@@ -206,6 +231,62 @@ export const InTransitParcelsList: React.FC<Props> = ({
                             </button>
                           ))}
                     </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex justify-end gap-0.5">
+                        {canEdit && (
+                          <button
+                            onClick={() => setEditing(p)}
+                            title="Modifier le colis"
+                            className={`${iconButton} hover:text-[#623387]`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button onClick={() => setPhotosOf(p)} title="Voir les photos" className={`${iconButton} hover:text-[#623387]`}>
+                          <Camera className="h-4 w-4" />
+                        </button>
+                        {isSupplyChain && (p.status === 'to_receive' || p.status === 'lost') && (
+                          <button
+                            onClick={() => confirmReception([p], today)}
+                            disabled={busy !== null}
+                            title={`Reçu à ${hub} aujourd'hui`}
+                            className={`${iconButton} text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40`}
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isSupplyChain && p.status === 'received' && (
+                          <button
+                            onClick={() => openSearch(p)}
+                            disabled={busy !== null}
+                            title="Avis de recherche : reçu mais absent à l'arrivée à Madagascar"
+                            className={`${iconButton} text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40`}
+                          >
+                            <SearchX className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isSupplyChain && p.status === 'to_receive' && (
+                          <button
+                            onClick={() => declareLost(p)}
+                            disabled={busy !== null}
+                            title={`Déclarer perdu avant ${hub}`}
+                            className={`${iconButton} text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40`}
+                          >
+                            <PackageX className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isSupplyChain && p.status !== 'to_receive' && (
+                          <button
+                            onClick={() => backToReceive(p)}
+                            disabled={busy !== null}
+                            title="Remettre à recevoir"
+                            className={`${iconButton} hover:text-[#623387]`}
+                          >
+                            <Undo2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))
               )}
@@ -213,6 +294,24 @@ export const InTransitParcelsList: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      {editing && (
+        <ParcelFormModal
+          invoices={[]}
+          parcel={editing}
+          canCreateCarrier={isSupplyChain}
+          onClose={() => setEditing(null)}
+          onSaved={(parcel) => {
+            setEditing(null);
+            setActionMessage(`Colis ${parcel.tracking_number || 'sans n° de suivi'} modifié.`);
+            onReload();
+          }}
+        />
+      )}
+
+      {photosOf && (
+        <ParcelPhotosModal parcel={photosOf} canEdit={isSupplyChain} onClose={() => setPhotosOf(null)} onChanged={onReload} />
+      )}
     </div>
   );
 };

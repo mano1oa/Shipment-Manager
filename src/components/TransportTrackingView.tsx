@@ -116,6 +116,8 @@ export const TransportTrackingView: React.FC<Props> = ({
           onReload={onReloadParcels}
           globalSearch={search}
           onOpenShipment={onOpenShipment}
+          canEdit={Boolean(shipmentsProps.canEdit)}
+          isSupplyChain={isSupplyChain}
         />
       ) : tab === 'shipments' ? (
         <ShipmentsView {...(shipmentsProps as any)} modeFilter={mode} />
