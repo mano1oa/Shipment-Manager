@@ -14,6 +14,9 @@ export interface ParcelInvoiceRef {
   ref: string | null;
   supplier_display: string | null;
   invoice_date: string | null;
+  /** DIGI: total of the lines (EUR); hors DIGI: amount in `currency`. */
+  amount_total: number | null;
+  currency: string;
 }
 
 export interface ParcelRecord {
@@ -77,7 +80,11 @@ const SELECT_PARCELS = `
         SELECT json_agg(json_build_object(
           'id', i.id, 'ref', i.ref, 'supplier_name', i.supplier_name,
           'amazon_order_ref', i.amazon_order_ref,
-          'invoice_date', TO_CHAR(i.invoice_date, 'YYYY-MM-DD')
+          'invoice_date', TO_CHAR(i.invoice_date, 'YYYY-MM-DD'),
+          'amount_total', CASE WHEN i.is_digi
+            THEN (SELECT SUM(l.price_subtotal)::float FROM digi_invoice_lines l WHERE l.invoice_id = i.id)
+            ELSE i.amount::float END,
+          'currency', CASE WHEN i.is_digi THEN 'EUR' ELSE COALESCE(i.currency, 'EUR') END
         ) ORDER BY i.invoice_date NULLS LAST, i.ref)
         FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
         WHERE pi.parcel_id = p.id
@@ -112,6 +119,8 @@ function mapParcelRow(row: any): ParcelRecord {
       ref: i.ref,
       supplier_display: trackingSupplierName(i.supplier_name, i.amazon_order_ref),
       invoice_date: i.invoice_date,
+      amount_total: i.amount_total === null || i.amount_total === undefined ? null : Number(i.amount_total),
+      currency: i.currency || 'EUR',
     })),
     photo_count: Number(row.photo_count) || 0,
     created_by_email: row.created_by_email,
@@ -147,12 +156,43 @@ export async function listParcelsForInvoice(invoiceId: string): Promise<ParcelRe
   return (rows as any[]).map(mapParcelRow);
 }
 
-async function findByTrackingNumber(trackingNumber: string): Promise<string | null> {
+export async function findByTrackingNumber(trackingNumber: string): Promise<string | null> {
   const sql = getDb();
   const rows = await sql`
     SELECT id FROM parcels WHERE UPPER(TRIM(tracking_number)) = UPPER(TRIM(${trackingNumber}))
   `;
   return (rows[0]?.id as string) ?? null;
+}
+
+/**
+ * Gives its number to a parcel announced without one (photo of the Point
+ * Antoine, Amazon report). The carrier is only set when still unknown.
+ * Returns false when the parcel already has a number or the number is taken.
+ */
+export async function assignParcelTrackingNumber(
+  id: string,
+  trackingNumber: string,
+  carrier: CarrierCode,
+  actorEmail: string
+): Promise<boolean> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  if (await findByTrackingNumber(trackingNumber)) return false;
+  try {
+    const rows = await sql`
+      UPDATE parcels SET
+        tracking_number = ${trackingNumber},
+        carrier = CASE WHEN carrier = 'UNKNOWN' THEN ${carrier} ELSE carrier END,
+        updated_by_email = ${actorEmail},
+        updated_at = NOW()
+      WHERE id = ${id} AND COALESCE(TRIM(tracking_number), '') = ''
+      RETURNING id
+    `;
+    return rows.length > 0;
+  } catch (err: any) {
+    if (err?.code === '23505') return false;
+    throw err;
+  }
 }
 
 /**
@@ -520,4 +560,53 @@ export async function listParcelsForShipment(shipmentId: string): Promise<Parcel
     [shipmentId]
   );
   return (rows as any[]).map(mapParcelRow);
+}
+
+export interface AmazonOrderInvoice {
+  id: string;
+  ref: string | null;
+  /** Order number, letters and digits only (matching key of the Amazon report). */
+  order_key: string;
+  /** Reference, letters and digits only (the Amazon invoice number). */
+  ref_key: string;
+  triage: string;
+  /** Parcels already linked to the invoice. */
+  parcel_ids: string[];
+  /** Linked parcels still without tracking number: the report can complete them. */
+  blank_parcel_ids: string[];
+}
+
+/**
+ * Invoices of the Amazon report, by Amazon invoice number (reference) or by
+ * order number (dashes, spaces and case ignored).
+ */
+export async function findAmazonOrderInvoices(orderKeys: string[], refKeys: string[] = []): Promise<AmazonOrderInvoice[]> {
+  await ensureDigiInvoicesSchema();
+  if (orderKeys.length === 0 && refKeys.length === 0) return [];
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id, i.ref,
+      COALESCE(regexp_replace(UPPER(i.amazon_order_ref), '[^A-Z0-9]', '', 'g'), '') AS order_key,
+      COALESCE(regexp_replace(UPPER(i.ref), '[^A-Z0-9]', '', 'g'), '') AS ref_key,
+      COALESCE(i.triage, 'to_sort') AS triage,
+      COALESCE((SELECT array_agg(pi.parcel_id::text ORDER BY p.created_at) FROM parcel_invoices pi
+        JOIN parcels p ON p.id = pi.parcel_id WHERE pi.invoice_id = i.id), '{}') AS parcel_ids,
+      COALESCE((SELECT array_agg(pi.parcel_id::text ORDER BY p.created_at) FROM parcel_invoices pi
+        JOIN parcels p ON p.id = pi.parcel_id
+        WHERE pi.invoice_id = i.id AND COALESCE(TRIM(p.tracking_number), '') = ''), '{}') AS blank_parcel_ids
+    FROM digi_invoices i
+    WHERE (i.amazon_order_ref IS NOT NULL
+        AND regexp_replace(UPPER(i.amazon_order_ref), '[^A-Z0-9]', '', 'g') = ANY(${orderKeys}::text[]))
+      OR (i.ref IS NOT NULL AND regexp_replace(UPPER(i.ref), '[^A-Z0-9]', '', 'g') = ANY(${refKeys}::text[]))
+    ORDER BY i.invoice_date NULLS LAST, i.ref
+  `;
+  return rows.map((r: any) => ({
+    id: r.id,
+    ref: r.ref,
+    order_key: r.order_key,
+    ref_key: r.ref_key,
+    triage: r.triage,
+    parcel_ids: r.parcel_ids ?? [],
+    blank_parcel_ids: r.blank_parcel_ids ?? [],
+  }));
 }

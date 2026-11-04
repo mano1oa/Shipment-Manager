@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  FileSpreadsheet,
   Loader2,
   PackageCheck,
   PackageX,
@@ -16,11 +17,15 @@ import {
 } from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
-import { InvoiceWithoutParcel, Parcel, formatDate, setParcelStatus } from './digiApi';
+import { compareDateDesc } from '../lib/dateFormat';
+import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
+import { AmazonReportImportModal } from './AmazonReportImportModal';
+import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
 import { ReceptionPointView } from './ReceptionPointView';
+import { useParcelStatusActions } from './useParcelStatusActions';
 
 type StatusFilter = 'open' | ParcelStatus | 'all';
 
@@ -77,52 +82,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const today = new Date().toISOString().slice(0, 10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [receptionDate, setReceptionDate] = useState(today);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
   const [receiving, setReceiving] = useState(false);
   const [pointOpen, setPointOpen] = useState(false);
+  const [amazonOpen, setAmazonOpen] = useState(false);
+  /** Parcel whose contents are shown under its row. */
+  const [openId, setOpenId] = useState<string | null>(null);
 
-  /** Changes the state of parcels one by one and reports the failures. */
-  const changeStatus = async (list: Parcel[], status: ParcelStatus, label: string) => {
-    setActionError(null);
-    setActionMessage(null);
-    const failures: string[] = [];
-    for (let i = 0; i < list.length; i++) {
-      setBusy(`${label} : ${i + 1} / ${list.length}…`);
-      try {
-        await setParcelStatus(list[i].id, status, status === 'received' ? receptionDate : null);
-      } catch (err: any) {
-        failures.push(`${list[i].tracking_number || list[i].supplier_name || list[i].id} (${err.message})`);
-      }
-    }
-    setBusy(null);
-    setSelected(new Set());
-    if (failures.length > 0) setActionError(`${failures.length} colis non traité(s) : ${failures.join(' ; ')}`);
-    if (list.length > failures.length) setActionMessage(`${list.length - failures.length} colis : ${label.toLowerCase()}.`);
-    onReload();
-  };
-
-  const confirmReception = (list: Parcel[]) => {
-    if (!window.confirm(`Confirmer la réception à ${hub} de ${list.length} colis, le ${formatDate(receptionDate)} ?`)) return;
-    changeStatus(list, 'received', 'Réception confirmée');
-  };
-
-  const openSearch = (p: Parcel) => {
-    if (!window.confirm(`Ouvrir un avis de recherche : le colis ${p.tracking_number || ''} a été reçu à ${hub} mais n'est pas arrivé à Madagascar ?`)) return;
-    changeStatus([p], 'search', 'Avis de recherche ouvert');
-  };
-
-  const declareLost = (p: Parcel) => {
-    if (!window.confirm(`Déclarer le colis ${p.tracking_number || ''} perdu avant ${hub} (réclamation fournisseur) ?`)) return;
-    changeStatus([p], 'lost', `Déclaré perdu avant ${hub}`);
-  };
-
-  const backToReceive = (p: Parcel) => {
-    if (!window.confirm(`Remettre le colis ${p.tracking_number || ''} « à recevoir » ? La date de réception est effacée.`)) return;
-    changeStatus([p], 'to_receive', 'Remis à recevoir');
-  };
+  const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
+    useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
+  const confirmReception = (list: Parcel[]) => actions.confirmReception(list, receptionDate);
 
   const own = useMemo(() => (parcels || []).filter((p) => p.destination === destination), [parcels, destination]);
   const overdue = (p: Parcel) => isParcelOverdue(p, parcelInvoiceDate(p), today, settings);
@@ -149,7 +118,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
         if (['received', 'lost', 'search', 'to_receive'].includes(statusFilter) && p.status !== statusFilter) return false;
         if (supplierFilter !== 'all' && (p.supplier_name || '—') !== supplierFilter) return false;
         return parcelMatches(p, search) && parcelMatches(p, globalSearch);
-      }),
+      })
+        // Latest expected delivery first
+        .sort((a, b) => compareDateDesc(a.expected_delivery, b.expected_delivery)),
     [own, statusFilter, supplierFilter, search, globalSearch, settings]
   );
 
@@ -200,6 +171,13 @@ export const ParcelsBoardView: React.FC<Props> = ({
               className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
             >
               <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
+            </button>
+            <button
+              onClick={() => setAmazonOpen(true)}
+              title="Créer les colis des factures Amazon depuis le rapport d'expédition (n° de commande → n° de suivi)"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> Import rapport Amazon
             </button>
             <button
               onClick={() => setReceiving(true)}
@@ -375,8 +353,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 filtered.map((p) => {
                   const late = overdue(p);
                   return (
+                    <React.Fragment key={p.id}>
                     <tr
-                      key={p.id}
                       className={
                         selected.has(p.id)
                           ? 'bg-emerald-50/70 dark:bg-emerald-950/20'
@@ -394,7 +372,17 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           />
                         </td>
                       )}
-                      <td className="px-3 py-2.5 font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</td>
+                      <td className="px-3 py-2.5 font-mono font-semibold">
+                        <button
+                          onClick={() => setOpenId(openId === p.id ? null : p.id)}
+                          title={openId === p.id ? 'Masquer le contenu' : 'Voir le contenu de la facture / du colis'}
+                          aria-expanded={openId === p.id}
+                          className="mr-1 rounded p-0.5 align-middle text-slate-400 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
+                        >
+                          {openId === p.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                        {p.tracking_number || '— (inconnu)'}
+                      </td>
                       <td className="px-3 py-2.5">{p.carrier_name || '—'}</td>
                       <td className="px-3 py-2.5 font-semibold">{p.supplier_name || '—'}</td>
                       <td className="px-3 py-2.5">{p.invoices.map((i) => i.ref || '—').join(', ') || '—'}</td>
@@ -494,6 +482,14 @@ export const ParcelsBoardView: React.FC<Props> = ({
                         </div>
                       </td>
                     </tr>
+                    {openId === p.id && (
+                      <tr>
+                        <td colSpan={columns} className="p-0">
+                          <ParcelContentsPreview parcel={p} />
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })
               )}
@@ -523,6 +519,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
         />
       )}
 
+      {amazonOpen && (
+        <AmazonReportImportModal destination={destination} onClose={() => setAmazonOpen(false)} onImported={onReload} />
+      )}
       {pointOpen && (
         <ReceptionPointView
           destination={destination}

@@ -7,13 +7,12 @@ import {
   RefreshCw,
   Send,
   ExternalLink,
-  ShieldCheck,
   Server,
   AlertCircle,
   Trash2,
   Bell,
 } from 'lucide-react';
-import { CARRIER_CODES, CARRIER_LABELS } from '../lib/carrierDetection';
+import { CARRIER_CODES } from '../lib/carrierDetection';
 
 // Fixed in src/lib/rulesEngine.ts ("expédition en attente de départ")
 const ORLY_ALERT_DAYS = 10;
@@ -409,69 +408,9 @@ export const IntegrationsPanel: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Suivi automatique par transporteur
+// Connecteurs de suivi
 // ---------------------------------------------------------------------------
 
 /** Tracking connectors (fixed list) that a carrier of the Settings list can be linked to. */
 export const TRACKING_CONNECTOR_CODES = CARRIER_CODES.filter((c) => c !== 'OTHER' && c !== 'UNKNOWN');
 
-/**
- * Read-only state of the tracking connectors. A connector is automated only when
- * a tracking provider is configured server side: nothing here is editable.
- * `linkedCarriers` lists, per connector, the carriers of the Settings list linked to it.
- */
-export const TrackingAutomationPanel: React.FC<{
-  automatedCarriers: string[] | null;
-  linkedCarriers: Record<string, string[]>;
-}> = ({ automatedCarriers, linkedCarriers }) => {
-  const carriersConnectors = TRACKING_CONNECTOR_CODES.map((code) => ({
-    code,
-    name: CARRIER_LABELS[code],
-    automated: automatedCarriers?.includes(code) ?? false,
-    linked: linkedCarriers[code] || [],
-  }));
-
-  return (
-    <SettingsCard
-      icon={ShieldCheck}
-      iconClass="bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400"
-      title="Suivi automatique par connecteur"
-      description={
-        <>
-          {automatedCarriers === null
-            ? 'État des connecteurs indisponible.'
-            : automatedCarriers.length === 0
-              ? 'Aucun fournisseur de suivi n’est encore branché côté serveur : le suivi est manuel pour tous.'
-              : `${automatedCarriers.length} connecteur(s) suivi(s) automatiquement.`}{' '}
-          Lecture seule : l’activation se fait côté serveur. Le connecteur est déduit du format du numéro de suivi ; s’il
-          n’est pas reconnu, celui du transporteur de l’expédition (colonne « Connecteur de suivi » ci-dessus) est utilisé.
-        </>
-      }
-    >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {carriersConnectors.map((c) => (
-          <div
-            key={c.code}
-            className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800"
-          >
-            <span className="min-w-0">
-              <span className="block text-xs font-bold text-slate-900 dark:text-slate-100">{c.name}</span>
-              <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400" title={c.linked.join(', ')}>
-                {c.linked.length ? `Relié : ${c.linked.join(', ')}` : 'Aucun transporteur relié'}
-              </span>
-            </span>
-            {c.automated ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">
-                <CheckCircle2 className="h-3 w-3" /> Automatique
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-900 dark:text-slate-400">
-                Manuel
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-    </SettingsCard>
-  );
-};

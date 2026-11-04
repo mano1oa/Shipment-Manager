@@ -43,3 +43,16 @@ export function formatDateTime(value?: string | Date | null, fallback = '—'): 
 
 /** Today as "DD-MM-YYYY". */
 export const formatToday = () => fromDate(new Date(), false);
+
+/**
+ * Sort "most recent first" on YYYY-MM-DD dates; missing (or non-date, e.g.
+ * "Non parti") values go last.
+ */
+export function compareDateDesc(a?: string | null, b?: string | null): number {
+  const da = a && /^\d{4}-\d{2}-\d{2}/.test(a) ? a : '';
+  const db = b && /^\d{4}-\d{2}-\d{2}/.test(b) ? b : '';
+  if (da === db) return 0;
+  if (!da) return 1;
+  if (!db) return -1;
+  return da < db ? 1 : -1;
+}

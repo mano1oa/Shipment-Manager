@@ -26,7 +26,7 @@ import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 import { SHIPMENT_STATUSES } from '../lib/parcelTracking';
-import { formatDate, formatToday } from '../lib/dateFormat';
+import { compareDateDesc, formatDate, formatToday } from '../lib/dateFormat';
 import type { DigiValueMatch } from '../lib/digiShipmentValue';
 
 const digiAmountFormat = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -181,7 +181,9 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       if (!matchesSearch(shp, search) || !matchesSearch(shp, globalSearch)) return false;
 
       return true;
-    });
+    })
+      // Latest expected delivery (ETA MADA S du) first; shipments not departed last
+      .sort((a, b) => compareDateDesc(calculateEtaMadaSDu(a.orly_scan_date), calculateEtaMadaSDu(b.orly_scan_date)));
   }, [
     shipments,
     modeFilter,

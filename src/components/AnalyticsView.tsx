@@ -11,46 +11,43 @@ import {
   PieChart,
 } from 'lucide-react';
 import { Shipment } from '../types';
+import { carrierSlas, meanTransitDays, summarizeSla } from '../lib/carrierSla';
 
 interface AnalyticsViewProps {
   shipments: Shipment[];
+  /** Paramètres: days of tolerance after the promised date. */
+  slaToleranceDays: number;
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
-  // Carrier SLA calculation
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, slaToleranceDays }) => {
+  // SLA transporteurs hub → Madagascar: promised arrival vs real arrival (+ tolerance)
   const carrierStats = useMemo(() => {
-    const stats: Record<
-      string,
-      { total: number; delays: number; onTime: number; mode: string }
-    > = {};
+    const groups = new Map<string, { modes: Record<string, number>; list: ReturnType<typeof carrierSlas> }>();
+    for (const x of carrierSlas(shipments, slaToleranceDays)) {
+      const name = x.shipment.carrier || '—';
+      const g = groups.get(name) ?? { modes: {}, list: [] };
+      g.modes[x.shipment.mode] = (g.modes[x.shipment.mode] ?? 0) + 1;
+      g.list.push(x);
+      groups.set(name, g);
+    }
+    return Array.from(groups.entries())
+      .map(([carrier, g]) => {
+        const sum = summarizeSla(g.list);
+        return {
+          carrier,
+          mode: Object.entries(g.modes).sort((a, b) => b[1] - a[1])[0][0],
+          total: sum.measured,
+          onTime: sum.onTime,
+          delays: sum.late + sum.lateInTransit,
+          meanDelay: sum.meanDelay,
+          slaRate: sum.rate ?? 0,
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [shipments, slaToleranceDays]);
 
-    shipments.forEach((shp) => {
-      if (!stats[shp.carrier]) {
-        stats[shp.carrier] = { total: 0, delays: 0, onTime: 0, mode: shp.mode };
-      }
-      stats[shp.carrier].total += 1;
-      const isDelayed =
-        shp.carrier_status === 'Exception / Delay' ||
-        (shp.alerts && shp.alerts.length > 0);
-      if (isDelayed) {
-        stats[shp.carrier].delays += 1;
-      } else {
-        stats[shp.carrier].onTime += 1;
-      }
-    });
-
-    return Object.entries(stats).map(([carrier, data]) => {
-      const slaRate = Math.round((data.onTime / data.total) * 100);
-      return {
-        carrier,
-        mode: data.mode,
-        total: data.total,
-        delays: data.delays,
-        onTime: data.onTime,
-        slaRate,
-      };
-    });
-  }, [shipments]);
+  const transitAir = useMemo(() => meanTransitDays(shipments, 'Air'), [shipments]);
+  const transitSea = useMemo(() => meanTransitDays(shipments, 'Sea'), [shipments]);
 
   // Supplier Breakdown
   const topSuppliers = useMemo(() => {
@@ -83,6 +80,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
           <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700">
             <Award className="h-4 w-4 text-[#9E1B65]" /> Respect des SLAs par transporteur
           </h2>
+          <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            Hub → Madagascar : arrivée réelle comparée à la date promise (aérien : ETA MADA S du ; maritime : ETA
+            d’arrivée), tolérance +{slaToleranceDays} j (Paramètres). Une expédition encore en route après cette date
+            compte en retard.
+          </p>
 
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-left text-xs">
@@ -90,17 +92,18 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
                 <tr>
                   <th className="px-3 py-2 font-semibold">Transporteur</th>
                   <th className="px-3 py-2 font-semibold">Mode principal</th>
-                  <th className="px-3 py-2 font-semibold text-center">Expéditions</th>
+                  <th className="px-3 py-2 font-semibold text-center">Mesurées</th>
                   <th className="px-3 py-2 font-semibold text-center">À l'heure</th>
                   <th className="px-3 py-2 font-semibold text-center">Retards</th>
+                  <th className="px-3 py-2 font-semibold text-center">Retard moyen</th>
                   <th className="px-3 py-2 text-right font-semibold">Taux SLA</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
                 {carrierStats.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
-                      Aucune expédition enregistrée pour le calcul des indicateurs SLA.
+                    <td colSpan={7} className="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
+                      Aucune expédition arrivée à Madagascar (ou en retard en route) à mesurer.
                     </td>
                   </tr>
                 ) : (
@@ -122,6 +125,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
                     </td>
                     <td className="px-3 py-3 text-center font-mono text-rose-600 font-bold">
                       {item.delays}
+                    </td>
+                    <td className="px-3 py-3 text-center font-mono text-slate-600 dark:text-slate-300">
+                      {item.meanDelay === null ? '—' : `+${item.meanDelay.toLocaleString('fr-FR')} j`}
                     </td>
                     <td className="px-3 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -193,21 +199,22 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments }) => {
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-              SLA moyen de transit
+              Transit moyen hub → Madagascar
             </h3>
             <div className="mt-3 space-y-2">
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Vol aérien express (CDG -&gt; TNR)</span>
-                <span className="font-bold text-slate-900 dark:text-white">4.2 jours</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Transit maritime (SHA -&gt; TMM)</span>
-                <span className="font-bold text-slate-900 dark:text-white">32.5 jours</span>
-              </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-500">Temps moyen dédouanement Ivato</span>
-                <span className="font-bold text-slate-900 dark:text-white">1.8 jours</span>
-              </div>
+              {[
+                { label: 'Aérien (Orly → Madagascar)', t: transitAir },
+                { label: 'Maritime (Rouen → Madagascar)', t: transitSea },
+              ].map(({ label, t }) => (
+                <div key={label} className="flex justify-between text-xs">
+                  <span className="text-slate-500">{label}</span>
+                  <span className="font-bold text-slate-900 dark:text-white">
+                    {t.days === null ? '—' : `${t.days.toLocaleString('fr-FR')} jours`}
+                    <span className="ml-1 font-normal text-slate-400">({t.count})</span>
+                  </span>
+                </div>
+              ))}
+              <p className="text-[10px] text-slate-400">Départ du hub → arrivée réelle à Madagascar, expéditions arrivées.</p>
             </div>
           </div>
         </div>

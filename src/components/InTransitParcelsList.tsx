@@ -1,12 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle2, ChevronDown, ChevronRight, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { Shipment } from '../types';
+import { compareDateDesc } from '../lib/dateFormat';
 import { Parcel, formatDate } from './digiApi';
+import { ParcelContentsPreview } from './ParcelContentsPreview';
+import { ParcelFormModal } from './ParcelFormModal';
+import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { parcelMatches } from './ParcelsBoardView';
+import { useParcelStatusActions } from './useParcelStatusActions';
 
 /** Where a parcel stands between the supplier and Madagascar. */
-type Stage = 'to_hub' | 'at_hub' | 'to_mada' | 'customs' | 'search';
+type Stage = 'to_hub' | 'at_hub' | 'to_mada' | 'customs' | 'search' | 'lost';
 
 const STAGE_LABELS: Record<Stage, (hub: string) => string> = {
   to_hub: (hub) => `En route vers ${hub}`,
@@ -14,6 +19,7 @@ const STAGE_LABELS: Record<Stage, (hub: string) => string> = {
   to_mada: () => 'En route vers Madagascar',
   customs: () => 'Bloqué en douane',
   search: () => 'Avis de recherche',
+  lost: (hub) => `Perdu avant ${hub}`,
 };
 
 const STAGE_BADGES: Record<Stage, string> = {
@@ -21,22 +27,31 @@ const STAGE_BADGES: Record<Stage, string> = {
   at_hub: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
   to_mada: 'bg-[#EAD7F9] text-[#623387] dark:bg-purple-950 dark:text-[#B688FF]',
   customs: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  search: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300',
+  search: 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300',
+  lost: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300',
 };
 
 /**
- * Stage of a parcel, or null once it is over: lost before the hub, or its
- * shipment delivered to the Madagascar warehouse (an "avis de recherche" stays
- * open until it is settled).
+ * Stage of a parcel, or null once its shipment is delivered to the Madagascar
+ * warehouse. Lost parcels and "avis de recherche" stay listed: they never
+ * reached Madagascar.
  */
 function stageOf(p: Parcel, shipments: Shipment[]): Stage | null {
-  if (p.status === 'lost') return null;
+  if (p.status === 'lost') return 'lost';
   if (p.status === 'search') return 'search';
   if (p.status === 'to_receive') return 'to_hub';
   if (shipments.some((s) => s.global_status === 'Livrée entrepôt')) return null;
   if (shipments.some((s) => s.global_status === 'Bloquée douane')) return 'customs';
   if (shipments.some((s) => s.global_status === 'Expédiée vers Mada')) return 'to_mada';
   return 'at_hub';
+}
+
+export type JourneyStage = Stage | 'delivered';
+
+/** Stage of a parcel on the whole journey, "delivered" once in the Madagascar warehouse. */
+export function journeyStage(p: Parcel, byId: Map<string, Shipment>): JourneyStage {
+  const own = p.shipment_ids.map((id) => byId.get(id)).filter((s): s is Shipment => Boolean(s));
+  return stageOf(p, own) ?? 'delivered';
 }
 
 export interface InTransitRow {
@@ -68,6 +83,10 @@ interface Props {
   /** Search typed in the top bar. */
   globalSearch: string;
   onOpenShipment: (shipmentId: string) => void;
+  /** Supply Chain / Sourcing: edits the parcel (n° de suivi, transporteur, date…). */
+  canEdit: boolean;
+  /** Supply Chain: confirms receptions, photos, avis de recherche. */
+  isSupplyChain: boolean;
 }
 
 /** Suivi aérien / maritime › En cours d'acheminement: every parcel not yet received in Madagascar. */
@@ -80,15 +99,26 @@ export const InTransitParcelsList: React.FC<Props> = ({
   onReload,
   globalSearch,
   onOpenShipment,
+  canEdit,
+  isSupplyChain,
 }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
+  const [editing, setEditing] = useState<Parcel | null>(null);
+  const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
+  /** Parcel whose contents are shown under its row. */
+  const [openId, setOpenId] = useState<string | null>(null);
+  const today = new Date().toISOString().slice(0, 10);
+  const { busy, actionError, actionMessage, setActionMessage, confirmReception, openSearch, declareLost, backToReceive } =
+    useParcelStatusActions(hub, onReload);
+  const iconButton =
+    'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700';
 
   const rows = useMemo(() => inTransitRows(parcels || [], destination, shipments), [parcels, destination, shipments]);
 
   const counts = useMemo(() => {
-    const c: Record<Stage, number> = { to_hub: 0, at_hub: 0, to_mada: 0, customs: 0, search: 0 };
+    const c: Record<Stage, number> = { to_hub: 0, at_hub: 0, to_mada: 0, customs: 0, search: 0, lost: 0 };
     rows.forEach((r) => c[r.stage]++);
     return c;
   }, [rows]);
@@ -98,7 +128,9 @@ export const InTransitParcelsList: React.FC<Props> = ({
       rows.filter(
         ({ parcel: p, stage }) =>
           (stageFilter === 'all' || stage === stageFilter) && parcelMatches(p, search) && parcelMatches(p, globalSearch)
-      ),
+      )
+        // Latest expected delivery first
+        .sort((a, b) => compareDateDesc(a.parcel.expected_delivery, b.parcel.expected_delivery)),
     [rows, search, globalSearch, stageFilter]
   );
 
@@ -106,7 +138,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
     <div className="space-y-3">
       <p className="text-xs text-slate-500 dark:text-slate-400">
         Tous les colis vers {hub} pas encore arrivés à Madagascar : en route vers {hub}, en attente de départ, puis en
-        route vers Madagascar.
+        route vers Madagascar — y compris les colis perdus avant {hub} et les avis de recherche.
       </p>
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:flex-wrap lg:items-center dark:border-slate-800 dark:bg-slate-800">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
@@ -140,6 +172,14 @@ export const InTransitParcelsList: React.FC<Props> = ({
         <span className="text-xs font-semibold text-slate-500">{filtered.length} colis</span>
       </div>
 
+      {busy && (
+        <p className="flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> {busy}
+        </p>
+      )}
+      {actionError && <p className="text-xs font-semibold text-rose-600">{actionError}</p>}
+      {actionMessage && <p className="text-xs font-semibold text-emerald-600">{actionMessage}</p>}
+
       {error && (
         <div className="flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
           <AlertCircle className="h-4 w-4 shrink-0" />
@@ -158,25 +198,35 @@ export const InTransitParcelsList: React.FC<Props> = ({
                 <th className="px-3 py-3">Étape</th>
                 <th className="px-3 py-3">Livraison prévue</th>
                 <th className="px-3 py-3">Expédition</th>
+                <th className="px-3 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {parcels === null ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center">
+                  <td colSpan={7} className="px-4 py-10 text-center">
                     {error ? '—' : <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" />}
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
                     {rows.length === 0 ? 'Aucun colis en cours d’acheminement.' : 'Aucun colis ne correspond à vos filtres.'}
                   </td>
                 </tr>
               ) : (
                 filtered.map(({ parcel: p, shipments: own, stage }) => (
-                  <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30">
+                  <React.Fragment key={p.id}>
+                  <tr className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30">
                     <td className="px-3 py-2.5">
+                      <button
+                        onClick={() => setOpenId(openId === p.id ? null : p.id)}
+                        title={openId === p.id ? 'Masquer le contenu' : 'Voir le contenu de la facture / du colis'}
+                        aria-expanded={openId === p.id}
+                        className="mr-1 rounded p-0.5 align-middle text-slate-400 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
+                      >
+                        {openId === p.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </button>
                       <span className="font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</span>
                       {p.carrier_name && <span className="ml-1 text-[10px] text-slate-400">{p.carrier_name}</span>}
                     </td>
@@ -204,13 +254,95 @@ export const InTransitParcelsList: React.FC<Props> = ({
                             </button>
                           ))}
                     </td>
+                    <td className="px-3 py-2.5">
+                      <div className="flex justify-end gap-0.5">
+                        {canEdit && (
+                          <button
+                            onClick={() => setEditing(p)}
+                            title="Modifier le colis"
+                            className={`${iconButton} hover:text-[#623387]`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
+                        <button onClick={() => setPhotosOf(p)} title="Voir les photos" className={`${iconButton} hover:text-[#623387]`}>
+                          <Camera className="h-4 w-4" />
+                        </button>
+                        {isSupplyChain && (p.status === 'to_receive' || p.status === 'lost') && (
+                          <button
+                            onClick={() => confirmReception([p], today)}
+                            disabled={busy !== null}
+                            title={`Reçu à ${hub} aujourd'hui`}
+                            className={`${iconButton} text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40`}
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isSupplyChain && p.status === 'received' && (
+                          <button
+                            onClick={() => openSearch(p)}
+                            disabled={busy !== null}
+                            title="Avis de recherche : reçu mais absent à l'arrivée à Madagascar"
+                            className={`${iconButton} text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40`}
+                          >
+                            <SearchX className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isSupplyChain && p.status === 'to_receive' && (
+                          <button
+                            onClick={() => declareLost(p)}
+                            disabled={busy !== null}
+                            title={`Déclarer perdu avant ${hub}`}
+                            className={`${iconButton} text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40`}
+                          >
+                            <PackageX className="h-4 w-4" />
+                          </button>
+                        )}
+                        {isSupplyChain && p.status !== 'to_receive' && (
+                          <button
+                            onClick={() => backToReceive(p)}
+                            disabled={busy !== null}
+                            title="Remettre à recevoir"
+                            className={`${iconButton} hover:text-[#623387]`}
+                          >
+                            <Undo2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
+                  {openId === p.id && (
+                    <tr>
+                      <td colSpan={7} className="p-0">
+                        <ParcelContentsPreview parcel={p} />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {editing && (
+        <ParcelFormModal
+          invoices={[]}
+          parcel={editing}
+          canCreateCarrier={isSupplyChain}
+          onClose={() => setEditing(null)}
+          onSaved={(parcel) => {
+            setEditing(null);
+            setActionMessage(`Colis ${parcel.tracking_number || 'sans n° de suivi'} modifié.`);
+            onReload();
+          }}
+        />
+      )}
+
+      {photosOf && (
+        <ParcelPhotosModal parcel={photosOf} canEdit={isSupplyChain} onClose={() => setPhotosOf(null)} onChanged={onReload} />
+      )}
     </div>
   );
 };
