@@ -104,7 +104,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
   // Pre-checked invoices not validated yet stay out
   const selectedInvoices = candidates.filter((i) => selected.has(i.id) && selectable(i));
 
-  const submit = async (force: boolean) => {
+  const submit = async (force: boolean, mixedDates = false) => {
     setError(null);
     if (selectedInvoices.length === 0) {
       setError('Cochez les factures de l\'expédition.');
@@ -118,7 +118,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
     try {
       const ids = selectedInvoices.map((i) => i.id);
       const result: GroupingResult = shipment
-        ? await addInvoicesToShipment(shipment.id, ids, force)
+        ? await addInvoicesToShipment(shipment.id, ids, force, mixedDates)
         : await createShipmentFromInvoices({
             mode,
             ref_fa_digi_nxt: refFa,
@@ -127,8 +127,21 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
             remarks,
             invoice_ids: ids,
             force,
+            mixed_dates: mixedDates,
           });
       if ('needsException' in result) setException(result.needsException);
+      else if ('mixedDates' in result) {
+        const dates = result.mixedDates.map((d) => formatDate(d)).join(', ');
+        const ok = window.confirm(
+          `Les colis ont été reçus à Orly à des dates différentes : ${dates}.\n` +
+            "Une expédition regroupe normalement les colis d'une seule date de réception : vérifiez les factures cochées.\n\n" +
+            `Continuer quand même (remise / scan Orly = ${formatDate(result.mixedDates[result.mixedDates.length - 1])}) ?`
+        );
+        if (ok) {
+          setSaving(false);
+          return submit(force, true);
+        }
+      }
       else if ('shipment' in result) onDone(result.shipment.id, result.emptied);
     } catch (err: any) {
       setError(err.message);
@@ -181,7 +194,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
               <input value={blAwb} onChange={(e) => setBlAwb(e.target.value)} className={`${inputClass} font-mono`} />
             </label>
             <label>
-              <span className={label}>Transporteur / transitaire</span>
+              <span className={label}>Transitaire</span>
               <input value={carrier} onChange={(e) => setCarrier(e.target.value)} className={inputClass} />
             </label>
             <label>

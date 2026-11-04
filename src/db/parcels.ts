@@ -264,6 +264,20 @@ export async function createParcel(
   }
 }
 
+/** Dates (YYYY-MM-DD, oldest first) the parcels of these invoices were received at the hub. */
+export async function receptionDates(invoiceIds: string[]): Promise<string[]> {
+  if (invoiceIds.length === 0) return [];
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT DISTINCT TO_CHAR(p.received_at, 'YYYY-MM-DD') AS d
+    FROM parcels p JOIN parcel_invoices pi ON pi.parcel_id = p.id
+    WHERE pi.invoice_id = ANY(${invoiceIds}::uuid[]) AND p.status = 'received' AND p.received_at IS NOT NULL
+    ORDER BY d
+  `;
+  return rows.map((r: any) => r.d as string);
+}
+
 /** Returns false when the parcel does not exist. */
 export async function updateParcel(id: string, input: ParcelInput, actorEmail: string): Promise<boolean> {
   await ensureDigiInvoicesSchema();

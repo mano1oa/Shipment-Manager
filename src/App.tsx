@@ -657,6 +657,7 @@ if (!authUser) {
               {dashboardTab === 'analytics' && canViewAnalytics ? (
                 <AnalyticsView
                   shipments={shipmentsWithAlerts}
+                  parcels={parcelsOverview?.parcels ?? null}
                   slaToleranceDays={trackingSettings?.carrier_sla_tolerance_days ?? DEFAULT_TRACKING_SETTINGS.carrier_sla_tolerance_days}
                 />
               ) : (

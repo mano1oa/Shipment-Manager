@@ -143,7 +143,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       slaRate: measured.length > 0 ? Math.round((onTime.length / measured.length) * 100) : null,
     };
   }, [parcelsOverview, shipments]);
-  // SLA transporteurs hub → Madagascar
+  // SLA transitaire hub → Madagascar
   const sla = useMemo(() => summarizeSla(carrierSlas(shipments, slaToleranceDays)), [shipments, slaToleranceDays]);
   const ongoing = shipments.filter((s) => s.global_status !== 'Livrée entrepôt');
   const shipmentExceptions = shipments.filter((s) => s.carrier_status === 'Exception / Delay').length;
@@ -438,7 +438,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           className="rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:shadow-md disabled:cursor-default dark:border-slate-800 dark:bg-slate-800"
         >
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            SLA transporteurs
+            SLA transitaire (Orly → Mada)
           </span>
           <div className="mt-3 flex items-baseline justify-between">
             <span

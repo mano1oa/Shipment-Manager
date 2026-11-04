@@ -11,40 +11,29 @@ import {
   PieChart,
 } from 'lucide-react';
 import { Shipment } from '../types';
-import { carrierSlas, meanTransitDays, summarizeSla } from '../lib/carrierSla';
+import { carrierSlas, meanTransitDays, parcelCarrierSlas, summarizeSla } from '../lib/carrierSla';
+import { CARRIER_LABELS } from '../lib/carrierDetection';
+import type { Parcel } from './digiApi';
 
 interface AnalyticsViewProps {
   shipments: Shipment[];
+  /** Supplier parcels (null while loading): SLA of the carriers supplier → hub. */
+  parcels: Parcel[] | null;
   /** Paramètres: days of tolerance after the promised date. */
   slaToleranceDays: number;
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, slaToleranceDays }) => {
-  // SLA transporteurs hub → Madagascar: promised arrival vs real arrival (+ tolerance)
-  const carrierStats = useMemo(() => {
-    const groups = new Map<string, { modes: Record<string, number>; list: ReturnType<typeof carrierSlas> }>();
-    for (const x of carrierSlas(shipments, slaToleranceDays)) {
-      const name = x.shipment.carrier || '—';
-      const g = groups.get(name) ?? { modes: {}, list: [] };
-      g.modes[x.shipment.mode] = (g.modes[x.shipment.mode] ?? 0) + 1;
-      g.list.push(x);
-      groups.set(name, g);
-    }
-    return Array.from(groups.entries())
-      .map(([carrier, g]) => {
-        const sum = summarizeSla(g.list);
-        return {
-          carrier,
-          mode: Object.entries(g.modes).sort((a, b) => b[1] - a[1])[0][0],
-          total: sum.measured,
-          onTime: sum.onTime,
-          delays: sum.late + sum.lateInTransit,
-          meanDelay: sum.meanDelay,
-          slaRate: sum.rate ?? 0,
-        };
-      })
-      .sort((a, b) => b.total - a.total);
-  }, [shipments, slaToleranceDays]);
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, parcels, slaToleranceDays }) => {
+  // SLA transporteurs fournisseur → hub: received by the expected delivery
+  const carrierStats = useMemo(
+    () =>
+      parcelCarrierSlas(parcels || [], (p) =>
+        p.carrier_name || (p.carrier !== 'UNKNOWN' ? CARRIER_LABELS[p.carrier as keyof typeof CARRIER_LABELS] : '') || 'Non renseigné'
+      ),
+    [parcels]
+  );
+  // SLA transitaire hub → Madagascar: promised arrival vs real arrival (+ tolerance)
+  const forwarderSla = useMemo(() => summarizeSla(carrierSlas(shipments, slaToleranceDays)), [shipments, slaToleranceDays]);
 
   const transitAir = useMemo(() => meanTransitDays(shipments, 'Air'), [shipments]);
   const transitSea = useMemo(() => meanTransitDays(shipments, 'Sea'), [shipments]);
@@ -78,32 +67,51 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, slaTole
         {/* Carrier SLA Table */}
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
           <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700">
-            <Award className="h-4 w-4 text-[#9E1B65]" /> Respect des SLAs par transporteur
+            <Award className="h-4 w-4 text-[#9E1B65]" /> SLA transporteurs (fournisseur → Orly / Rouen)
           </h2>
           <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-            Hub → Madagascar : arrivée réelle comparée à la date promise (aérien : ETA MADA S du ; maritime : ETA
-            d’arrivée), tolérance +{slaToleranceDays} j (Paramètres). Une expédition encore en route après cette date
-            compte en retard.
+            Colis reçus au hub au plus tard à leur date de livraison prévue. Les colis perdus sont comptés à part.
           </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:bg-slate-900/60 dark:text-slate-300">
+            <span className="font-bold text-slate-800 dark:text-slate-100">SLA transitaire (Orly → Mada) :</span>
+            <span
+              className={`font-mono font-bold ${
+                forwarderSla.rate === null
+                  ? ''
+                  : forwarderSla.rate >= 85
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-rose-600 dark:text-rose-400'
+              }`}
+            >
+              {forwarderSla.rate === null ? '—' : `${forwarderSla.rate}%`}
+            </span>
+            <span>
+              {forwarderSla.measured > 0
+                ? `${forwarderSla.onTime}/${forwarderSla.measured} expédition(s) arrivée(s) à la date promise (aérien : ETA MADA S du ; maritime : ETA d’arrivée), tolérance +${slaToleranceDays} j`
+                : 'aucune expédition arrivée à Madagascar à mesurer'}
+              {forwarderSla.meanDelay !== null && ` · retard moyen +${forwarderSla.meanDelay.toLocaleString('fr-FR')} j`}
+            </span>
+          </div>
 
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider text-[10px] dark:bg-slate-900/60 dark:text-slate-400">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Transporteur</th>
-                  <th className="px-3 py-2 font-semibold">Mode principal</th>
-                  <th className="px-3 py-2 font-semibold text-center">Mesurées</th>
+                  <th className="px-3 py-2 font-semibold">Hub</th>
+                  <th className="px-3 py-2 font-semibold text-center">Mesurés</th>
                   <th className="px-3 py-2 font-semibold text-center">À l'heure</th>
                   <th className="px-3 py-2 font-semibold text-center">Retards</th>
                   <th className="px-3 py-2 font-semibold text-center">Retard moyen</th>
+                  <th className="px-3 py-2 font-semibold text-center">Perdus</th>
                   <th className="px-3 py-2 text-right font-semibold">Taux SLA</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
                 {carrierStats.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
-                      Aucune expédition arrivée à Madagascar (ou en retard en route) à mesurer.
+                    <td colSpan={8} className="px-4 py-8 text-center text-xs text-slate-400 dark:text-slate-500">
+                      {parcels === null ? 'Chargement des colis…' : 'Aucun colis reçu avec une date de livraison prévue à mesurer.'}
                     </td>
                   </tr>
                 ) : (
@@ -114,45 +122,47 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, slaTole
                     </td>
                     <td className="px-3 py-3">
                       <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-300">
-                        {item.mode === 'Air' ? <Plane className="h-3 w-3" /> : <Ship className="h-3 w-3" />} {item.mode}
+                        {item.destination === 'ORLY' ? <Plane className="h-3 w-3" /> : <Ship className="h-3 w-3" />}{' '}
+                        {item.destination === 'ORLY' ? 'Orly' : 'Rouen'}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
-                      {item.total}
+                      {item.measured}
                     </td>
                     <td className="px-3 py-3 text-center font-mono text-emerald-600 font-bold">
                       {item.onTime}
                     </td>
                     <td className="px-3 py-3 text-center font-mono text-rose-600 font-bold">
-                      {item.delays}
+                      {item.late}
                     </td>
                     <td className="px-3 py-3 text-center font-mono text-slate-600 dark:text-slate-300">
                       {item.meanDelay === null ? '—' : `+${item.meanDelay.toLocaleString('fr-FR')} j`}
                     </td>
+                    <td className="px-3 py-3 text-center font-mono text-slate-600 dark:text-slate-300">{item.lost}</td>
                     <td className="px-3 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <div className="w-20 bg-slate-100 h-2 rounded-full overflow-hidden dark:bg-slate-700 hidden sm:block">
                           <div
                             className={`h-full rounded-full ${
-                              item.slaRate >= 85
+                              (item.rate ?? 0) >= 85
                                 ? 'bg-emerald-500'
-                                : item.slaRate >= 70
+                                : (item.rate ?? 0) >= 70
                                 ? 'bg-amber-500'
                                 : 'bg-rose-500'
                             }`}
-                            style={{ width: `${item.slaRate}%` }}
+                            style={{ width: `${item.rate === null ? '—' : `${item.rate}%`}` }}
                           />
                         </div>
                         <span
                           className={`font-bold font-mono text-xs ${
-                            item.slaRate >= 85
+                            (item.rate ?? 0) >= 85
                               ? 'text-emerald-600 dark:text-emerald-400'
-                              : item.slaRate >= 70
+                              : (item.rate ?? 0) >= 70
                               ? 'text-amber-600 dark:text-amber-400'
                               : 'text-rose-600 dark:text-rose-400'
                           }`}
                         >
-                          {item.slaRate}%
+                          {(item.rate ?? 0)}%
                         </span>
                       </div>
                     </td>
