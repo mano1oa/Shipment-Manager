@@ -226,6 +226,13 @@ export async function createParcel(
   if (input.tracking_number) {
     const existing = await findByTrackingNumber(input.tracking_number);
     if (existing) {
+      // Parcel received without invoice: it takes the supplier of its first invoices
+      if (supplierName && invoiceIds.length > 0) {
+        await sql`
+          UPDATE parcels p SET supplier_name = ${supplierName}
+          WHERE p.id = ${existing} AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
+        `;
+      }
       await linkParcelInvoices(existing, invoiceIds);
       return { id: existing, existed: true };
     }
@@ -255,6 +262,20 @@ export async function createParcel(
     }
     throw err;
   }
+}
+
+/** Dates (YYYY-MM-DD, oldest first) the parcels of these invoices were received at the hub. */
+export async function receptionDates(invoiceIds: string[]): Promise<string[]> {
+  if (invoiceIds.length === 0) return [];
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT DISTINCT TO_CHAR(p.received_at, 'YYYY-MM-DD') AS d
+    FROM parcels p JOIN parcel_invoices pi ON pi.parcel_id = p.id
+    WHERE pi.invoice_id = ANY(${invoiceIds}::uuid[]) AND p.status = 'received' AND p.received_at IS NOT NULL
+    ORDER BY d
+  `;
+  return rows.map((r: any) => r.d as string);
 }
 
 /** Returns false when the parcel does not exist. */

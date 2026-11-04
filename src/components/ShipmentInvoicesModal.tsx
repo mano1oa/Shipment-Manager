@@ -21,6 +21,8 @@ interface Props {
   shipment?: Shipment | null;
   /** Every shipment: invoices of a shipment "to review" (former model) can be regrouped. */
   shipments: Shipment[];
+  /** Invoices checked when the window opens (parcels grouped from the hub board). */
+  initialInvoiceIds?: string[];
   onClose: () => void;
   /** emptied: former shipments left without invoice (to delete). */
   onDone: (shipmentId: string, emptied: string[]) => void;
@@ -33,10 +35,10 @@ const supplierOf = (inv: DigiInvoice) => inv.supplier_display || '—';
  * Madagascar (one sale invoice = Réf FA DIGI-NXT). Invoices whose parcels are
  * not all confirmed received need an explicit exception.
  */
-export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipments, onClose, onDone }) => {
+export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipments, initialInvoiceIds, onClose, onDone }) => {
   const hub = mode === 'Air' ? 'Orly' : 'Rouen';
   const [invoices, setInvoices] = useState<DigiInvoice[] | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialInvoiceIds));
   const [onlyReceived, setOnlyReceived] = useState(true);
   const [search, setSearch] = useState('');
   const [refFa, setRefFa] = useState('');
@@ -98,10 +100,11 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
       return next;
     });
 
-  const selectedInvoices = candidates.filter((i) => selected.has(i.id));
   const selectable = (inv: DigiInvoice) => inv.validation_status === 'validated';
+  // Pre-checked invoices not validated yet stay out
+  const selectedInvoices = candidates.filter((i) => selected.has(i.id) && selectable(i));
 
-  const submit = async (force: boolean) => {
+  const submit = async (force: boolean, mixedDates = false) => {
     setError(null);
     if (selectedInvoices.length === 0) {
       setError('Cochez les factures de l\'expédition.');
@@ -115,7 +118,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
     try {
       const ids = selectedInvoices.map((i) => i.id);
       const result: GroupingResult = shipment
-        ? await addInvoicesToShipment(shipment.id, ids, force)
+        ? await addInvoicesToShipment(shipment.id, ids, force, mixedDates)
         : await createShipmentFromInvoices({
             mode,
             ref_fa_digi_nxt: refFa,
@@ -124,8 +127,21 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
             remarks,
             invoice_ids: ids,
             force,
+            mixed_dates: mixedDates,
           });
       if ('needsException' in result) setException(result.needsException);
+      else if ('mixedDates' in result) {
+        const dates = result.mixedDates.map((d) => formatDate(d)).join(', ');
+        const ok = window.confirm(
+          `Les colis ont été reçus à Orly à des dates différentes : ${dates}.\n` +
+            "Une expédition regroupe normalement les colis d'une seule date de réception : vérifiez les factures cochées.\n\n" +
+            `Continuer quand même (remise / scan Orly = ${formatDate(result.mixedDates[result.mixedDates.length - 1])}) ?`
+        );
+        if (ok) {
+          setSaving(false);
+          return submit(force, true);
+        }
+      }
       else if ('shipment' in result) onDone(result.shipment.id, result.emptied);
     } catch (err: any) {
       setError(err.message);
@@ -178,7 +194,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
               <input value={blAwb} onChange={(e) => setBlAwb(e.target.value)} className={`${inputClass} font-mono`} />
             </label>
             <label>
-              <span className={label}>Transporteur / transitaire</span>
+              <span className={label}>Transitaire</span>
               <input value={carrier} onChange={(e) => setCarrier(e.target.value)} className={inputClass} />
             </label>
             <label>

@@ -2,6 +2,7 @@ import { getShipmentByIdFromNeon, upsertShipmentInNeon, findShipmentByRefFa } fr
 import { assignInvoiceToShipment, getDigiInvoice, listDigiInvoicesForShipment } from '../db/digiInvoices.js';
 import type { DigiInvoiceRecord } from '../db/digiInvoices.js';
 import { writeAuditLog, AuditActor } from '../db/audit.js';
+import { receptionDates } from '../db/parcels.js';
 import { Shipment, TrackingHistoryStep } from '../types.js';
 
 /**
@@ -17,7 +18,13 @@ import { Shipment, TrackingHistoryStep } from '../types.js';
  */
 
 export class ShipmentGroupingError extends Error {
-  constructor(message: string, public status = 400, public notReceived: NotReceivedInvoice[] = []) {
+  constructor(
+    message: string,
+    public status = 400,
+    public notReceived: NotReceivedInvoice[] = [],
+    /** Air: parcels received at Orly on several dates, to confirm with mixed_dates. */
+    public receptionDates: string[] = []
+  ) {
     super(message);
   }
 }
@@ -113,6 +120,28 @@ function exceptionStep(notReceived: NotReceivedInvoice[], actor: AuditActor): Tr
   };
 }
 
+/**
+ * Air: a shipment groups the parcels confirmed at Orly the same day (its
+ * hand-over date); several dates are a likely mistake, to confirm.
+ */
+function checkSameReceptionDate(dates: string[], confirmed: boolean) {
+  if (dates.length > 1 && !confirmed) {
+    throw new ShipmentGroupingError(
+      `Colis reçus à Orly à des dates différentes (${dates.join(', ')}) : une expédition regroupe normalement une seule date de réception.`,
+      409,
+      [],
+      dates
+    );
+  }
+}
+
+/** Saturday flight from Orly: the scan day itself if a Saturday (same rule as calculateDepartureMadagascar). */
+function saturdayFrom(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + ((6 - d.getUTCDay() + 7) % 7));
+  return d.toISOString().slice(0, 10);
+}
+
 async function newShipmentId(): Promise<string> {
   const year = new Date().getFullYear();
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -130,6 +159,8 @@ export interface NewGroupedShipment {
   remarks: string;
   invoice_ids: string[];
   force: boolean;
+  /** Air: parcels received at Orly on several dates, confirmed. */
+  mixed_dates: boolean;
 }
 
 export async function createShipmentFromInvoices(
@@ -145,6 +176,12 @@ export async function createShipmentFromInvoices(
   const id = await newShipmentId();
   const today = new Date().toISOString().slice(0, 10);
   const hub = input.mode === 'Air' ? 'Orly' : 'Rouen';
+  // Air: grouped once received at Orly, so it leaves at once; hand-over = latest
+  // reception of its parcels (gives the Saturday flight and the ETA)
+  const air = input.mode === 'Air';
+  const dates = air ? await receptionDates(invoices.map((i) => i.id)) : [];
+  checkSameReceptionDate(dates, input.mixed_dates);
+  const orlyScan = dates[dates.length - 1] ?? today;
   const history: TrackingHistoryStep[] = [
     {
       date: now(),
@@ -167,7 +204,8 @@ export async function createShipmentFromInvoices(
     carrier_status: '',
     carrier_last_location: '',
     eta: '',
-    global_status: 'En préparation',
+    global_status: air ? 'Expédiée vers Mada' : 'En préparation',
+    ...(air ? { orly_scan_date: orlyScan, departure_madagascar: saturdayFrom(orlyScan) } : {}),
     antoine_status: 'Reçu et expédié vers Mada',
     remarks: input.remarks.trim(),
     priority: 'Moyenne',
@@ -210,11 +248,19 @@ export async function addInvoicesToShipment(
   shipmentId: string,
   invoiceIds: string[],
   force: boolean,
-  actor: AuditActor
+  actor: AuditActor,
+  mixedDates = false
 ): Promise<{ shipment: Shipment; emptied: string[] }> {
   const shipment = await getShipmentByIdFromNeon(shipmentId);
   if (!shipment) throw new ShipmentGroupingError('Expédition introuvable.', 404);
   const { invoices, notReceived } = await checkInvoices(invoiceIds, shipmentId, force);
+  if (shipment.mode === 'Air') {
+    const dates = await receptionDates(invoices.map((i) => i.id));
+    checkSameReceptionDate(
+      Array.from(new Set([...(shipment.orly_scan_date ? [shipment.orly_scan_date] : []), ...dates])).sort(),
+      mixedDates
+    );
+  }
   const emptied = await attachInvoices(shipmentId, invoices);
   const history = [
     ...(shipment.history || []),

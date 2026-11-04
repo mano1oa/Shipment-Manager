@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertCircle, Camera, ImageOff, Loader2, Trash2, X } from 'lucide-react';
 import { Parcel, ParcelPhoto, deleteParcelPhoto, fetchParcelPhotos, formatDateTime } from './digiApi';
+import { ZoomableImage } from './ZoomableImage';
 
 interface Props {
   parcel: Parcel;
@@ -127,8 +128,19 @@ export const ParcelPhotosModal: React.FC<Props> = ({ parcel, canEdit, onClose, o
       </div>
 
       {zoom?.url && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4" onClick={() => setZoom(null)}>
-          <img src={zoom.url} alt="Photo du colis" className="max-h-full max-w-full rounded-xl" />
+        <div className="fixed inset-0 z-[60] bg-black/80 p-4" onClick={() => setZoom(null)}>
+          {/* Clicks on the photo turn / zoom it; outside closes */}
+          <div className="relative h-full w-full" onClick={(e) => e.stopPropagation()}>
+            <ZoomableImage key={zoom.url} src={zoom.url} alt="Photo du colis" />
+            <button
+              type="button"
+              onClick={() => setZoom(null)}
+              title="Fermer"
+              className="absolute left-3 top-3 rounded-xl bg-black/60 p-1.5 text-white hover:bg-white/20"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
     </div>

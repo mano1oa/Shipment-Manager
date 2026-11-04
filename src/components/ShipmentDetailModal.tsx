@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   X,
+  Maximize2,
+  Minimize2,
   Plane,
   Ship,
   FileText,
@@ -21,7 +23,6 @@ import {
 import { Shipment, GlobalStatus, shipmentValue } from '../types';
 import { SHIPMENT_STATUSES, applyAutomaticShipmentStatus } from '../lib/parcelTracking';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
-import { TrackingPanel } from './TrackingPanel';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 import { DigiInvoice, fetchShipmentInvoices, formatDate } from './digiApi';
 import { ShipmentContentsPanel } from './ShipmentContentsPanel';
@@ -97,6 +98,8 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   if (!shipment) return null;
 
   const [isEditing, setIsEditing] = useState(false);
+  /** Whole screen: invoices and their lines readable without scrolling a small box. */
+  const [fullScreen, setFullScreen] = useState(false);
   const [draft, setDraft] = useState<Shipment>(shipment);
   const [carriers, setCarriers] = useState<string[]>([]);
   const [invoices, setInvoices] = useState<DigiInvoice[] | null>(null);
@@ -183,10 +186,18 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   const actualLeadTime = daysBetween(view.etd, actualArrival);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs overflow-y-auto">
-      <div className="relative w-full max-w-4xl rounded-3xl border border-slate-200 bg-slate-50 shadow-2xl dark:border-slate-800 dark:bg-slate-900 my-8">
+    <div
+      className={`fixed inset-0 z-50 flex justify-center bg-slate-900/60 backdrop-blur-xs ${
+        fullScreen ? '' : 'items-center overflow-y-auto p-4'
+      }`}
+    >
+      <div
+        className={`relative w-full border-slate-200 bg-slate-50 shadow-2xl dark:border-slate-800 dark:bg-slate-900 ${
+          fullScreen ? 'flex h-full flex-col' : 'my-8 max-w-4xl rounded-3xl border'
+        }`}
+      >
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 rounded-t-3xl border-b border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+        <div className={`flex items-start justify-between gap-4 ${fullScreen ? '' : 'rounded-t-3xl'} border-b border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900`}>
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
               {isSea ? <Ship className="h-5 w-5" /> : <Plane className="h-5 w-5" />}
@@ -253,6 +264,14 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               </button>
             )}
             <button
+              type="button"
+              onClick={() => setFullScreen((v) => !v)}
+              title={fullScreen ? 'Quitter le plein écran' : 'Plein écran'}
+              className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              {fullScreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+            </button>
+            <button
               onClick={onClose}
               className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-white"
             >
@@ -261,7 +280,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
           </div>
         </div>
 
-        <div className="max-h-[75vh] space-y-5 overflow-y-auto p-6">
+        <div className={`space-y-5 overflow-y-auto p-6 ${fullScreen ? 'min-h-0 flex-1' : 'max-h-[75vh]'}`}>
           {/* Active alert */}
           {activeAlert && (
             <div className="rounded-2xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900/60 dark:bg-rose-950/30">
@@ -324,7 +343,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
           {/* 1. Main information */}
           <div className={cardClass}>
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
-              <Field label="Transporteur">
+              <Field label="Transitaire">
                 {isEditing ? (
                   <>
                     <input
@@ -417,9 +436,6 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               </Field>
             </div>
           </div>
-
-          {/* 2. Carrier tracking, next to the carrier */}
-          <TrackingPanel shipmentId={shipment.id} canEdit={canEdit} />
 
           {/* 3. Invoices and parcels of the shipment */}
           <ShipmentContentsPanel

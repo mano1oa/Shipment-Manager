@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { detectTrackingNumber } from '../lib/carrierDetection';
+import { ZoomableImage } from './ZoomableImage';
 import { compareDateDesc } from '../lib/dateFormat';
 import { parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
@@ -68,6 +69,8 @@ const today = () => new Date().toISOString().slice(0, 10);
  *    parcel (or creates one for the chosen invoices) and confirms its
  *    reception at the point date.
  */
+const OTHER_SUPPLIER = '__other__';
+
 export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onClose, onChanged }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
   const title = destination === 'ORLY' ? 'Point Antoine' : 'Réception Rouen';
@@ -100,6 +103,8 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   const [number, setNumber] = useState('');
   const [invoices, setInvoices] = useState<DigiInvoice[] | null>(null);
   const [supplier, setSupplier] = useState('');
+  /** Supplier typed when not in the list ("Autre fournisseur"). */
+  const [otherSupplier, setOtherSupplier] = useState('');
   const [chosenInvoices, setChosenInvoices] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
   /** Parcel chosen in the suggestions; null = the exact match, if any. */
@@ -183,6 +188,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   useEffect(() => {
     setNumber('');
     setSupplier('');
+    setOtherSupplier('');
     setChosenInvoices(new Set());
     setPicked(null);
     if (photo && !photo.parcel_id) setTimeout(() => numberInput.current?.focus(), 0);
@@ -270,6 +276,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       ? link({ parcel_id: p.id, tracking_number: number.trim() }, 'N° complété et rattaché')
       : link({ parcel_id: p.id }, 'Rattachée');
   const supplierInvoices = useMemo(() => (invoices || []).filter((i) => supplierOf(i) === supplier), [invoices, supplier]);
+  const supplierName = supplier === OTHER_SUPPLIER ? otherSupplier.trim() : supplier;
 
   /** After a match: refresh, then the next photo to match. */
   const afterLink = async (text: string) => {
@@ -535,11 +542,12 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     : 'Toutes les photos sont rattachées. Décochez « À rattacher seulement » pour les revoir.'}
                 </p>
               ) : photo.url && !brokenPhotos.has(photo.id) ? (
-                <img
+                <ZoomableImage
+                  key={photo.id}
                   src={photo.url}
                   alt="Photo du point"
                   onError={() => markBroken(photo.id)}
-                  className="max-h-full max-w-full object-contain"
+                  className="absolute inset-0"
                 />
               ) : (
                 <div className="flex flex-col items-center gap-2 p-6 text-center text-slate-300">
@@ -763,8 +771,17 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                               {s}
                             </option>
                           ))}
+                          <option value={OTHER_SUPPLIER}>Autre fournisseur (pas dans la liste)…</option>
                         </select>
                       </label>
+                      {supplier === OTHER_SUPPLIER && (
+                        <input
+                          value={otherSupplier}
+                          onChange={(e) => setOtherSupplier(e.target.value)}
+                          placeholder="Nom du fournisseur"
+                          className={`mt-1 ${inputClass}`}
+                        />
+                      )}
                       {supplier && supplierWaiting.length > 0 && (
                         <div className="mt-2 space-y-1">
                           <span className={label}>
@@ -829,6 +846,27 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                         {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}
                         Créer le colis et rattacher ({chosenInvoices.size})
                       </button>
+                      {typed && supplierName && chosenInvoices.size === 0 && (
+                        <div className="mt-2 border-t border-dashed border-slate-200 pt-2 dark:border-slate-700">
+                          <button
+                            onClick={() =>
+                              link(
+                                { new_parcel: { tracking_number: number.trim(), supplier_name: supplierName, without_invoice: true } },
+                                'Reçu sans facture'
+                              )
+                            }
+                            disabled={saving}
+                            className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 font-bold text-amber-800 hover:bg-amber-100 disabled:opacity-40 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300"
+                          >
+                            <PackagePlus className="h-4 w-4" /> Facture pas encore en base : colis reçu sans facture
+                          </button>
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            Le colis {typed} ({supplierName}) est marqué reçu à {hub}. Sa facture lui sera rattachée quand
+                            elle sera saisie avec ce n° (« + Colis ») ou par l’import du rapport Amazon ; il ne pourra
+                            partir dans une expédition qu’ensuite.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}

@@ -1,5 +1,19 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Loader2, Package, Plus, ReceiptText, SearchX, Undo2, X } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  ClipboardCheck,
+  Loader2,
+  Package,
+  Plus,
+  Printer,
+  ReceiptText,
+  SearchX,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { Shipment } from '../types';
 import { parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import {
@@ -27,6 +41,75 @@ interface Props {
   onChanged: (emptied?: string[]) => void;
 }
 
+const escapeHtml = (v: unknown) =>
+  String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
+/** Goods line of an invoice: what to find in the parcels on arrival. */
+interface ControlArticle {
+  key: string;
+  supplier: string;
+  invoice: string;
+  name: string;
+  quantity: number;
+}
+
+const controlArticles = (invoices: DigiInvoice[]): ControlArticle[] =>
+  invoices.flatMap((inv) =>
+    inv.lines
+      .filter((line) => !line.is_service)
+      .map((line) => ({
+        key: line.id,
+        supplier: inv.supplier_display || '—',
+        invoice: inv.ref || inv.odoo_move_name || '—',
+        name: line.name,
+        quantity: line.quantity,
+      }))
+  );
+
+/** Printable sheet to tick the parcels and articles received in Madagascar; false if the pop-up is blocked. */
+function printControlSheet(shipment: Shipment, parcels: Parcel[], articles: ControlArticle[]): boolean {
+  const box = '<td class="box"></td>';
+  const parcelRows = parcels
+    .map(
+      (p) =>
+        `<tr>${box}<td class="mono">${escapeHtml(p.tracking_number || '— (inconnu)')}</td><td>${escapeHtml(
+          p.supplier_name || '—'
+        )}</td><td>${escapeHtml(p.invoices.map((i) => i.ref || '—').join(', ') || 'Sans facture')}</td><td></td></tr>`
+    )
+    .join('');
+  const articleRows = articles
+    .map(
+      (a) =>
+        `<tr>${box}<td>${escapeHtml(a.name)}</td><td class="num">${escapeHtml(formatQuantity(a.quantity))}</td><td>${escapeHtml(
+          a.supplier
+        )}</td><td>${escapeHtml(a.invoice)}</td><td></td></tr>`
+    )
+    .join('');
+  const subtitle = [
+    shipment.ref_fa_digi_nxt && `FA ${shipment.ref_fa_digi_nxt}`,
+    shipment.bl_awb && `LTA/BL ${shipment.bl_awb}`,
+    shipment.carrier,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Contrôle ${escapeHtml(shipment.id)}</title>
+<style>body{font:11px Arial,sans-serif;margin:16px;color:#111}h1{font-size:16px;margin:0}h2{font-size:13px;margin:18px 0 6px}
+p{margin:2px 0;color:#555}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:4px 6px;text-align:left;vertical-align:top}
+th{background:#f1f1f1}td.box{width:18px}td.num{text-align:right;white-space:nowrap}.mono{font-family:monospace}</style></head><body>
+<h1>Contrôle de réception à Madagascar — ${escapeHtml(shipment.id)}</h1><p>${escapeHtml(subtitle)}</p>
+<p>${parcels.length} colis · ${articles.length} article(s). Cochez ce qui est reçu, notez les écarts.</p>
+<h2>Colis (${parcels.length})</h2><table><tr><th></th><th>N° de suivi</th><th>Fournisseur</th><th>Factures</th><th>Remarque</th></tr>${parcelRows}</table>
+<h2>Articles (${articles.length})</h2><table><tr><th></th><th>Article</th><th>Qté</th><th>Fournisseur</th><th>Facture</th><th>Qté reçue</th></tr>${articleRows}</table>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return false;
+  w.document.write(html);
+  w.document.close();
+  w.focus();
+  w.print();
+  return true;
+}
+
 const cardClass =
   'rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800/60';
 
@@ -49,6 +132,9 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showControl, setShowControl] = useState(false);
+  const articles = useMemo(() => controlArticles(invoices || []), [invoices]);
+  const allOpen = Boolean(invoices && invoices.length > 0 && invoices.every((i) => open.has(i.id)));
 
   const loadParcels = useCallback(() => {
     fetchShipmentParcels(shipment.id)
@@ -108,14 +194,25 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
           <ReceiptText className="h-4 w-4 text-slate-400" /> Factures et colis
           {invoices && <span className="text-xs font-semibold text-slate-400">{invoices.length} facture(s)</span>}
         </h3>
-        {isSupplyChain && (
-          <button
-            onClick={() => setAdding(true)}
-            className="flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
-          >
-            <Plus className="h-3 w-3" /> Ajouter des factures
-          </button>
-        )}
+        <div className="flex items-center gap-1.5">
+          {invoices && invoices.length > 0 && (
+            <button
+              onClick={() => setOpen(allOpen ? new Set() : new Set(invoices.map((i) => i.id)))}
+              className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
+            >
+              {allOpen ? <ChevronsDownUp className="h-3 w-3" /> : <ChevronsUpDown className="h-3 w-3" />}
+              {allOpen ? 'Tout replier' : 'Tout déplier'}
+            </button>
+          )}
+          {isSupplyChain && (
+            <button
+              onClick={() => setAdding(true)}
+              className="flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
+            >
+              <Plus className="h-3 w-3" /> Ajouter des factures
+            </button>
+          )}
+        </div>
       </div>
 
       {(invoicesError || error) && <p className="mb-2 text-xs text-rose-600">{invoicesError || error}</p>}
@@ -241,6 +338,61 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
             </tbody>
           </table>
         )}
+      </div>
+
+      {/* Arrival check: every parcel and article of the shipment */}
+      <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-700">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setShowControl((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+          >
+            {showControl ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            <ClipboardCheck className="h-3.5 w-3.5" /> Contrôle à l'arrivée : {parcels?.length ?? '…'} colis ·{' '}
+            {articles.length} article(s)
+          </button>
+          <button
+            onClick={() => {
+              if (!printControlSheet(shipment, parcels || [], articles)) setError('Autorisez les fenêtres pop-up pour imprimer.');
+            }}
+            disabled={parcels === null || invoices === null}
+            className="ml-auto flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
+          >
+            <Printer className="h-3 w-3" /> Imprimer la liste de contrôle
+          </button>
+        </div>
+        {showControl &&
+          (articles.length === 0 ? (
+            <p className="mt-2 text-xs text-slate-400">Aucun article : factures sans lignes (hors DIGI) ou pas encore chargées.</p>
+          ) : (
+            <table className="mt-2 w-full text-left text-xs">
+              <thead className="text-[10px] uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="py-1 pr-2">Article</th>
+                  <th className="w-16 px-2 py-1 text-right">Qté</th>
+                  <th className="px-2 py-1">Fournisseur</th>
+                  <th className="py-1 pl-2">Facture</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
+                {articles.map((a) => (
+                  <tr key={a.key} className="text-slate-700 dark:text-slate-200">
+                    <td className="py-1 pr-2">{a.name}</td>
+                    <td className="px-2 py-1 text-right font-semibold">{formatQuantity(a.quantity)}</td>
+                    <td className="px-2 py-1">{a.supplier}</td>
+                    <td className="py-1 pl-2 text-slate-500">{a.invoice}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t border-slate-200 font-bold dark:border-slate-700">
+                  <td className="py-1 pr-2">Total</td>
+                  <td className="px-2 py-1 text-right">{formatQuantity(articles.reduce((sum, a) => sum + a.quantity, 0))}</td>
+                  <td colSpan={2} />
+                </tr>
+              </tfoot>
+            </table>
+          ))}
       </div>
 
       {adding && (

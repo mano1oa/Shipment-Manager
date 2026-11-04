@@ -63,6 +63,8 @@ export default function App() {
 
   // New shipment = grouping of received invoices (Supply Chain)
   const [newMode, setNewMode] = useState<'Air' | 'Sea'>('Air');
+  /** Invoices pre-checked in the new shipment (parcels grouped from the hub board). */
+  const [newInvoiceIds, setNewInvoiceIds] = useState<string[]>([]);
 
 useEffect(() => {
   async function checkAuthentication() {
@@ -512,8 +514,9 @@ useEffect(() => {
     if (allowedTabs.includes(tab)) setActiveTab(tab);
   };
 
-  const openNewShipment = (mode?: 'Air' | 'Sea') => {
+  const openNewShipment = (mode?: 'Air' | 'Sea', invoiceIds: string[] = []) => {
     if (mode) setNewMode(mode);
+    setNewInvoiceIds(invoiceIds);
     setShowNewModal(true);
   };
 
@@ -654,6 +657,7 @@ if (!authUser) {
               {dashboardTab === 'analytics' && canViewAnalytics ? (
                 <AnalyticsView
                   shipments={shipmentsWithAlerts}
+                  parcels={parcelsOverview?.parcels ?? null}
                   slaToleranceDays={trackingSettings?.carrier_sla_tolerance_days ?? DEFAULT_TRACKING_SETTINGS.carrier_sla_tolerance_days}
                 />
               ) : (
@@ -697,6 +701,11 @@ if (!authUser) {
               onUpdateShipment={canEdit ? handleSaveShipment : undefined}
               onNewShipment={
                 currentRole === 'supply_chain' ? () => openNewShipment(activeTab === 'air' ? 'Air' : 'Sea') : undefined
+              }
+              onGroupParcels={
+                currentRole === 'supply_chain'
+                  ? (ids) => openNewShipment(activeTab === 'air' ? 'Air' : 'Sea', ids)
+                  : undefined
               }
               digiValueFor={digiValueFor}
             />
@@ -760,6 +769,7 @@ if (!authUser) {
       {showNewModal && (
         <ShipmentInvoicesModal
           mode={newMode}
+          initialInvoiceIds={newInvoiceIds}
           shipments={shipmentsWithAlerts}
           onClose={() => setShowNewModal(false)}
           onDone={async (shipmentId, emptied) => {

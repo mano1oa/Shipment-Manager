@@ -13,6 +13,8 @@ import type { DeliveryType, ParcelDestination } from '../lib/parcelTracking';
 import { parseNumberValue } from '../lib/digiInvoices';
 import { DigiInvoice, Parcel, apiJson, createParcel, inputClass, updateParcel } from './digiApi';
 
+const compact = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
 interface CarrierOption {
   id: string;
   name: string;
@@ -31,6 +33,13 @@ interface Props {
   /** existed: the tracking number already belonged to a parcel, now linked to these invoices. */
   onSaved: (parcel: Parcel, existed: boolean) => void;
 }
+
+/**
+ * Several tracking numbers typed at once ("00LC66SV / 00LC66SW", one per
+ * line…): one invoice shipped in several parcels. Spaces stay inside a number.
+ */
+export const splitTrackingNumbers = (text: string) =>
+  Array.from(new Set(text.split(/[\n,;/|]+/).map((t) => t.trim()).filter(Boolean)));
 
 export const ParcelFormModal: React.FC<Props> = ({
   invoices,
@@ -71,6 +80,7 @@ export const ParcelFormModal: React.FC<Props> = ({
         body: JSON.stringify({ name, transport_mode: mode }),
       });
       setCarriers((prev) => [...prev, carrier].sort((a, b) => a.name.localeCompare(b.name, 'fr')));
+      setCarrierPicked(true);
       setCarrierName(carrier.name);
       return { ok: true };
     } catch (err: any) {
@@ -78,9 +88,33 @@ export const ParcelFormModal: React.FC<Props> = ({
     }
   };
 
-  const detected = useMemo(() => (trackingNumber.trim() ? detectTrackingNumber(trackingNumber) : null), [trackingNumber]);
-  // Carrier of the list linked to the connector recognised from the number
-  const autoCarrier = detected ? carriers.find((c) => c.tracking_carrier_code === detected.carrier)?.name ?? null : null;
+  // New parcel: several numbers = several parcels of the same invoice(s)
+  const numbers = useMemo(() => (parcel ? [] : splitTrackingNumbers(trackingNumber)), [parcel, trackingNumber]);
+  const several = numbers.length > 1;
+  const detected = useMemo(
+    () => (trackingNumber.trim() && !several ? detectTrackingNumber(trackingNumber) : null),
+    [trackingNumber, several]
+  );
+  // Carrier of the list linked to the connector recognised from the number(s),
+  // or named like it ("UPS") when not linked yet
+  const detectedCode = useMemo(() => {
+    const codes = new Set((several ? numbers : detected ? [trackingNumber] : []).map((n) => detectTrackingNumber(n).carrier));
+    const [code] = Array.from(codes);
+    return codes.size === 1 && code !== 'UNKNOWN' ? code : null;
+  }, [several, numbers, detected, trackingNumber]);
+  const autoCarrier = useMemo(() => {
+    if (!detectedCode) return null;
+    const names = [compact(CARRIER_LABELS[detectedCode]), compact(detectedCode)];
+    return (
+      carriers.find((c) => c.tracking_carrier_code === detectedCode) ??
+      carriers.find((c) => names.includes(compact(c.name)))
+    )?.name ?? null;
+  }, [detectedCode, carriers]);
+  // Selected automatically until the user picks a carrier themselves
+  const [carrierPicked, setCarrierPicked] = useState(Boolean(parcel?.carrier_name));
+  useEffect(() => {
+    if (!carrierPicked) setCarrierName(autoCarrier ?? '');
+  }, [autoCarrier, carrierPicked]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,8 +125,8 @@ export const ParcelFormModal: React.FC<Props> = ({
       return;
     }
     const sea = destination === 'ROUEN';
-    const { value, errors } = validateParcelInput({
-      tracking_number: trackingNumber,
+    const inputFor = (number: string) => validateParcelInput({
+      tracking_number: number,
       carrier_name: carrierName || null,
       expected_delivery: expected || null,
       notes,
@@ -102,20 +136,29 @@ export const ParcelFormModal: React.FC<Props> = ({
       volume_m3: sea ? parsedVolume : null,
       description: sea ? description : null,
     });
-    if (!value) {
-      setError(errors.join(' '));
+    const checked = (several ? numbers : [trackingNumber]).map((n) => ({ n, ...inputFor(n) }));
+    const invalid = checked.filter((c) => !c.value);
+    if (invalid.length > 0) {
+      setError(invalid.map((c) => (several ? `${c.n} : ${c.errors.join(' ')}` : c.errors.join(' '))).join(' · '));
       return;
     }
+    const value = checked[0].value!;
     setSaving(true);
     try {
       if (parcel) {
         onSaved(await updateParcel(parcel.id, value), false);
       } else {
-        const r = await createParcel(
-          value,
-          invoices.map((i) => i.id)
-        );
-        onSaved(r.parcel, r.existed);
+        // One parcel per number; a number already known gets the invoice(s)
+        let last: Awaited<ReturnType<typeof createParcel>> | null = null;
+        let existed = false;
+        for (const c of checked) {
+          last = await createParcel(
+            c.value!,
+            invoices.map((i) => i.id)
+          );
+          existed = existed || last.existed;
+        }
+        onSaved(last!.parcel, existed);
       }
     } catch (err: any) {
       setError(err.message);
@@ -185,14 +228,23 @@ export const ParcelFormModal: React.FC<Props> = ({
             </div>
           </div>
           <label className="sm:col-span-2">
-            <span className={label}>N° de suivi</span>
+            <span className={label}>{parcel ? 'N° de suivi' : 'N° de suivi (plusieurs : séparez-les par « / »)'}</span>
             <input
               value={trackingNumber}
               onChange={(e) => setTrackingNumber(e.target.value)}
-              placeholder="Laisser vide s'il n'est pas connu"
+              placeholder={parcel ? "Laisser vide s'il n'est pas connu" : 'Ex. 00LC66SV / 00LC66SW — vide s’il n’est pas connu'}
               className={`${inputClass} font-mono`}
               autoFocus
             />
+            {several && (
+              <span className="mt-1 block text-[11px] font-semibold text-[#623387] dark:text-[#C09BE3]">
+                {numbers.length} colis seront créés pour cette facture :{' '}
+                {numbers.map((n) => {
+                  const d = detectTrackingNumber(n);
+                  return `${d.number || n}${d.carrier !== 'UNKNOWN' ? ` (${CARRIER_LABELS[d.carrier]})` : ''}`;
+                }).join(', ')}
+              </span>
+            )}
             {detected && (
               <span className="mt-1 block text-[11px] text-slate-500">
                 {detected.number ? (
@@ -212,7 +264,10 @@ export const ParcelFormModal: React.FC<Props> = ({
               entityLabel="transporteur"
               options={carriers}
               value={carrierName}
-              onChange={setCarrierName}
+              onChange={(name) => {
+                setCarrierPicked(true);
+                setCarrierName(name);
+              }}
               onCreate={canCreateCarrier ? handleCreateCarrier : undefined}
               withModeChoice
               loading={carriersLoading}
@@ -224,8 +279,8 @@ export const ParcelFormModal: React.FC<Props> = ({
                   : 'Aucun transporteur : demandez à la Supply Chain de l’ajouter dans Paramètres.'
               }
             />
-            {!carrierName && autoCarrier && (
-              <span className="mt-1 block text-[11px] text-slate-500">Reconnu : {autoCarrier}</span>
+            {!carrierPicked && autoCarrier && carrierName === autoCarrier && (
+              <span className="mt-1 block text-[11px] text-slate-500">Choisi d’après le n° de suivi</span>
             )}
           </div>
           <label>
@@ -287,7 +342,7 @@ export const ParcelFormModal: React.FC<Props> = ({
             disabled={saving}
             className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
           >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />} Enregistrer
+            {saving && <Loader2 className="h-4 w-4 animate-spin" />} {several ? `Créer les ${numbers.length} colis` : 'Enregistrer'}
           </button>
         </div>
       </form>

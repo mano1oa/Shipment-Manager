@@ -219,7 +219,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     let text = `TABLEAU OFFICIEL DE RÉCLAMATION COLIS PERDUS ORLY\n`;
     text += `Date de génération: ${formatToday()}\n`;
     text += `Nombre de colis: ${perduOrlyShipments.length} | Valeur totale: ${totalPerduValue.toLocaleString()} €\n\n`;
-    text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transporteur | N° suivi / LTA | Valeur (€) | Remarques\n`;
+    text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transitaire | N° suivi / LTA | Valeur (€) | Remarques\n`;
     text += `----------------------------------------------------------------------------------------------------\n`;
     perduOrlyShipments.forEach((s) => {
       text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${valueOf(s)} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
@@ -245,9 +245,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       'Valeur EUR',
       'N° suivi',
       'LTA_BL',
-      'Transporteur',
-      'Statut livraison transporteur',
-      'Date statut transporteur',
+      'Transitaire',
       'Statut expédition Orly',
       'Statut métier global',
       'Date scan Orly manuelle',
@@ -268,8 +266,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       s.tracking_no,
       s.bl_awb,
       s.carrier,
-      s.carrier_delivery_status || s.carrier_status,
-      formatDate(s.carrier_status_date, ''),
       s.orly_shipment_status,
       s.global_status,
       formatDate(s.orly_scan_date, ''),
@@ -377,7 +373,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               onChange={(e) => setSelectedCarrier(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 px-3 text-xs text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
-              <option value="all">Tous les transporteurs</option>
+              <option value="all">Tous les transitaires</option>
               {carriersList.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -469,17 +465,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                 <th className="px-3 py-3 font-semibold">Réf facture et commande</th>
                 <th className="px-3 py-3 font-semibold">Valeur (€)</th>
                 <th className="px-3 py-3 font-semibold">N° suivi et LTA/BL</th>
-                <th className="px-3 py-3 font-semibold">Transporteur</th>
-                {modeFilter === 'Air' && (
-                  <>
-                    <th className="px-3 py-3 font-semibold text-sky-700 dark:text-sky-400">
-                      Statut livraison transporteur
-                    </th>
-                    <th className="px-3 py-3 font-semibold text-sky-700 dark:text-sky-400">
-                      Date statut transporteur
-                    </th>
-                  </>
-                )}
+                <th className="px-3 py-3 font-semibold">Transitaire</th>
                 <th className="px-3 py-3 font-semibold">Statut de l'expédition</th>
                 {modeFilter === 'Air' && (
                   <th className="px-3 py-3 font-semibold text-amber-700 dark:text-amber-400">
@@ -503,7 +489,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               {filteredShipments.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={modeFilter === 'Air' ? 17 : 14}
+                    colSpan={modeFilter === 'Air' ? 15 : 14}
                     className="px-4 py-16 text-center"
                   >
                     <div className="flex flex-col items-center justify-center gap-3">
@@ -617,25 +603,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                         <td className="px-3 py-3 text-slate-700 dark:text-slate-300 font-medium">
                           {shp.carrier}
                         </td>
-
-                        {/* Air Specific Columns */}
-                        {modeFilter === 'Air' && (
-                          <>
-                            {/* 1. Statut livraison transporteur */}
-                            <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center gap-1.5">
-                                <span className="inline-flex rounded-md bg-sky-50 px-2 py-1 text-[10px] font-semibold text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-200 dark:border-sky-900">
-                                  {shp.carrier_delivery_status || shp.carrier_status || '—'}
-                                </span>
-                              </div>
-                            </td>
-
-                            {/* 2. Date statut transporteur */}
-                            <td className="px-3 py-3 font-mono text-slate-700 dark:text-slate-300">
-                              {formatDate(shp.carrier_status_date || shp.updated_at)}
-                            </td>
-                          </>
-                        )}
 
                         {/* Global Status Pill Dropdown */}
                         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
@@ -840,7 +807,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                       {isExpanded && (
                         <tr>
                           <td
-                            colSpan={modeFilter === 'Air' ? 18 : 14}
+                            colSpan={modeFilter === 'Air' ? 16 : 14}
                             className="bg-sky-50/30 p-3 dark:bg-slate-900/80 border-t border-b border-sky-100 dark:border-slate-800"
                           >
                             <SeaDeliveriesTable
@@ -941,7 +908,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                         </th>
                         <th className="px-3 py-2.5">Ref commande / facture</th>
                         <th className="px-3 py-2.5">Fournisseur</th>
-                        <th className="px-3 py-2.5">Transporteur</th>
+                        <th className="px-3 py-2.5">Transitaire</th>
                         <th className="px-3 py-2.5">N° suivi et LTA</th>
                         <th className="px-3 py-2.5 text-right">Valeur (€)</th>
                         <th className="px-3 py-2.5">Remarques</th>

@@ -159,7 +159,9 @@ export interface NotReceivedInvoice {
  */
 export type GroupingResult =
   | { ok: true; shipment: { id: string }; emptied: string[] }
-  | { ok: false; needsException: NotReceivedInvoice[] };
+  | { ok: false; needsException: NotReceivedInvoice[] }
+  /** Air: parcels received at Orly on several dates, to confirm (mixed_dates). */
+  | { ok: false; mixedDates: string[] };
 
 async function groupingRequest(url: string, method: string, body: unknown): Promise<GroupingResult> {
   const res = await fetch(url, {
@@ -171,6 +173,9 @@ async function groupingRequest(url: string, method: string, body: unknown): Prom
   const data = await res.json().catch(() => ({}));
   if (res.status === 409 && Array.isArray(data?.not_received) && data.not_received.length > 0) {
     return { ok: false, needsException: data.not_received };
+  }
+  if (res.status === 409 && Array.isArray(data?.reception_dates) && data.reception_dates.length > 1) {
+    return { ok: false, mixedDates: data.reception_dates };
   }
   if (!res.ok || !data?.success) throw new Error(data?.error || `Erreur ${res.status}`);
   return { ok: true, shipment: data.shipment, emptied: data.emptied || [] };
@@ -184,12 +189,14 @@ export const createShipmentFromInvoices = (input: {
   remarks: string;
   invoice_ids: string[];
   force: boolean;
+  mixed_dates?: boolean;
 }) => groupingRequest('/api/shipments/from-invoices', 'POST', input);
 
-export const addInvoicesToShipment = (shipmentId: string, invoiceIds: string[], force: boolean) =>
+export const addInvoicesToShipment = (shipmentId: string, invoiceIds: string[], force: boolean, mixedDates = false) =>
   groupingRequest(`/api/shipments/${encodeURIComponent(shipmentId)}/invoices`, 'POST', {
     invoice_ids: invoiceIds,
     force,
+    mixed_dates: mixedDates,
   });
 
 export const removeInvoiceFromShipment = (shipmentId: string, invoiceId: string) =>
@@ -387,7 +394,9 @@ export type PointPhotoLink =
   | { parcel_id: string | null }
   /** Parcel announced without number: the number read on the label completes it. */
   | { parcel_id: string; tracking_number: string }
-  | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } };
+  | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } }
+  /** Received before its invoice is in the base: linked to it later by the same number. */
+  | { new_parcel: { tracking_number: string; supplier_name: string; without_invoice: true } };
 
 /** Matches a photo to a parcel (confirms its reception at the point date), or detaches it. */
 export const linkPointPhoto = (pointId: string, photoId: string, link: PointPhotoLink) =>

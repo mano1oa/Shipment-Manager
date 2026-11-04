@@ -103,3 +103,55 @@ export function meanTransitDays(shipments: Shipment[], mode: Shipment['mode']): 
     count: list.length,
   };
 }
+
+/**
+ * SLA transporteurs, fournisseur → hub (UPS, Chronopost, GLS…): a parcel is on
+ * time when received at Orly / Rouen by its expected delivery (same rule as the
+ * dashboard card "Colis reçus à temps"). Lost parcels are counted apart.
+ */
+export interface ParcelCarrierSla {
+  carrier: string;
+  /** Hub most of its parcels go to. */
+  destination: 'ORLY' | 'ROUEN';
+  measured: number;
+  onTime: number;
+  late: number;
+  /** Mean days late, late parcels only. */
+  meanDelay: number | null;
+  lost: number;
+  rate: number | null;
+}
+
+interface SlaParcel {
+  carrier: string;
+  carrier_name: string | null;
+  destination: 'ORLY' | 'ROUEN';
+  status: string;
+  expected_delivery: string | null;
+  received_at: string | null;
+}
+
+export function parcelCarrierSlas(parcels: SlaParcel[], labelOf: (p: SlaParcel) => string): ParcelCarrierSla[] {
+  const groups = new Map<string, SlaParcel[]>();
+  for (const p of parcels) groups.set(labelOf(p), [...(groups.get(labelOf(p)) ?? []), p]);
+  return Array.from(groups.entries())
+    .map(([carrier, list]) => {
+      const measured = list.filter((p) => iso(p.received_at) && iso(p.expected_delivery));
+      const delays = measured.map((p) => daysBetween(iso(p.expected_delivery)!, iso(p.received_at)!));
+      const lateDelays = delays.filter((d) => d > 0);
+      const orly = list.filter((p) => p.destination === 'ORLY').length;
+      return {
+        carrier,
+        destination: (orly >= list.length - orly ? 'ORLY' : 'ROUEN') as 'ORLY' | 'ROUEN',
+        measured: measured.length,
+        onTime: delays.length - lateDelays.length,
+        late: lateDelays.length,
+        meanDelay:
+          lateDelays.length > 0 ? Math.round((lateDelays.reduce((a, b) => a + b, 0) / lateDelays.length) * 10) / 10 : null,
+        lost: list.filter((p) => p.status === 'lost').length,
+        rate: measured.length > 0 ? Math.round(((delays.length - lateDelays.length) / measured.length) * 100) : null,
+      };
+    })
+    .filter((x) => x.measured > 0 || x.lost > 0)
+    .sort((a, b) => b.measured - a.measured);
+}

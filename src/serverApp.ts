@@ -1868,7 +1868,9 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
   const sendGroupingError = (res: any, err: any, fallback: string) => {
     if (err instanceof ShipmentGroupingError) {
-      return res.status(err.status).json({ success: false, error: err.message, not_received: err.notReceived });
+      return res
+        .status(err.status)
+        .json({ success: false, error: err.message, not_received: err.notReceived, reception_dates: err.receptionDates });
     }
     console.error('[Shipments] Grouping error:', err);
     return res.status(500).json({ success: false, error: fallback });
@@ -1893,6 +1895,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           remarks: text(body.remarks, 2000),
           invoice_ids: body.invoice_ids,
           force: body.force === true,
+          mixed_dates: body.mixed_dates === true,
         },
         req.user
       );
@@ -1905,7 +1908,13 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   app.post('/api/shipments/:id/invoices', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
     if (!isUuidList(req.body?.invoice_ids)) return res.status(400).json({ success: false, error: 'Sélectionnez les factures.' });
     try {
-      const outcome = await addInvoicesToShipment(req.params.id, req.body.invoice_ids, req.body?.force === true, req.user);
+      const outcome = await addInvoicesToShipment(
+        req.params.id,
+        req.body.invoice_ids,
+        req.body?.force === true,
+        req.user,
+        req.body?.mixed_dates === true
+      );
       return res.json({ success: true, ...outcome });
     } catch (err: any) {
       return sendGroupingError(res, err, 'Impossible d\'ajouter les factures');
@@ -2709,6 +2718,20 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
             });
           }
         }
+      } else if (req.body?.new_parcel?.without_invoice === true) {
+        // Received before its invoice is in the base: the invoice is linked later by the same number
+        const input = req.body.new_parcel;
+        const supplier = typeof input.supplier_name === 'string' ? input.supplier_name.trim().slice(0, 200) : '';
+        if (!supplier) return res.status(400).json({ success: false, error: 'Choisissez le fournisseur du colis.' });
+        const { value, errors } = validateParcelInput({ ...input, destination: point.destination });
+        if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+        if (!value.tracking_number) {
+          return res.status(400).json({ success: false, error: 'Le n° de suivi est obligatoire pour un colis sans facture.' });
+        }
+        if (!(await applyParcelCarrier(value, res))) return;
+        const outcome = await createParcel(value, [], supplier, req.user.email);
+        parcelId = outcome.id;
+        created = !outcome.existed;
       } else {
         const input = req.body?.new_parcel;
         if (!input || !isUuidList(input.invoice_ids)) {
