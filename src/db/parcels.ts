@@ -14,6 +14,9 @@ export interface ParcelInvoiceRef {
   ref: string | null;
   supplier_display: string | null;
   invoice_date: string | null;
+  /** DIGI: total of the lines (EUR); hors DIGI: amount in `currency`. */
+  amount_total: number | null;
+  currency: string;
 }
 
 export interface ParcelRecord {
@@ -77,7 +80,11 @@ const SELECT_PARCELS = `
         SELECT json_agg(json_build_object(
           'id', i.id, 'ref', i.ref, 'supplier_name', i.supplier_name,
           'amazon_order_ref', i.amazon_order_ref,
-          'invoice_date', TO_CHAR(i.invoice_date, 'YYYY-MM-DD')
+          'invoice_date', TO_CHAR(i.invoice_date, 'YYYY-MM-DD'),
+          'amount_total', CASE WHEN i.is_digi
+            THEN (SELECT SUM(l.price_subtotal)::float FROM digi_invoice_lines l WHERE l.invoice_id = i.id)
+            ELSE i.amount::float END,
+          'currency', CASE WHEN i.is_digi THEN 'EUR' ELSE COALESCE(i.currency, 'EUR') END
         ) ORDER BY i.invoice_date NULLS LAST, i.ref)
         FROM parcel_invoices pi JOIN digi_invoices i ON i.id = pi.invoice_id
         WHERE pi.parcel_id = p.id
@@ -112,6 +119,8 @@ function mapParcelRow(row: any): ParcelRecord {
       ref: i.ref,
       supplier_display: trackingSupplierName(i.supplier_name, i.amazon_order_ref),
       invoice_date: i.invoice_date,
+      amount_total: i.amount_total === null || i.amount_total === undefined ? null : Number(i.amount_total),
+      currency: i.currency || 'EUR',
     })),
     photo_count: Number(row.photo_count) || 0,
     created_by_email: row.created_by_email,

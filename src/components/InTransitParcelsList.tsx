@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, Camera, CheckCircle2, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
+import { AlertCircle, Camera, CheckCircle2, ChevronDown, ChevronRight, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { Shipment } from '../types';
 import { compareDateDesc } from '../lib/dateFormat';
 import { Parcel, formatDate } from './digiApi';
+import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { ParcelFormModal } from './ParcelFormModal';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { parcelMatches } from './ParcelsBoardView';
@@ -106,6 +107,8 @@ export const InTransitParcelsList: React.FC<Props> = ({
   const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
   const [editing, setEditing] = useState<Parcel | null>(null);
   const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
+  /** Parcel whose contents are shown under its row. */
+  const [openId, setOpenId] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
   const { busy, actionError, actionMessage, setActionMessage, confirmReception, openSearch, declareLost, backToReceive } =
     useParcelStatusActions(hub, onReload);
@@ -213,8 +216,17 @@ export const InTransitParcelsList: React.FC<Props> = ({
                 </tr>
               ) : (
                 filtered.map(({ parcel: p, shipments: own, stage }) => (
-                  <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30">
+                  <React.Fragment key={p.id}>
+                  <tr className="hover:bg-slate-50/80 dark:hover:bg-slate-700/30">
                     <td className="px-3 py-2.5">
+                      <button
+                        onClick={() => setOpenId(openId === p.id ? null : p.id)}
+                        title={openId === p.id ? 'Masquer le contenu' : 'Voir le contenu de la facture / du colis'}
+                        aria-expanded={openId === p.id}
+                        className="mr-1 rounded p-0.5 align-middle text-slate-400 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
+                      >
+                        {openId === p.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </button>
                       <span className="font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</span>
                       {p.carrier_name && <span className="ml-1 text-[10px] text-slate-400">{p.carrier_name}</span>}
                     </td>
@@ -299,6 +311,14 @@ export const InTransitParcelsList: React.FC<Props> = ({
                       </div>
                     </td>
                   </tr>
+                  {openId === p.id && (
+                    <tr>
+                      <td colSpan={7} className="p-0">
+                        <ParcelContentsPreview parcel={p} />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))
               )}
             </tbody>

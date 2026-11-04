@@ -13,6 +13,7 @@ import { SettingsView } from './components/SettingsView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
 import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
 import { evaluateParcelAlerts } from './lib/parcelAlerts';
+import { DEFAULT_TRACKING_SETTINGS } from './lib/parcelTracking';
 import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
 import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
@@ -651,7 +652,10 @@ if (!authUser) {
               )}
 
               {dashboardTab === 'analytics' && canViewAnalytics ? (
-                <AnalyticsView shipments={shipmentsWithAlerts} />
+                <AnalyticsView
+                  shipments={shipmentsWithAlerts}
+                  slaToleranceDays={trackingSettings?.carrier_sla_tolerance_days ?? DEFAULT_TRACKING_SETTINGS.carrier_sla_tolerance_days}
+                />
               ) : (
                 <DashboardView
                   shipments={shipmentsWithAlerts}
@@ -668,6 +672,7 @@ if (!authUser) {
                   onOpenAnalytics={canViewAnalytics ? () => setDashboardTab('analytics') : undefined}
                   parcelsOverview={parcelsOverview}
                   parcelsLoading={parcelsLoading}
+                  slaToleranceDays={trackingSettings?.carrier_sla_tolerance_days ?? DEFAULT_TRACKING_SETTINGS.carrier_sla_tolerance_days}
                 />
               )}
             </div>

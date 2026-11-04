@@ -24,6 +24,11 @@ const DELAYS: { key: DelayKey; label: string; hint: string }[] = [
     label: 'Colis sans livraison prévue',
     hint: 'Jours après la date de facture avant l’alerte de perte.',
   },
+  {
+    key: 'carrier_sla_tolerance_days',
+    label: 'Tolérance SLA transporteurs',
+    hint: 'Jours de retard acceptés après la date promise d’arrivée à Madagascar (0 = date exacte).',
+  },
 ];
 
 /** Paramètres › Intégrations: USD rate and alert delays of the parcel tracking (Supply Chain). */
@@ -34,6 +39,7 @@ export const TrackingSettingsPanel: React.FC = () => {
     triage_alert_days: '',
     parcel_loss_days_after_eta: '',
     parcel_loss_days_without_eta: '',
+    carrier_sla_tolerance_days: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +52,7 @@ export const TrackingSettingsPanel: React.FC = () => {
       triage_alert_days: String(s.triage_alert_days),
       parcel_loss_days_after_eta: String(s.parcel_loss_days_after_eta),
       parcel_loss_days_without_eta: String(s.parcel_loss_days_without_eta),
+      carrier_sla_tolerance_days: String(s.carrier_sla_tolerance_days),
     });
   };
 

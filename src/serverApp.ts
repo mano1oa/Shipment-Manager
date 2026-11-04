@@ -2209,6 +2209,29 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  /** Contents of a parcel: its invoices with their lines (aperçu depuis les suivis). */
+  app.get('/api/parcels/:id/contents', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    try {
+      const parcel = await getParcel(req.params.id);
+      if (!parcel) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      const invoices = (await Promise.all(parcel.invoices.map((i) => getDigiInvoice(i.id)))).filter(Boolean).map((inv) => ({
+        id: inv!.id,
+        ref: inv!.ref,
+        supplier_display: inv!.supplier_display,
+        invoice_date: inv!.invoice_date,
+        amazon_order_ref: inv!.amazon_order_ref,
+        amount_total: inv!.amount_total,
+        currency: inv!.currency,
+        lines: inv!.lines,
+      }));
+      return res.json({ success: true, invoices });
+    } catch (err: any) {
+      console.error('[Parcels] Contents error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger le contenu du colis' });
+    }
+  });
+
   /**
    * Adds a parcel to invoices of one supplier. A tracking number already known
    * links the invoices to that parcel (one parcel can cover several invoices).

@@ -20,6 +20,7 @@ import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/p
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { AmazonReportImportModal } from './AmazonReportImportModal';
+import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
@@ -85,6 +86,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [receiving, setReceiving] = useState(false);
   const [pointOpen, setPointOpen] = useState(false);
   const [amazonOpen, setAmazonOpen] = useState(false);
+  /** Parcel whose contents are shown under its row. */
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
     useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
@@ -350,8 +353,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 filtered.map((p) => {
                   const late = overdue(p);
                   return (
+                    <React.Fragment key={p.id}>
                     <tr
-                      key={p.id}
                       className={
                         selected.has(p.id)
                           ? 'bg-emerald-50/70 dark:bg-emerald-950/20'
@@ -369,7 +372,17 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           />
                         </td>
                       )}
-                      <td className="px-3 py-2.5 font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</td>
+                      <td className="px-3 py-2.5 font-mono font-semibold">
+                        <button
+                          onClick={() => setOpenId(openId === p.id ? null : p.id)}
+                          title={openId === p.id ? 'Masquer le contenu' : 'Voir le contenu de la facture / du colis'}
+                          aria-expanded={openId === p.id}
+                          className="mr-1 rounded p-0.5 align-middle text-slate-400 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
+                        >
+                          {openId === p.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </button>
+                        {p.tracking_number || '— (inconnu)'}
+                      </td>
                       <td className="px-3 py-2.5">{p.carrier_name || '—'}</td>
                       <td className="px-3 py-2.5 font-semibold">{p.supplier_name || '—'}</td>
                       <td className="px-3 py-2.5">{p.invoices.map((i) => i.ref || '—').join(', ') || '—'}</td>
@@ -469,6 +482,14 @@ export const ParcelsBoardView: React.FC<Props> = ({
                         </div>
                       </td>
                     </tr>
+                    {openId === p.id && (
+                      <tr>
+                        <td colSpan={columns} className="p-0">
+                          <ParcelContentsPreview parcel={p} />
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })
               )}

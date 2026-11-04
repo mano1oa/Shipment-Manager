@@ -261,7 +261,15 @@ export interface Parcel {
   delivery_type: DeliveryType | null;
   /** Shipments of its invoices (or the shipment it was taken from). */
   shipment_ids: string[];
-  invoices: { id: string; ref: string | null; supplier_display: string | null; invoice_date: string | null }[];
+  invoices: {
+    id: string;
+    ref: string | null;
+    supplier_display: string | null;
+    invoice_date: string | null;
+    /** DIGI: total of the lines (EUR); hors DIGI: amount in `currency`. */
+    amount_total: number | null;
+    currency: string;
+  }[];
   photo_count: number;
   created_by_email: string | null;
   created_at: string;
@@ -458,3 +466,18 @@ export const importAmazonReport = (destination: ParcelDestination, rows: AmazonR
     method: 'POST',
     body: JSON.stringify({ destination, rows, apply }),
   });
+
+export interface ParcelContentsInvoice {
+  id: string;
+  ref: string | null;
+  supplier_display: string | null;
+  invoice_date: string | null;
+  amazon_order_ref: string | null;
+  amount_total: number | null;
+  currency: Currency;
+  lines: DigiInvoiceLine[];
+}
+
+/** Invoices of a parcel with their lines (aperçu du contenu). */
+export const fetchParcelContents = (parcelId: string) =>
+  apiJson<{ invoices: ParcelContentsInvoice[] }>(`/api/parcels/${parcelId}/contents`).then((d) => d.invoices);

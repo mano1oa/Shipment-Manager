@@ -257,6 +257,8 @@ export interface TrackingSettings {
   parcel_loss_days_after_eta: number;
   /** Without expected delivery: N days after the invoice date. */
   parcel_loss_days_without_eta: number;
+  /** SLA transporteurs: days of tolerance after the date promised for Madagascar. */
+  carrier_sla_tolerance_days: number;
 }
 
 export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
@@ -264,12 +266,14 @@ export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
   triage_alert_days: 3,
   parcel_loss_days_after_eta: 7,
   parcel_loss_days_without_eta: 14,
+  carrier_sla_tolerance_days: 2,
 };
 
 export const SETTING_LIMITS: Record<Exclude<keyof TrackingSettings, 'usd_eur_rate'>, [number, number]> = {
   triage_alert_days: [1, 60],
   parcel_loss_days_after_eta: [1, 90],
   parcel_loss_days_without_eta: [1, 180],
+  carrier_sla_tolerance_days: [0, 30],
 };
 
 /** Amount in EUR, or null when it cannot be converted (no rate yet). */
