@@ -1,22 +1,18 @@
 import React from 'react';
 import {
-  Package,
   Plane,
   Ship,
   AlertTriangle,
-  Clock,
-  CheckCircle2,
   TrendingUp,
   ShieldAlert,
   ArrowRight,
   Send,
-  Building2,
   Zap,
-  Coins,
-  XCircle,
 } from 'lucide-react';
 import { Shipment, ShipmentAlert, MetricSummary } from '../types';
 import { formatDate } from '../lib/dateFormat';
+import type { ParcelsOverview } from './digiApi';
+import { ParcelFunnelDashboard } from './ParcelFunnelDashboard';
 
 interface DashboardViewProps {
   shipments: Shipment[];
@@ -31,6 +27,9 @@ interface DashboardViewProps {
   onOpenAssistant: () => void;
   /** Opens the « Analyses & SLAs » tab; hidden when undefined (role not allowed). */
   onOpenAnalytics?: () => void;
+  /** Parcels loaded by the app: the figures follow their statuses. */
+  parcelsOverview: ParcelsOverview | null;
+  parcelsLoading: boolean;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -43,6 +42,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenRelanceModal,
   onOpenAssistant,
   onOpenAnalytics,
+  parcelsOverview,
+  parcelsLoading,
 }) => {
   const canOpen = (tab: string) => !allowedTabs || allowedTabs.includes(tab);
   const criticalAlerts = alerts.filter((a) => a.severity === 'critical');
@@ -58,41 +59,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Top Welcome Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#623387] to-[#9E1B65] p-6 text-white shadow-xl">
-        <div className="relative z-10 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-semibold backdrop-blur">
-              <Zap className="h-3.5 w-3.5 text-amber-300" /> Pilotage IA Supply Chain
-            </div>
-            <h1 className="mt-2 text-2xl font-extrabold tracking-tight md:text-3xl">
-              Tableau de bord exécutif et opérationnel
-            </h1>
-            <p className="mt-1 text-sm text-[#F8EEFF] max-w-2xl">
-              Suivi centralisé des expéditions aériennes et maritimes, détection automatique des
-              anomalies à Orly et relances automatisées via Google Chat.
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              id="dash-btn-air-tab"
-              hidden={!canOpen('air')}
-              onClick={() => onNavigateTab('air')}
-              className="flex items-center gap-2 rounded-xl bg-white/10 px-4 py-2 text-xs font-semibold text-white backdrop-blur transition hover:bg-white/20"
-            >
-              <Plane className="h-4 w-4" /> Suivi aérien ({metrics.airCount})
-            </button>
-            <button
-              id="dash-btn-sea-tab"
-              hidden={!canOpen('sea')}
-              onClick={() => onNavigateTab('sea')}
-              className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-bold text-[#623387] shadow-md transition hover:bg-[#F8EEFF]"
-            >
-              <Ship className="h-4 w-4" /> Suivi maritime ({metrics.seaCount})
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Key figures first, then exceptions and details (funnel reading) */}
+      <ParcelFunnelDashboard
+        overview={parcelsOverview}
+        loading={parcelsLoading}
+        shipments={shipments}
+        onOpenHub={(hub) => {
+          const tab = hub === 'ORLY' ? 'air' : 'sea';
+          if (canOpen(tab)) onNavigateTab(tab);
+        }}
+      />
 
       {/* Critical Alert Ticker if any */}
       {criticalAlerts.length > 0 && (
@@ -136,148 +112,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        {/* Total Shipments */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Expéditions totales
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#623387]/10 text-[#623387] dark:bg-[#623387]/30 dark:text-[#ED5DB2]">
-              <Package className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-slate-900 dark:text-white">
-              {metrics.totalShipments}
-            </span>
-            <div className="flex gap-2 text-xs font-medium text-slate-500">
-              <span className="flex items-center gap-0.5 text-sky-600 dark:text-sky-400">
-                <Plane className="h-3 w-3" /> {metrics.airCount}
-              </span>
-              <span className="flex items-center gap-0.5 text-sky-600 dark:text-sky-400">
-                <Ship className="h-3 w-3" /> {metrics.seaCount}
-              </span>
-            </div>
-          </div>
-          <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-            Flux actifs enregistrés en base
-          </div>
-        </div>
-
-        {/* Valeur Totale en Transit */}
-        <div id="dash-card-value-in-transit" className="rounded-2xl border border-sky-200 bg-sky-50/50 p-5 shadow-sm transition hover:shadow-md dark:border-sky-900/50 dark:bg-sky-950/20">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-sky-900 dark:text-sky-300">
-              Valeur totale en transit
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500/20 text-sky-700 dark:text-sky-300">
-              <Coins className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-2xl font-extrabold text-sky-950 dark:text-sky-100 font-mono">
-              {formatCurrency(metrics.totalValueInTransit)}
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-sky-800/80 dark:text-sky-300/80">
-            Expédiées vers Mada
-          </div>
-        </div>
-
-        {/* Taux de Perte & Divergences */}
-        <div id="dash-card-loss-rate" className="rounded-2xl border border-rose-200 bg-rose-50/50 p-5 shadow-sm transition hover:shadow-md dark:border-rose-900/50 dark:bg-rose-950/20">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-rose-900 dark:text-rose-300">
-              Taux de perte et divergences
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/20 text-rose-700 dark:text-rose-300">
-              <XCircle className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-2xl font-extrabold text-rose-700 dark:text-rose-300 font-mono">
-              {formatCurrency(metrics.totalValuePerduOrly)}
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-rose-800/80 dark:text-rose-300/80">
-            Anciennes expéditions « Perdu Orly »
-          </div>
-        </div>
-
-        {/* Orly Stock & Critical Hub Timeout */}
-        <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5 shadow-sm transition hover:shadow-md dark:border-amber-900/50 dark:bg-amber-950/20">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-              Expéditions en préparation
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300">
-              <Building2 className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-amber-900 dark:text-amber-100">
-              {metrics.orlyStockCount}
-            </span>
-            {metrics.orlyOverdueCount > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300">
-                ⚠️ {metrics.orlyOverdueCount} &gt; 10 jours
-              </span>
-            )}
-          </div>
-          <div className="mt-3 text-xs text-amber-800/80 dark:text-amber-300/80">
-            À Orly, pas encore parties vers Madagascar
-          </div>
-        </div>
-
-        {/* Retards & Bloqués Douane */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Retards et bloqués douane
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400">
-              <AlertTriangle className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-rose-600 dark:text-rose-400">
-              {metrics.delaysCount}
-            </span>
-            <span className="text-xs font-bold text-rose-700 dark:text-rose-300">
-              {metrics.customsBlockedCount} Douane
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-            Dépassements d’ETA et alertes douanières
-          </div>
-        </div>
-
-        {/* SLA Compliance */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md dark:border-slate-800 dark:bg-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Respect SLA transporteurs
-            </span>
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
-              <TrendingUp className="h-5 w-5" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400">
-              {metrics.slaComplianceRate}%
-            </span>
-            <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-              Conforme
-            </span>
-          </div>
-          <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-            Objectif cible &gt; 85% respecté
-          </div>
-        </div>
-      </div>
 
       {/* Main Grid: Recent Shipments & Quick Action Column */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

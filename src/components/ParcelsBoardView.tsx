@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  FileSpreadsheet,
   Loader2,
   PackageCheck,
   PackageX,
@@ -16,7 +17,9 @@ import {
 } from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
+import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
+import { AmazonReportImportModal } from './AmazonReportImportModal';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
@@ -81,6 +84,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
   const [receiving, setReceiving] = useState(false);
   const [pointOpen, setPointOpen] = useState(false);
+  const [amazonOpen, setAmazonOpen] = useState(false);
 
   const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
     useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
@@ -111,7 +115,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
         if (['received', 'lost', 'search', 'to_receive'].includes(statusFilter) && p.status !== statusFilter) return false;
         if (supplierFilter !== 'all' && (p.supplier_name || '—') !== supplierFilter) return false;
         return parcelMatches(p, search) && parcelMatches(p, globalSearch);
-      }),
+      })
+        // Latest expected delivery first
+        .sort((a, b) => compareDateDesc(a.expected_delivery, b.expected_delivery)),
     [own, statusFilter, supplierFilter, search, globalSearch, settings]
   );
 
@@ -162,6 +168,13 @@ export const ParcelsBoardView: React.FC<Props> = ({
               className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
             >
               <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
+            </button>
+            <button
+              onClick={() => setAmazonOpen(true)}
+              title="Créer les colis des factures Amazon depuis le rapport d'expédition (n° de commande → n° de suivi)"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+            >
+              <FileSpreadsheet className="h-4 w-4" /> Import rapport Amazon
             </button>
             <button
               onClick={() => setReceiving(true)}
@@ -485,6 +498,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
         />
       )}
 
+      {amazonOpen && (
+        <AmazonReportImportModal destination={destination} onClose={() => setAmazonOpen(false)} onImported={onReload} />
+      )}
       {pointOpen && (
         <ReceptionPointView
           destination={destination}

@@ -125,7 +125,14 @@ import {
   unlinkParcelInvoice,
   commonSupplierOf,
   DuplicateParcelError,
+  assignParcelTrackingNumber,
+  findByTrackingNumber,
+  findAmazonOrderInvoices,
+  linkParcelInvoices,
 } from './db/parcels.js';
+import { AMAZON_IMPORT_MAX_ROWS, orderKey } from './lib/amazonReport.js';
+import type { AmazonImportLine, AmazonImportOutcome } from './lib/amazonReport.js';
+import type { CarrierCode } from './lib/carrierDetection.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isOdooConfigured, OdooError } from './services/odoo/client.js';
 import {
@@ -2259,6 +2266,133 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  /**
+   * Amazon shipment report: { destination, rows: [{ line, order_ref, tracking_number,
+   * carrier_text?, expected_delivery? }], apply }. Each tracking number becomes a
+   * parcel of the invoice(s) of its Amazon order: a parcel announced without
+   * number gets it first, a known number gets the invoice. Without `apply`,
+   * only the preview of what would be done.
+   */
+  app.post('/api/parcels/import-amazon', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const destination = req.body?.destination;
+    const rows = req.body?.rows;
+    const apply = req.body?.apply === true;
+    if (!isParcelDestination(destination)) return res.status(400).json({ success: false, error: 'Destination invalide.' });
+    if (!Array.isArray(rows) || rows.length === 0 || rows.length > AMAZON_IMPORT_MAX_ROWS) {
+      return res.status(400).json({ success: false, error: `Le rapport doit contenir de 1 à ${AMAZON_IMPORT_MAX_ROWS} lignes.` });
+    }
+    const text = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+    try {
+      // One parcel per tracking number, possibly for several orders
+      const groups = new Map<
+        string,
+        { number: string; carrier: string; carrierText: string; expected: string | null; sources: { order: string; ref: string }[]; lines: { line: number; order_ref: string; raw: string }[] }
+      >();
+      const lines: AmazonImportLine[] = [];
+      for (const r of rows) {
+        const line = Number.isInteger(r?.line) ? r.line : 0;
+        const orderRef = text(r?.order_ref, 100);
+        const raw = text(r?.tracking_number, 120);
+        const detected = detectTrackingNumber(raw);
+        if (!orderRef || !detected.number || detected.number.length > 100) {
+          lines.push({ line, order_ref: orderRef, tracking_number: raw, outcome: 'invalid_tracking', invoice_refs: [] });
+          continue;
+        }
+        const g = groups.get(detected.number) ?? {
+          number: detected.number,
+          carrier: detected.carrier,
+          carrierText: text(r?.carrier_text, 100),
+          expected: typeof r?.expected_delivery === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.expected_delivery) ? r.expected_delivery : null,
+          sources: [],
+          lines: [],
+        };
+        // Amazon invoice number of the row (several invoices per order: one per seller)
+        g.sources.push({ order: orderKey(orderRef), ref: orderKey(text(r?.invoice_ref, 100)) });
+        g.lines.push({ line, order_ref: orderRef, raw });
+        groups.set(detected.number, g);
+      }
+
+      const sources = Array.from(groups.values()).flatMap((g) => g.sources);
+      const invoices = await findAmazonOrderInvoices(
+        Array.from(new Set(sources.map((s) => s.order))),
+        Array.from(new Set(sources.map((s) => s.ref).filter((k) => k.length >= 6)))
+      );
+      const byOrder = new Map<string, typeof invoices>();
+      const byRef = new Map<string, typeof invoices>();
+      invoices.forEach((inv) => {
+        if (inv.order_key) byOrder.set(inv.order_key, [...(byOrder.get(inv.order_key) ?? []), inv]);
+        if (inv.ref_key) byRef.set(inv.ref_key, [...(byRef.get(inv.ref_key) ?? []), inv]);
+      });
+      /** The invoice of the row by its Amazon invoice number, else every invoice of the order. */
+      const invoicesOf = (s: { order: string; ref: string }) =>
+        (s.ref.length >= 6 ? byRef.get(s.ref) : undefined) ?? byOrder.get(s.order) ?? [];
+
+      /** Parcels without number given one in this run (not twice). */
+      const completedBlank = new Set<string>();
+      const counts: Record<string, number> = {};
+      for (const g of groups.values()) {
+        const all = Array.from(new Map(g.sources.flatMap(invoicesOf).map((inv) => [inv.id, inv])).values());
+        const goods = all.filter((inv) => inv.triage !== 'services');
+        const refs = goods.map((inv) => inv.ref || '—');
+        let outcome: AmazonImportOutcome;
+        if (all.length === 0) outcome = 'unknown_order';
+        else if (goods.length === 0) outcome = 'services';
+        else {
+          const ids = goods.map((inv) => inv.id);
+          const existing = await findByTrackingNumber(g.number);
+          const blank = goods.flatMap((inv) => inv.blank_parcel_ids).find((id) => !completedBlank.has(id));
+          if (existing) {
+            outcome = goods.every((inv) => inv.parcel_ids.includes(existing)) ? 'already' : 'linked';
+            if (apply && outcome === 'linked') await linkParcelInvoices(existing, ids);
+          } else if (blank) {
+            completedBlank.add(blank);
+            outcome = 'completed';
+            if (apply) {
+              // With the invoices of the other orders of the package
+              if (await assignParcelTrackingNumber(blank, g.number, g.carrier as CarrierCode, req.user.email)) {
+                await linkParcelInvoices(blank, ids);
+              }
+            }
+          } else {
+            outcome = 'created';
+            if (apply) {
+              const { value } = validateParcelInput({ tracking_number: g.number, destination, expected_delivery: g.expected });
+              if (value) {
+                // Carrier of the report when it is in the Settings list, else from the number
+                const carrier =
+                  (g.carrierText ? await resolveParcelCarrier(g.carrierText, value.carrier) : undefined) ??
+                  (await resolveParcelCarrier(null, value.carrier));
+                if (carrier) {
+                  value.carrier_name = carrier.name;
+                  if (carrier.trackingCode && isCarrierCode(carrier.trackingCode)) value.carrier = carrier.trackingCode;
+                }
+                const supplier = (await commonSupplierOf(ids)).supplier;
+                await createParcel(value, ids, supplier, req.user.email);
+              }
+            }
+          }
+        }
+        counts[outcome] = (counts[outcome] ?? 0) + 1;
+        g.lines.forEach((l) => lines.push({ line: l.line, order_ref: l.order_ref, tracking_number: g.number, outcome, invoice_refs: refs }));
+      }
+      lines.sort((a, b) => a.line - b.line);
+
+      if (apply) {
+        await writeAuditLog({
+          entityType: 'PARCEL',
+          entityId: '*',
+          action: 'IMPORT_AMAZON_REPORT',
+          actor: req.user,
+          details: { destination, rows: rows.length, parcels: groups.size, counts },
+        });
+      }
+      return res.json({ success: true, applied: apply, counts, lines });
+    } catch (err: any) {
+      console.error('[Parcels] Amazon import error:', err);
+      return res.status(500).json({ success: false, error: "Impossible d'importer le rapport Amazon" });
+    }
+  });
+
   app.put('/api/parcels/:id', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
     const { value, errors } = validateParcelInput(req.body);
@@ -2539,10 +2673,19 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       let parcelId: string;
       let created = false;
       if (typeof req.body?.parcel_id === 'string') {
-        if (!UUID_RE.test(req.body.parcel_id) || !(await getParcel(req.body.parcel_id))) {
-          return res.status(404).json({ success: false, error: 'Colis introuvable' });
+        const target = UUID_RE.test(req.body.parcel_id) ? await getParcel(req.body.parcel_id) : null;
+        if (!target) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+        parcelId = target.id;
+        // A parcel announced without number: the number read on the label completes it
+        const typed = typeof req.body?.tracking_number === 'string' ? detectTrackingNumber(req.body.tracking_number) : null;
+        if (typed?.number && !target.tracking_number) {
+          if (!(await assignParcelTrackingNumber(parcelId, typed.number, typed.carrier, req.user.email))) {
+            return res.status(409).json({
+              success: false,
+              error: `Le n° ${typed.number} est déjà utilisé par un autre colis : choisissez ce colis.`,
+            });
+          }
         }
-        parcelId = req.body.parcel_id;
       } else {
         const input = req.body?.new_parcel;
         if (!input || !isUuidList(input.invoice_ids)) {

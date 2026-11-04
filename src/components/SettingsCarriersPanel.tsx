@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useMemo, useState } from 'react';
-import { Truck, Plus, Pencil, Check, X, Loader2, RefreshCw } from 'lucide-react';
-import { SettingsCard, TrackingAutomationPanel, TRACKING_CONNECTOR_CODES } from './SettingsSystemPanels';
+import { Truck, Plus, Pencil, Check, X, Loader2, RefreshCw, Link2 } from 'lucide-react';
+import { SettingsCard, TRACKING_CONNECTOR_CODES } from './SettingsSystemPanels';
 import { CARRIER_LABELS, CarrierCode } from '../lib/carrierDetection';
 
 type CarrierTransportMode = 'Air' | 'Sea' | 'BOTH';
@@ -24,9 +24,16 @@ const fieldClass =
 
 const connectorLabel = (code: string | null) => (code ? CARRIER_LABELS[code as CarrierCode] || code : null);
 
+const compact = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** Connector whose name is the carrier's (e.g. « CHRONOPOST » → Chronopost). */
+const suggestedConnector = (name: string): CarrierCode | null =>
+  TRACKING_CONNECTOR_CODES.find((code) => [compact(CARRIER_LABELS[code]), compact(code)].includes(compact(name))) ?? null;
+
 /**
  * Carriers offered in the shipment form (create, rename, change mode,
- * (de)activate, link to a tracking connector) and the connectors' state.
+ * (de)activate, link to a tracking connector), with the state of each
+ * connector (automatic / manual) in the same list.
  */
 export const SettingsCarriersPanel: React.FC = () => {
   const [carriers, setCarriers] = useState<CarrierItem[]>([]);
@@ -67,15 +74,23 @@ export const SettingsCarriersPanel: React.FC = () => {
       .catch(() => setAutomatedCarriers(null));
   }, []);
 
-  // Active carriers grouped by linked connector, for the connectors card
-  const linkedCarriers = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    for (const c of carriers) {
-      if (!c.is_active || !c.tracking_carrier_code) continue;
-      (map[c.tracking_carrier_code] ||= []).push(c.name);
-    }
-    return map;
+  // Connectors no active carrier is linked to
+  const unusedConnectors = useMemo(() => {
+    const used = new Set(carriers.filter((c) => c.is_active).map((c) => c.tracking_carrier_code));
+    return TRACKING_CONNECTOR_CODES.filter((code) => !used.has(code));
   }, [carriers]);
+
+  // Carriers not linked whose name is a connector's
+  const toLink = useMemo(
+    () => carriers.filter((c) => !c.tracking_carrier_code && suggestedConnector(c.name)),
+    [carriers]
+  );
+  const [linkingAll, setLinkingAll] = useState(false);
+  const linkAll = async () => {
+    setLinkingAll(true);
+    for (const c of toLink) await saveCarrier(c, { tracking_carrier_code: suggestedConnector(c.name) });
+    setLinkingAll(false);
+  };
 
   async function handleCreate(event: FormEvent) {
     event.preventDefault();
@@ -138,8 +153,32 @@ export const SettingsCarriersPanel: React.FC = () => {
       <SettingsCard
         icon={Truck}
         title="Transporteurs"
-        description="Liste proposée dans le formulaire d'expédition (création réservée à Supply Chain). Un transporteur désactivé n'est plus proposé ; les expéditions existantes gardent leur nom."
+        description={
+          <>
+            Liste proposée dans les formulaires d'expédition et de colis (création réservée à Supply Chain). Un
+            transporteur désactivé n'est plus proposé ; les expéditions existantes gardent leur nom. Son connecteur de
+            suivi sert au suivi automatique —{' '}
+            {automatedCarriers === null
+              ? 'état des connecteurs indisponible.'
+              : automatedCarriers.length === 0
+                ? 'aucun n’est encore branché côté serveur : le suivi est manuel pour tous.'
+                : `${automatedCarriers.length} connecteur(s) automatique(s).`}{' '}
+            Le connecteur est d'abord déduit du format du n° de suivi, sinon celui du transporteur est utilisé.
+          </>
+        }
         actions={
+          <div className="flex flex-wrap gap-2">
+          {toLink.length > 0 && (
+            <button
+              onClick={linkAll}
+              disabled={linkingAll}
+              title={toLink.map((c) => `${c.name} → ${CARRIER_LABELS[suggestedConnector(c.name)!]}`).join('\n')}
+              className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+            >
+              {linkingAll ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />} Relier les
+              connecteurs ({toLink.length})
+            </button>
+          )}
           <button
             onClick={loadCarriers}
             disabled={loading}
@@ -147,6 +186,7 @@ export const SettingsCarriersPanel: React.FC = () => {
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualiser
           </button>
+          </div>
         }
       >
         {error && (
@@ -254,6 +294,15 @@ export const SettingsCarriersPanel: React.FC = () => {
                               {automated ? 'Automatique' : 'Manuel'}
                             </span>
                           </span>
+                        ) : suggestedConnector(c.name) ? (
+                          <button
+                            type="button"
+                            disabled={isSaving}
+                            onClick={() => saveCarrier(c, { tracking_carrier_code: suggestedConnector(c.name) })}
+                            className="inline-flex items-center gap-1 rounded-lg border border-dashed border-[#623387]/50 px-2 py-0.5 text-[11px] font-semibold text-[#623387] hover:bg-[#F8EEFF] disabled:opacity-50 dark:text-[#C09BE3] dark:hover:bg-purple-950/40"
+                          >
+                            <Link2 className="h-3 w-3" /> Relier à {CARRIER_LABELS[suggestedConnector(c.name)!]}
+                          </button>
                         ) : (
                           <span className="text-slate-400">Non relié</span>
                         )}
@@ -317,9 +366,12 @@ export const SettingsCarriersPanel: React.FC = () => {
             </table>
           </div>
         )}
+        {unusedConnectors.length > 0 && (
+          <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">
+            Connecteurs disponibles sans transporteur : {unusedConnectors.map((code) => CARRIER_LABELS[code]).join(', ')}.
+          </p>
+        )}
       </SettingsCard>
-
-      <TrackingAutomationPanel automatedCarriers={automatedCarriers} linkedCarriers={linkedCarriers} />
     </>
   );
 };

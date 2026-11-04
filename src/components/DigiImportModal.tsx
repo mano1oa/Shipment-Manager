@@ -16,7 +16,7 @@ const PREVIEW_ROWS = 20;
 const SHOWN_ERRORS = 50;
 
 /** CSV exported by Excel (";" in French locale, "," otherwise), with quoted fields. */
-function parseCsv(text: string): string[][] {
+export function parseCsv(text: string): string[][] {
   const firstLine = text.slice(0, text.indexOf('\n') > -1 ? text.indexOf('\n') : undefined);
   const delimiter = (firstLine.match(/;/g)?.length ?? 0) >= (firstLine.match(/,/g)?.length ?? 0) ? ';' : ',';
 
@@ -57,7 +57,7 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
-async function readRows(file: File): Promise<unknown[][]> {
+export async function readRows(file: File): Promise<unknown[][]> {
   if (/\.csv$/i.test(file.name)) {
     return parseCsv((await file.text()).replace(/^﻿/, ''));
   }

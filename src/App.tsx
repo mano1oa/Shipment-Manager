@@ -666,6 +666,8 @@ if (!authUser) {
                   }}
                   onOpenAssistant={() => setAssistantOpen(true)}
                   onOpenAnalytics={canViewAnalytics ? () => setDashboardTab('analytics') : undefined}
+                  parcelsOverview={parcelsOverview}
+                  parcelsLoading={parcelsLoading}
                 />
               )}
             </div>

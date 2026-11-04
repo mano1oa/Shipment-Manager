@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 import { detectTrackingNumber } from '../lib/carrierDetection';
+import { compareDateDesc } from '../lib/dateFormat';
 import { parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import {
@@ -53,6 +54,10 @@ interface Props {
 }
 
 const normalize = (text: string) => (detectTrackingNumber(text).number || text.replace(/\s+/g, '')).toUpperCase();
+/** Letters and digits only: labels are copied with spaces, dashes… */
+const compact = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+/** Parcels still expected come first in the suggestions. */
+const STATUS_RANK: Record<Parcel['status'], number> = { to_receive: 0, lost: 1, search: 2, received: 3 };
 const supplierOf = (inv: DigiInvoice) => inv.supplier_display || '—';
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -97,6 +102,10 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   const [supplier, setSupplier] = useState('');
   const [chosenInvoices, setChosenInvoices] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  /** Parcel chosen in the suggestions; null = the exact match, if any. */
+  const [picked, setPicked] = useState<string | null>(null);
+  /** Suggestion highlighted with the arrow keys. */
+  const [highlight, setHighlight] = useState(0);
   const numberInput = useRef<HTMLInputElement>(null);
 
   const loadPoints = useCallback(() => {
@@ -175,6 +184,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     setNumber('');
     setSupplier('');
     setChosenInvoices(new Set());
+    setPicked(null);
     if (photo && !photo.parcel_id) setTimeout(() => numberInput.current?.focus(), 0);
   }, [photo?.id]);
 
@@ -193,19 +203,72 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
 
   // ---- Matching by the number read on the label ----
   const typed = number.trim() ? normalize(number) : '';
-  const exact = typed ? parcels.find((p) => p.tracking_number && p.tracking_number.toUpperCase() === typed) ?? null : null;
-  const suggestions = useMemo(() => {
-    if (exact || typed.length < 4) return [];
-    return parcels
-      .filter((p) => p.tracking_number && p.tracking_number.toUpperCase().includes(typed))
-      .sort((a, b) => Number(b.destination === destination) - Number(a.destination === destination))
-      .slice(0, 5);
-  }, [typed, exact, parcels, destination]);
+  /** Parcels of the database matching the typed number, best first. */
+  const matches = useMemo(() => {
+    const keys = Array.from(new Set([compact(number), compact(typed)])).filter((k) => k.length >= 2);
+    if (keys.length === 0) return [];
+    const scored: { parcel: Parcel; score: number }[] = [];
+    for (const p of parcels) {
+      const saved = p.tracking_number ? compact(p.tracking_number) : '';
+      if (!saved) continue;
+      let score = 0;
+      for (const k of keys) {
+        if (saved === k) score = Math.max(score, 4);
+        else if (saved.startsWith(k) || saved.endsWith(k)) score = Math.max(score, 3);
+        // Label longer than the saved number (carrier prefix, check digit…)
+        else if (saved.length >= 8 && k.includes(saved)) score = Math.max(score, 3);
+        else if (saved.includes(k)) score = Math.max(score, 2);
+      }
+      if (score > 0) scored.push({ parcel: p, score });
+    }
+    return scored
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          Number(b.parcel.destination === destination) - Number(a.parcel.destination === destination) ||
+          STATUS_RANK[a.parcel.status] - STATUS_RANK[b.parcel.status]
+      )
+      .slice(0, 8);
+  }, [number, typed, parcels, destination]);
+  const exact = matches[0]?.score === 4 ? matches[0].parcel : null;
+  /** Parcel picked in the list (or the exact match): the one to link. */
+  const chosen = picked ? parcelById.get(picked) ?? null : exact;
+  useEffect(() => {
+    setPicked(null);
+    setHighlight(0);
+  }, [number]);
+
+  // Parcels expected here without number: the label may be theirs
+  const waitingWithoutNumber = useMemo(
+    () =>
+      parcels
+        .filter(
+          (p) =>
+            !p.tracking_number &&
+            p.destination === destination &&
+            (p.status === 'to_receive' || p.status === 'lost' || p.status === 'search')
+        )
+        .sort((a, b) => compareDateDesc(a.expected_delivery, b.expected_delivery)),
+    [parcels, destination]
+  );
+  const supplierWaiting = useMemo(
+    () => waitingWithoutNumber.filter((p) => (p.supplier_name || '—') === supplier),
+    [waitingWithoutNumber, supplier]
+  );
 
   const suppliers = useMemo(
-    () => Array.from(new Set<string>((invoices || []).map(supplierOf))).sort((a, b) => a.localeCompare(b, 'fr')),
-    [invoices]
+    () =>
+      Array.from(
+        new Set<string>([...(invoices || []).map(supplierOf), ...waitingWithoutNumber.map((p) => p.supplier_name || '—')])
+      ).sort((a, b) => a.localeCompare(b, 'fr')),
+    [invoices, waitingWithoutNumber]
   );
+
+  /** Links the parcel; a parcel without number gets the one read on the label. */
+  const linkChosen = (p: Parcel) =>
+    !p.tracking_number && number.trim()
+      ? link({ parcel_id: p.id, tracking_number: number.trim() }, 'N° complété et rattaché')
+      : link({ parcel_id: p.id }, 'Rattachée');
   const supplierInvoices = useMemo(() => (invoices || []).filter((i) => supplierOf(i) === supplier), [invoices, supplier]);
 
   /** After a match: refresh, then the next photo to match. */
@@ -575,55 +638,115 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     value={number}
                     onChange={(e) => setNumber(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && exact && !saving) link({ parcel_id: exact.id }, 'Rattachée');
+                      if (e.key === 'ArrowDown' && matches.length > 0) {
+                        e.preventDefault();
+                        setPicked(null);
+                        setHighlight((h) => Math.min(h + 1, matches.length - 1));
+                      } else if (e.key === 'ArrowUp' && matches.length > 0) {
+                        e.preventDefault();
+                        setPicked(null);
+                        setHighlight((h) => Math.max(h - 1, 0));
+                      } else if (e.key === 'Enter' && !saving) {
+                        // 1st Enter picks the highlighted parcel, the 2nd links it
+                        if (chosen) linkChosen(chosen);
+                        else if (matches[highlight]) setPicked(matches[highlight].parcel.id);
+                      } else if (e.key === 'Escape') setPicked(null);
                     }}
                     placeholder="Recopier le n° de l'étiquette"
+                    autoComplete="off"
                     className={`${inputClass} font-mono`}
                   />
+                  <span className="mt-1 block text-[10px] text-slate-400">
+                    Les colis déjà en base s'affichent dès 2 caractères : ↑ ↓ pour choisir, Entrée pour sélectionner puis
+                    rattacher.
+                  </span>
                 </label>
 
-                {exact ? (
+                {chosen ? (
                   <div className="space-y-2">
-                    <ParcelCard parcel={exact} />
-                    {exact.destination !== destination && (
+                    <ParcelCard parcel={chosen} />
+                    {chosen.destination !== destination && (
                       <p className="text-[11px] font-semibold text-amber-600">
-                        Ce colis était attendu à {exact.destination === 'ORLY' ? 'Orly' : 'Rouen'}.
+                        Ce colis était attendu à {chosen.destination === 'ORLY' ? 'Orly' : 'Rouen'}.
+                      </p>
+                    )}
+                    {chosen.status === 'received' && (
+                      <p className="text-[11px] font-semibold text-amber-600">
+                        Ce colis est déjà reçu{chosen.received_at ? ` (le ${formatDate(chosen.received_at)})` : ''} : la
+                        photo sera ajoutée sans changer sa date de réception.
                       </p>
                     )}
                     <button
-                      onClick={() => link({ parcel_id: exact.id }, 'Rattachée')}
+                      onClick={() => linkChosen(chosen)}
                       disabled={saving}
                       className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
                       Rattacher — reçu le {formatDate(current.point.point_date)} (Entrée)
                     </button>
+                    {(picked || matches.length > 1) && (
+                      <button
+                        onClick={() => setPicked(null)}
+                        className="w-full text-center text-[11px] font-semibold text-slate-500 hover:text-[#623387]"
+                      >
+                        {picked ? 'Choisir un autre colis' : `${matches.length - 1} autre(s) colis proche(s)…`}
+                      </button>
+                    )}
                   </div>
-                ) : (
+                ) : null}
+
+                {!chosen && matches.length > 0 && (
+                  <div>
+                    <span className={label}>Colis en base ({matches.length}) — cliquez pour sélectionner</span>
+                    <div className="mt-1 space-y-1" role="listbox">
+                      {matches.map(({ parcel: s }, i) => (
+                        <button
+                          key={s.id}
+                          role="option"
+                          aria-selected={i === highlight}
+                          onMouseEnter={() => setHighlight(i)}
+                          onClick={() => setPicked(s.id)}
+                          className={`block w-full rounded-lg border px-2 py-1.5 text-left transition ${
+                            i === highlight
+                              ? 'border-[#623387] bg-[#F8EEFF] dark:bg-purple-950/40'
+                              : 'border-slate-200 hover:border-[#623387] dark:border-slate-700'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="truncate font-mono font-semibold">{s.tracking_number}</span>
+                            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PARCEL_STATUS_BADGES[s.status]}`}>
+                              {parcelStatusLabel(s.status, s.destination)}
+                            </span>
+                          </div>
+                          <div className="mt-0.5 truncate text-[10px] text-slate-500">
+                            {s.supplier_name || '—'} · Facture(s) {s.invoices.map((inv) => inv.ref || '—').join(', ') || '—'}
+                            {s.destination !== destination && ` · attendu à ${s.destination === 'ORLY' ? 'Orly' : 'Rouen'}`}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {!chosen && (
                   <>
-                    {suggestions.length > 0 && (
-                      <div>
-                        <span className={label}>Colis proches</span>
-                        <div className="mt-1 space-y-1">
-                          {suggestions.map((s) => (
-                            <button
-                              key={s.id}
-                              onClick={() => setNumber(s.tracking_number || '')}
-                              className="block w-full rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-[#623387] dark:border-slate-700"
-                            >
-                              <span className="font-mono font-semibold">{s.tracking_number}</span>
-                              <span className="ml-2 text-slate-500">{s.supplier_name || '—'}</span>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                    {typed && matches.length === 0 && (
+                      <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                        Aucun colis en base avec ce n°. Vérifiez la saisie, sinon choisissez le fournisseur : ce colis est
+                        peut-être annoncé sans n° de suivi, ou il faut le créer pour sa facture.
+                      </p>
                     )}
 
                     <div className="rounded-xl border border-dashed border-slate-300 p-3 dark:border-slate-700">
                       <h4 className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-100">
                         <PackagePlus className="h-4 w-4" />
-                        {typed ? 'Colis non annoncé : choisir sa facture' : 'N° illisible : rattacher à une facture'}
+                        {typed ? 'Colis non trouvé : rattacher via le fournisseur' : 'N° illisible : rattacher via le fournisseur'}
                       </h4>
+                      {waitingWithoutNumber.length > 0 && !supplier && (
+                        <p className="mt-1 text-[10px] text-slate-500">
+                          {waitingWithoutNumber.length} colis attendu(s) à {hub} sans n° de suivi.
+                        </p>
+                      )}
                       <label className="mt-2 block">
                         <span className={label}>Fournisseur</span>
                         <select
@@ -642,6 +765,35 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                           ))}
                         </select>
                       </label>
+                      {supplier && supplierWaiting.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          <span className={label}>
+                            Colis annoncés sans n° de suivi{typed ? ' : lui donner ce n° et rattacher' : ''}
+                          </span>
+                          {supplierWaiting.map((p) => (
+                            <div
+                              key={p.id}
+                              className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 dark:border-slate-700"
+                            >
+                              <span className="min-w-0 truncate">
+                                <span className="font-semibold">{p.invoices.map((inv) => inv.ref || '—').join(', ') || '—'}</span>
+                                <span className="ml-1 text-slate-500">
+                                  {p.expected_delivery ? `prévu le ${formatDate(p.expected_delivery)}` : 'sans date prévue'}
+                                  {p.description ? ` · ${p.description}` : ''}
+                                </span>
+                              </span>
+                              <button
+                                onClick={() => linkChosen(p)}
+                                disabled={saving}
+                                className="shrink-0 rounded-lg bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                              >
+                                C'est ce colis
+                              </button>
+                            </div>
+                          ))}
+                          <span className="block pt-1 text-[10px] text-slate-400">Sinon, créez le colis pour sa facture :</span>
+                        </div>
+                      )}
                       {supplier && (
                         <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
                           {supplierInvoices.map((inv) => (

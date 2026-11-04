@@ -1,6 +1,7 @@
 import type { DigiInvoiceInput } from '../lib/digiInvoices';
 import type { DirectInvoiceInput } from '../lib/directInvoices';
 import type { CarrierCode } from '../lib/carrierDetection';
+import type { AmazonImportLine, AmazonImportOutcome, AmazonReportRow } from '../lib/amazonReport';
 import type {
   Currency,
   DeliveryType,
@@ -376,6 +377,8 @@ export const checkPhotoStorage = () => apiJson<PhotoStorageCheck>('/api/photos/d
 
 export type PointPhotoLink =
   | { parcel_id: string | null }
+  /** Parcel announced without number: the number read on the label completes it. */
+  | { parcel_id: string; tracking_number: string }
   | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } };
 
 /** Matches a photo to a parcel (confirms its reception at the point date), or detaches it. */
@@ -442,3 +445,16 @@ const inputBase =
   'w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-medium text-slate-800 focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white';
 export const inputClass = `mt-1 ${inputBase}`;
 export const cellInputClass = inputBase;
+
+export interface AmazonImportResult {
+  applied: boolean;
+  counts: Partial<Record<AmazonImportOutcome, number>>;
+  lines: AmazonImportLine[];
+}
+
+/** Amazon shipment report: preview (apply = false), then creation of the parcels. */
+export const importAmazonReport = (destination: ParcelDestination, rows: AmazonReportRow[], apply: boolean) =>
+  apiJson<AmazonImportResult>('/api/parcels/import-amazon', {
+    method: 'POST',
+    body: JSON.stringify({ destination, rows, apply }),
+  });

@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertCircle, Camera, CheckCircle2, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { Shipment } from '../types';
+import { compareDateDesc } from '../lib/dateFormat';
 import { Parcel, formatDate } from './digiApi';
 import { ParcelFormModal } from './ParcelFormModal';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
@@ -42,6 +43,14 @@ function stageOf(p: Parcel, shipments: Shipment[]): Stage | null {
   if (shipments.some((s) => s.global_status === 'Bloquée douane')) return 'customs';
   if (shipments.some((s) => s.global_status === 'Expédiée vers Mada')) return 'to_mada';
   return 'at_hub';
+}
+
+export type JourneyStage = Stage | 'delivered';
+
+/** Stage of a parcel on the whole journey, "delivered" once in the Madagascar warehouse. */
+export function journeyStage(p: Parcel, byId: Map<string, Shipment>): JourneyStage {
+  const own = p.shipment_ids.map((id) => byId.get(id)).filter((s): s is Shipment => Boolean(s));
+  return stageOf(p, own) ?? 'delivered';
 }
 
 export interface InTransitRow {
@@ -116,7 +125,9 @@ export const InTransitParcelsList: React.FC<Props> = ({
       rows.filter(
         ({ parcel: p, stage }) =>
           (stageFilter === 'all' || stage === stageFilter) && parcelMatches(p, search) && parcelMatches(p, globalSearch)
-      ),
+      )
+        // Latest expected delivery first
+        .sort((a, b) => compareDateDesc(a.parcel.expected_delivery, b.parcel.expected_delivery)),
     [rows, search, globalSearch, stageFilter]
   );
 
