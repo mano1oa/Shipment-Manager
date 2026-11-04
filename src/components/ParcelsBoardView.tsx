@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   FileSpreadsheet,
+  Layers,
   Loader2,
   PackageCheck,
   PackageX,
@@ -27,7 +28,7 @@ import { ReceiveParcelModal } from './ReceiveParcelModal';
 import { ReceptionPointView } from './ReceptionPointView';
 import { useParcelStatusActions } from './useParcelStatusActions';
 
-type StatusFilter = 'open' | ParcelStatus | 'all';
+type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
 
 interface Props {
   destination: ParcelDestination;
@@ -42,7 +43,13 @@ interface Props {
   onOpenShipment: (shipmentId: string) => void;
   /** Supply Chain: confirms receptions, photos, avis de recherche. */
   isSupplyChain: boolean;
+  /** Supply Chain: new shipment to Madagascar with these invoices pre-checked. */
+  onGroupInShipment?: (invoiceIds: string[]) => void;
 }
+
+/** Invoices of the parcels not yet in a shipment, to group them into a new one. */
+const invoicesToShip = (list: Parcel[]) =>
+  Array.from(new Set(list.filter((p) => p.shipment_ids.length === 0).flatMap((p) => p.invoices.map((i) => i.id))));
 
 /** Earliest invoice date of a parcel: start of the loss delay without expected delivery. */
 export const parcelInvoiceDate = (p: Parcel) =>
@@ -73,6 +80,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
   globalSearch,
   onOpenShipment,
   isSupplyChain,
+  onGroupInShipment,
 }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
   const [search, setSearch] = useState('');
@@ -102,6 +110,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
       received: own.filter((p) => p.status === 'received').length,
       lost: own.filter((p) => p.status === 'lost').length,
       search: own.filter((p) => p.status === 'search').length,
+      no_invoice: own.filter((p) => p.invoices.length === 0).length,
     }),
     [own, settings]
   );
@@ -116,13 +125,30 @@ export const ParcelsBoardView: React.FC<Props> = ({
       own.filter((p) => {
         if (statusFilter === 'open' && p.status !== 'to_receive') return false;
         if (['received', 'lost', 'search', 'to_receive'].includes(statusFilter) && p.status !== statusFilter) return false;
+        if (statusFilter === 'no_invoice' && p.invoices.length > 0) return false;
         if (supplierFilter !== 'all' && (p.supplier_name || '—') !== supplierFilter) return false;
         return parcelMatches(p, search) && parcelMatches(p, globalSearch);
       })
-        // Latest expected delivery first
-        .sort((a, b) => compareDateDesc(a.expected_delivery, b.expected_delivery)),
+        // Latest expected delivery first (received: latest reception first)
+        .sort(
+          (a, b) =>
+            (statusFilter === 'received' ? compareDateDesc(a.received_at, b.received_at) : 0) ||
+            compareDateDesc(a.expected_delivery, b.expected_delivery)
+        ),
     [own, statusFilter, supplierFilter, search, globalSearch, settings]
   );
+
+  // Received at the hub: one group per reception date, to ship them together
+  const rowGroups = useMemo(() => {
+    if (statusFilter !== 'received') return [{ date: null as string | null, grouped: false, parcels: filtered }];
+    const groups: { date: string | null; grouped: boolean; parcels: Parcel[] }[] = [];
+    for (const p of filtered) {
+      const last = groups[groups.length - 1];
+      if (last && last.date === (p.received_at ?? null)) last.parcels.push(p);
+      else groups.push({ date: p.received_at ?? null, grouped: true, parcels: [p] });
+    }
+    return groups;
+  }, [filtered, statusFilter]);
 
   // Late parcels are turned "lost" by the server when the list is loaded
   const tiles: { key: StatusFilter; label: string; value: number; tone: string }[] = [
@@ -135,6 +161,13 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const selectedParcels = filtered.filter((p) => selected.has(p.id));
   const toConfirm = selectedParcels.filter((p) => p.status === 'to_receive' || p.status === 'lost');
   const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
+  const toShip = invoicesToShip(selectedParcels.filter((p) => p.status === 'received'));
+  const toggleMany = (list: Parcel[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      list.forEach((p) => (on ? next.add(p.id) : next.delete(p.id)));
+      return next;
+    });
   const toggleOne = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -208,6 +241,18 @@ export const ParcelsBoardView: React.FC<Props> = ({
         ))}
       </div>
 
+      {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
+        <button
+          onClick={() => setStatusFilter('no_invoice')}
+          className="flex w-full items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left text-xs font-bold text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {counts.no_invoice} colis reçu(s) sans facture : la facture leur sera rattachée quand elle sera saisie avec
+          leur n° (« + Colis ») ou par l’import du rapport Amazon. Voir la liste
+          <ChevronRight className="ml-auto h-4 w-4" />
+        </button>
+      )}
+
       {invoicesWithoutParcel.length > 0 && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
           <button onClick={() => setShowWithout((v) => !v)} className="flex w-full items-center gap-2 font-bold">
@@ -252,6 +297,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
           <option value="received">Reçus à {hub}</option>
           <option value="lost">Perdus avant {hub}</option>
           <option value="search">Avis de recherche</option>
+          <option value="no_invoice">Reçus sans facture</option>
           <option value="all">Tous les colis</option>
         </select>
         <button
@@ -304,6 +350,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
               >
                 <CheckCircle2 className="h-3.5 w-3.5" /> Confirmer la réception à {hub} ({toConfirm.length})
               </button>
+              {onGroupInShipment && (
+                <button
+                  onClick={() => onGroupInShipment(toShip)}
+                  disabled={toShip.length === 0}
+                  title="Nouvelle expédition vers Madagascar avec les factures des colis reçus cochés (pas encore expédiés)"
+                  className="flex items-center gap-1.5 rounded-lg bg-[#623387] px-3 py-1.5 text-[11px] font-bold text-white shadow-sm hover:bg-[#522870] disabled:opacity-40"
+                >
+                  <Layers className="h-3.5 w-3.5" /> Regrouper en expédition ({toShip.length} facture(s))
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -350,7 +406,46 @@ export const ParcelsBoardView: React.FC<Props> = ({
                   </td>
                 </tr>
               ) : (
-                filtered.map((p) => {
+                rowGroups.map((g) => {
+                  const groupSelected = g.parcels.every((p) => selected.has(p.id));
+                  const groupToShip = invoicesToShip(g.parcels);
+                  return (
+                  <React.Fragment key={g.date ?? 'none'}>
+                  {g.grouped && (
+                    <tr className="bg-slate-50 dark:bg-slate-900/50">
+                      {isSupplyChain && (
+                        <td className="px-3 py-2">
+                          <input
+                            type="checkbox"
+                            aria-label={`Sélectionner les colis reçus le ${formatDate(g.date)}`}
+                            checked={groupSelected}
+                            onChange={() => toggleMany(g.parcels, !groupSelected)}
+                            className="h-4 w-4 cursor-pointer accent-emerald-600"
+                          />
+                        </td>
+                      )}
+                      <td colSpan={columns - (isSupplyChain ? 1 : 0)} className="px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[11px] font-extrabold text-slate-800 dark:text-slate-100">
+                            {g.date ? `Reçus le ${formatDate(g.date)}` : 'Date de réception inconnue'}
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            {g.parcels.length} colis · {g.parcels.filter((p) => p.shipment_ids.length === 0).length} à expédier
+                          </span>
+                          {onGroupInShipment && groupToShip.length > 0 && (
+                            <button
+                              onClick={() => onGroupInShipment(groupToShip)}
+                              title="Nouvelle expédition vers Madagascar avec les factures de ces colis (pas encore expédiés)"
+                              className="ml-auto flex items-center gap-1 rounded-lg border border-[#623387]/40 px-2 py-1 text-[11px] font-bold text-[#623387] hover:bg-[#F8EEFF] dark:text-[#C09BE3] dark:hover:bg-purple-950/40"
+                            >
+                              <Layers className="h-3.5 w-3.5" /> Créer l’expédition ({groupToShip.length} facture(s))
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {g.parcels.map((p) => {
                   const late = overdue(p);
                   return (
                     <React.Fragment key={p.id}>
@@ -385,7 +480,18 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       </td>
                       <td className="px-3 py-2.5">{p.carrier_name || '—'}</td>
                       <td className="px-3 py-2.5 font-semibold">{p.supplier_name || '—'}</td>
-                      <td className="px-3 py-2.5">{p.invoices.map((i) => i.ref || '—').join(', ') || '—'}</td>
+                      <td className="px-3 py-2.5">
+                        {p.invoices.length === 0 ? (
+                          <span
+                            title="Facture pas encore en base : rattachée par « + Colis » avec ce n° ou par l’import Amazon"
+                            className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                          >
+                            Sans facture
+                          </span>
+                        ) : (
+                          p.invoices.map((i) => i.ref || '—').join(', ')
+                        )}
+                      </td>
                       <td className="px-3 py-2.5">{formatDate(p.expected_delivery)}</td>
                       <td className="px-3 py-2.5">
                         <span
@@ -490,6 +596,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       </tr>
                     )}
                     </React.Fragment>
+                  );
+                  })}
+                  </React.Fragment>
                   );
                 })
               )}

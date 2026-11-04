@@ -387,7 +387,9 @@ export type PointPhotoLink =
   | { parcel_id: string | null }
   /** Parcel announced without number: the number read on the label completes it. */
   | { parcel_id: string; tracking_number: string }
-  | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } };
+  | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } }
+  /** Received before its invoice is in the base: linked to it later by the same number. */
+  | { new_parcel: { tracking_number: string; supplier_name: string; without_invoice: true } };
 
 /** Matches a photo to a parcel (confirms its reception at the point date), or detaches it. */
 export const linkPointPhoto = (pointId: string, photoId: string, link: PointPhotoLink) =>

@@ -18,6 +18,8 @@ interface Props extends Omit<React.ComponentProps<typeof ShipmentsView>, 'modeFi
   onReloadParcels: () => void;
   settings: TrackingSettings | undefined;
   isSupplyChain: boolean;
+  /** Supply Chain: new shipment with these invoices pre-checked. */
+  onGroupParcels?: (invoiceIds: string[]) => void;
 }
 
 /**
@@ -35,6 +37,7 @@ export const TransportTrackingView: React.FC<Props> = ({
   onReloadParcels,
   settings,
   isSupplyChain,
+  onGroupParcels,
   ...shipmentsProps
 }) => {
   const destination = mode === 'Air' ? 'ORLY' : 'ROUEN';
@@ -133,6 +136,7 @@ export const TransportTrackingView: React.FC<Props> = ({
           globalSearch={search}
           onOpenShipment={onOpenShipment}
           isSupplyChain={isSupplyChain}
+          onGroupInShipment={onGroupParcels}
         />
       )}
     </div>

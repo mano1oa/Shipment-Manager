@@ -2709,6 +2709,20 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
             });
           }
         }
+      } else if (req.body?.new_parcel?.without_invoice === true) {
+        // Received before its invoice is in the base: the invoice is linked later by the same number
+        const input = req.body.new_parcel;
+        const supplier = typeof input.supplier_name === 'string' ? input.supplier_name.trim().slice(0, 200) : '';
+        if (!supplier) return res.status(400).json({ success: false, error: 'Choisissez le fournisseur du colis.' });
+        const { value, errors } = validateParcelInput({ ...input, destination: point.destination });
+        if (!value) return res.status(400).json({ success: false, error: errors.join(' ') });
+        if (!value.tracking_number) {
+          return res.status(400).json({ success: false, error: 'Le n° de suivi est obligatoire pour un colis sans facture.' });
+        }
+        if (!(await applyParcelCarrier(value, res))) return;
+        const outcome = await createParcel(value, [], supplier, req.user.email);
+        parcelId = outcome.id;
+        created = !outcome.existed;
       } else {
         const input = req.body?.new_parcel;
         if (!input || !isUuidList(input.invoice_ids)) {

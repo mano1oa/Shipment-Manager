@@ -21,6 +21,8 @@ interface Props {
   shipment?: Shipment | null;
   /** Every shipment: invoices of a shipment "to review" (former model) can be regrouped. */
   shipments: Shipment[];
+  /** Invoices checked when the window opens (parcels grouped from the hub board). */
+  initialInvoiceIds?: string[];
   onClose: () => void;
   /** emptied: former shipments left without invoice (to delete). */
   onDone: (shipmentId: string, emptied: string[]) => void;
@@ -33,10 +35,10 @@ const supplierOf = (inv: DigiInvoice) => inv.supplier_display || '—';
  * Madagascar (one sale invoice = Réf FA DIGI-NXT). Invoices whose parcels are
  * not all confirmed received need an explicit exception.
  */
-export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipments, onClose, onDone }) => {
+export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipments, initialInvoiceIds, onClose, onDone }) => {
   const hub = mode === 'Air' ? 'Orly' : 'Rouen';
   const [invoices, setInvoices] = useState<DigiInvoice[] | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialInvoiceIds));
   const [onlyReceived, setOnlyReceived] = useState(true);
   const [search, setSearch] = useState('');
   const [refFa, setRefFa] = useState('');
@@ -98,8 +100,9 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
       return next;
     });
 
-  const selectedInvoices = candidates.filter((i) => selected.has(i.id));
   const selectable = (inv: DigiInvoice) => inv.validation_status === 'validated';
+  // Pre-checked invoices not validated yet stay out
+  const selectedInvoices = candidates.filter((i) => selected.has(i.id) && selectable(i));
 
   const submit = async (force: boolean) => {
     setError(null);

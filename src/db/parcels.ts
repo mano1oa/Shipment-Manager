@@ -226,6 +226,13 @@ export async function createParcel(
   if (input.tracking_number) {
     const existing = await findByTrackingNumber(input.tracking_number);
     if (existing) {
+      // Parcel received without invoice: it takes the supplier of its first invoices
+      if (supplierName && invoiceIds.length > 0) {
+        await sql`
+          UPDATE parcels p SET supplier_name = ${supplierName}
+          WHERE p.id = ${existing} AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
+        `;
+      }
       await linkParcelInvoices(existing, invoiceIds);
       return { id: existing, existed: true };
     }
