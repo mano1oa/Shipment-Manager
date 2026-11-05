@@ -135,6 +135,7 @@ export const TransportTrackingView: React.FC<Props> = ({
           onReload={onReloadParcels}
           globalSearch={search}
           onOpenShipment={onOpenShipment}
+          shipments={shipmentsProps.shipments}
           isSupplyChain={isSupplyChain}
           onGroupInShipment={onGroupParcels}
         />

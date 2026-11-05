@@ -27,6 +27,9 @@ export async function ensureNeonSchema(): Promise<void> {
         // Parcel model columns (filled by the conversion, see parcelSchema.ts)
         await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS legacy_global_status VARCHAR(100);`;
         await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS needs_review BOOLEAN NOT NULL DEFAULT FALSE;`;
+        // Confirmed shipment: its invoices and parcels are frozen (not written by the upsert)
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;`;
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS confirmed_by_email VARCHAR(255);`;
       } catch (err: any) {
         schemaEnsuredPromise = null; // Permet de réessayer lors de l'appel suivant
         if (
@@ -99,6 +102,8 @@ export async function getShipmentsFromNeon(): Promise<Shipment[]> {
         sea_deliveries,
         legacy_global_status,
         needs_review,
+        confirmed_at,
+        confirmed_by_email,
         created_at,
         updated_at
       FROM shipments
@@ -279,6 +284,37 @@ export async function findShipmentByRefFa(refFa: string, exceptId: string | null
     LIMIT 1
   `;
   return (rows[0]?.id as string) ?? null;
+}
+
+/** Confirms (frozen contents, actorEmail) or unlocks (null) the shipment; false when it does not exist. */
+export async function setShipmentConfirmation(id: string, actorEmail: string | null): Promise<boolean> {
+  await ensureNeonSchema();
+  const sql = getDb();
+  const rows = actorEmail
+    ? await sql`
+        UPDATE shipments SET confirmed_at = NOW(), confirmed_by_email = ${actorEmail}
+        WHERE id = ${id} RETURNING id
+      `
+    : await sql`
+        UPDATE shipments SET confirmed_at = NULL, confirmed_by_email = NULL
+        WHERE id = ${id} RETURNING id
+      `;
+  return rows.length > 0;
+}
+
+/** Confirmed shipment holding one of these invoices (their invoice lines and parcels cannot change). */
+export async function findConfirmedShipmentOfInvoices(
+  invoiceIds: string[]
+): Promise<{ id: string; ref_fa_digi_nxt: string | null } | null> {
+  if (invoiceIds.length === 0) return null;
+  await ensureNeonSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT s.id, s.ref_fa_digi_nxt FROM digi_invoices i JOIN shipments s ON s.id = i.shipment_id
+    WHERE i.id = ANY(${invoiceIds}::uuid[]) AND s.confirmed_at IS NOT NULL
+    LIMIT 1
+  `;
+  return rows[0] ? { id: rows[0].id as string, ref_fa_digi_nxt: (rows[0].ref_fa_digi_nxt as string) || null } : null;
 }
 
 /** Clears the "to review" flag (shipment regrouped under the parcel model). */

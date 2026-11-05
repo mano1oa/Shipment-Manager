@@ -31,6 +31,7 @@ import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
 import { ReceptionPointView } from './ReceptionPointView';
 import { useParcelStatusActions } from './useParcelStatusActions';
+import { Shipment, shipmentLabel } from '../types';
 import DateInput from './DateInput';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
@@ -46,6 +47,8 @@ interface Props {
   /** Search typed in the top bar (applies to both tabs). */
   globalSearch: string;
   onOpenShipment: (shipmentId: string) => void;
+  /** Shipments, to show the Réf FA DIGI-NXT of each parcel's shipment. */
+  shipments: Shipment[];
   /** Supply Chain: confirms receptions, photos, avis de recherche. */
   isSupplyChain: boolean;
   /** Supply Chain: new shipment to Madagascar with these invoices pre-checked. */
@@ -94,9 +97,11 @@ export const ParcelsBoardView: React.FC<Props> = ({
   onReload,
   globalSearch,
   onOpenShipment,
+  shipments,
   isSupplyChain,
   onGroupInShipment,
 }) => {
+  const shipmentById = useMemo(() => new Map(shipments.map((s) => [s.id, s])), [shipments]);
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
@@ -641,7 +646,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                                 onClick={() => onOpenShipment(id)}
                                 className="mr-1 font-mono font-semibold text-[#623387] hover:underline dark:text-[#B688FF]"
                               >
-                                {id}
+                                {shipmentLabel(shipmentById.get(id), id)}
                               </button>
                             ))}
                       </td>

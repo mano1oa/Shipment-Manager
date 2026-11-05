@@ -52,6 +52,8 @@ export type AmazonImportOutcome =
   | 'already'
   | 'unknown_order'
   | 'services'
+  /** Its invoices are in a confirmed shipment: parcels frozen. */
+  | 'locked'
   | 'invalid_tracking';
 
 export const AMAZON_OUTCOME_LABELS: Record<AmazonImportOutcome, string> = {
@@ -61,6 +63,7 @@ export const AMAZON_OUTCOME_LABELS: Record<AmazonImportOutcome, string> = {
   already: 'Déjà rattaché',
   unknown_order: 'Commande sans facture',
   services: 'Facture en services',
+  locked: 'Expédition confirmée',
   invalid_tracking: 'N° de suivi invalide',
 };
 

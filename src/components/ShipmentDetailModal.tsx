@@ -19,8 +19,12 @@ import {
   Trash2,
   Warehouse,
   Loader2,
+  Lock,
+  LockOpen,
 } from 'lucide-react';
-import { Shipment, GlobalStatus, shipmentValue } from '../types';
+import { Shipment, GlobalStatus, shipmentValue, shipmentLabel } from '../types';
+import { confirmShipment, unlockShipment, ConfirmationResult } from './shipmentApi';
+import { formatDateTime } from '../lib/dateFormat';
 import { SHIPMENT_STATUSES, applyAutomaticShipmentStatus } from '../lib/parcelTracking';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
@@ -108,6 +112,12 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   const [copiedRelance, setCopiedRelance] = useState(false);
   const [dispatchingChat, setDispatchingChat] = useState(false);
   const [chatSuccess, setChatSuccess] = useState(false);
+  const [locking, setLocking] = useState(false);
+  /** Memo of the last confirmation (to copy when Google Chat did not receive it). */
+  const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
+  const [copiedMemo, setCopiedMemo] = useState(false);
+  const label = shipmentLabel(shipment);
+  const confirmed = Boolean(shipment.confirmed_at);
 
   useEffect(() => {
     setDraft(shipment);
@@ -180,6 +190,38 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
     }
   };
 
+  const handleConfirm = async () => {
+    if (
+      !window.confirm(
+        `Confirmer l'expédition ${label} ?\n\nSes factures et colis seront verrouillés (plus d'ajout ni de retrait) et le récapitulatif des colis sera envoyé sur Google Chat.`
+      )
+    )
+      return;
+    setLocking(true);
+    try {
+      setConfirmation(await confirmShipment(shipment.id));
+      onContentsChanged([]);
+    } catch (err: any) {
+      window.alert(err.message);
+    } finally {
+      setLocking(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    if (!window.confirm(`Déverrouiller l'expédition ${label} pour corriger ses factures ou colis ?\n\nIl faudra la confirmer à nouveau (le message Google Chat sera renvoyé).`)) return;
+    setLocking(true);
+    try {
+      await unlockShipment(shipment.id);
+      setConfirmation(null);
+      onContentsChanged([]);
+    } catch (err: any) {
+      window.alert(err.message);
+    } finally {
+      setLocking(false);
+    }
+  };
+
   const departureMada = calculateDepartureMadagascar(view.orly_scan_date);
   const etaMada = calculateEtaMadaSDu(view.orly_scan_date);
   const actualArrival = view.actual_arrival_date || view.actual_delivery;
@@ -204,15 +246,23 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               {isSea ? <Ship className="h-5 w-5" /> : <Plane className="h-5 w-5" />}
             </div>
             <div>
-              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                {shipment.id}
-                <span className="ml-2 text-sm font-semibold text-slate-400">{isSea ? 'Maritime' : 'Aérien'}</span>
+              <h2 className="flex flex-wrap items-center gap-x-2 text-lg font-extrabold text-slate-900 dark:text-white">
+                {label}
+                <span className="text-sm font-semibold text-slate-400">{isSea ? 'Maritime' : 'Aérien'}</span>
+                {confirmed && (
+                  <span
+                    title={`Confirmée le ${formatDateTime(shipment.confirmed_at)} par ${shipment.confirmed_by_email || '—'}`}
+                    className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                  >
+                    <Lock className="h-3 w-3" /> Confirmée
+                  </span>
+                )}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 {[
-                  shipment.supplier,
-                  shipment.order_reference && `Commande ${shipment.order_reference}`,
-                  shipment.ref_fa_digi_nxt && `FA ${shipment.ref_fa_digi_nxt}`,
+                  // "0 fournisseurs": shipment without invoice yet
+                  !/^0 fournisseur/.test(shipment.supplier || '') && shipment.supplier,
+                  shipment.order_reference && `Réf. ordre ${shipment.order_reference}`,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -221,11 +271,37 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            {canEdit && isEditing && onDelete && (
+            {isSupplyChain && !isEditing && !shipment.needs_review && (
+              <button
+                type="button"
+                onClick={confirmed ? handleUnlock : handleConfirm}
+                disabled={locking}
+                title={
+                  confirmed
+                    ? 'Rouvrir les factures et colis pour les corriger'
+                    : 'Verrouiller les factures et colis et envoyer le récapitulatif sur Google Chat'
+                }
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold disabled:opacity-50 ${
+                  confirmed
+                    ? 'border border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800'
+                    : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                }`}
+              >
+                {locking ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : confirmed ? (
+                  <LockOpen className="h-3.5 w-3.5" />
+                ) : (
+                  <Lock className="h-3.5 w-3.5" />
+                )}
+                {confirmed ? 'Déverrouiller' : "Confirmer l'expédition"}
+              </button>
+            )}
+            {canEdit && isEditing && onDelete && !confirmed && (
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm(`Confirmez-vous la suppression définitive de l'expédition ${shipment.id} ?`)) {
+                  if (window.confirm(`Confirmez-vous la suppression définitive de l'expédition ${label} ?`)) {
                     onDelete(shipment.id);
                     onClose();
                   }
@@ -341,9 +417,43 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             </div>
           )}
 
+          {confirmation && (
+            <div
+              className={`rounded-2xl border p-4 text-xs ${
+                confirmation.chat_sent
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200'
+                  : 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <strong className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  {confirmation.chat_sent
+                    ? 'Expédition confirmée, récapitulatif envoyé sur Google Chat.'
+                    : `Expédition confirmée, mais message Google Chat non envoyé : ${confirmation.chat_error}`}
+                </strong>
+                <button
+                  onClick={() =>
+                    navigator.clipboard.writeText(confirmation.message).then(() => {
+                      setCopiedMemo(true);
+                      setTimeout(() => setCopiedMemo(false), 2500);
+                    })
+                  }
+                  className="flex shrink-0 items-center gap-1 rounded-lg border border-current/20 px-2.5 py-1 text-[11px] font-semibold"
+                >
+                  {copiedMemo ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  {copiedMemo ? 'Copié' : 'Copier le message'}
+                </button>
+              </div>
+              <pre className="mt-2 whitespace-pre-wrap rounded-lg bg-white/70 p-2.5 font-sans leading-relaxed text-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                {confirmation.message}
+              </pre>
+            </div>
+          )}
+
           {/* 1. Main information */}
           <div className={cardClass}>
-            <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
+            <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
               <Field label="Transitaire">
                 {isEditing ? (
                   <>
@@ -372,6 +482,18 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                 )}
               </Field>
 
+              <Field label="Référence d'ordre">
+                {isEditing && isSupplyChain ? (
+                  <input
+                    value={draft.order_reference || ''}
+                    onChange={(e) => set('order_reference', e.target.value)}
+                    className={inputClass}
+                  />
+                ) : (
+                  <span className="font-mono">{view.order_reference || empty}</span>
+                )}
+              </Field>
+
               <Field label={isSea ? 'BL et conteneur' : 'LTA'}>
                 {isEditing ? (
                   <>
@@ -379,7 +501,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                       value={draft.bl_awb || ''}
                       placeholder={isSea ? 'N° BL' : 'N° LTA'}
                       onChange={(e) => set('bl_awb', e.target.value)}
-                      className={inputClass}
+                      disabled={!isSupplyChain}
+                      title={isSupplyChain ? undefined : 'Modifiable par la Supply Chain'}
+                      className={`${inputClass} disabled:opacity-60`}
                     />
                     {isSea && (
                       <input
@@ -437,20 +561,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             </div>
           </div>
 
-          {/* 3. Invoices and parcels of the shipment */}
-          <ShipmentContentsPanel
-            shipment={shipment}
-            invoices={invoices}
-            invoicesError={invoicesError}
-            isSupplyChain={isSupplyChain}
-            shipments={shipments}
-            onChanged={(emptied) => {
-              loadInvoices();
-              onContentsChanged(emptied || []);
-            }}
-          />
-
-          {/* 4. Orly → Madagascar */}
+          {/* 2. Orly → Madagascar */}
           <div className={cardClass}>
             <SectionTitle icon={Warehouse}>Suivi {isSea ? 'Rouen' : 'Orly'} → Madagascar</SectionTitle>
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
@@ -553,7 +664,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             </div>
           </div>
 
-          {/* 5. Lead times */}
+          {/* 3. Lead times */}
           <div className={cardClass}>
             <SectionTitle icon={Clock}>Délais d'acheminement</SectionTitle>
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
@@ -591,6 +702,20 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               </Field>
             </div>
           </div>
+
+          {/* 4. Invoices and parcels of the shipment, arrival check */}
+          <ShipmentContentsPanel
+            shipment={shipment}
+            invoices={invoices}
+            invoicesError={invoicesError}
+            isSupplyChain={isSupplyChain}
+            canEditReceipts={canEdit}
+            shipments={shipments}
+            onChanged={(emptied) => {
+              loadInvoices();
+              onContentsChanged(emptied || []);
+            }}
+          />
 
           {/* Maritime deliveries (Rouen) */}
           {isSea && (

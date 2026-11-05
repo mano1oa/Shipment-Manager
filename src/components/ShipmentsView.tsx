@@ -21,6 +21,7 @@ import {
   Check,
   Printer,
   PlusCircle,
+  Lock,
 } from 'lucide-react';
 import { Shipment, TransportMode, FilterState } from '../types';
 import { SeaDeliveriesTable } from './SeaDeliveriesTable';
@@ -220,10 +221,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     let text = `TABLEAU OFFICIEL DE RÉCLAMATION COLIS PERDUS ORLY\n`;
     text += `Date de génération: ${formatToday()}\n`;
     text += `Nombre de colis: ${perduOrlyShipments.length} | Valeur totale: ${totalPerduValue.toLocaleString()} €\n\n`;
-    text += `ID | Ref FA (DIGI-NXT) | Commande | Fournisseur | Transitaire | N° suivi / LTA | Valeur (€) | Remarques\n`;
+    text += `Ref FA (DIGI-NXT) | Commande | Fournisseur | Transitaire | N° suivi / LTA | Valeur (€) | Remarques\n`;
     text += `----------------------------------------------------------------------------------------------------\n`;
     perduOrlyShipments.forEach((s) => {
-      text += `${s.id} | ${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${valueOf(s)} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
+      text += `${s.ref_fa_digi_nxt || 'N/A'} | ${s.order_reference} | ${s.supplier} | ${s.carrier} | ${s.tracking_no} | ${valueOf(s)} € | ${s.remarks || 'Colis non reçu Orly'}\n`;
     });
 
     navigator.clipboard
@@ -238,7 +239,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   // Export CSV (UTF-8 with BOM so Excel keeps the accents)
   const exportCSV = (list: Shipment[], filePrefix: string) => {
     const headers = [
-      'ID',
       'Mode',
       'Fournisseur',
       'Ref commande',
@@ -258,7 +258,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
     ];
 
     const rows = list.map((s) => [
-      s.id,
       s.mode,
       s.supplier,
       s.order_reference,
@@ -681,6 +680,11 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                             }}
                             className="w-28 rounded-lg border border-slate-200 bg-white px-2 py-1 font-mono text-[11px] text-slate-800 shadow-2xs focus:border-[#623387] focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
+                          {shp.confirmed_at && (
+                            <span title="Expédition confirmée : factures et colis verrouillés" className="ml-1 inline-flex align-middle text-emerald-600">
+                              <Lock className="h-3.5 w-3.5" />
+                            </span>
+                          )}
                         </td>
 
                         {/* DEPART MADA */}
@@ -902,7 +906,6 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-bold dark:bg-slate-900 dark:text-slate-300">
                       <tr>
-                        <th className="px-3 py-2.5">N° expédition</th>
                         <th className="px-3 py-2.5 text-sky-700 dark:text-sky-400">
                           Ref FA (DIGI - NXT)
                         </th>
@@ -917,16 +920,13 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                       {perduOrlyShipments.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
+                          <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
                             Aucun colis au statut "Perdu Orly". Tout est en ordre !
                           </td>
                         </tr>
                       ) : (
                         perduOrlyShipments.map((s) => (
                           <tr key={s.id} className="hover:bg-rose-50/40 dark:hover:bg-rose-950/20">
-                            <td className="px-3 py-2.5 font-bold font-mono text-slate-900 dark:text-slate-100">
-                              {s.id}
-                            </td>
                             <td className="px-3 py-2.5 font-mono font-extrabold text-sky-700 dark:text-sky-300">
                               {s.ref_fa_digi_nxt || '—'}
                             </td>
