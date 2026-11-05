@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, Camera, CheckCircle2, ChevronDown, ChevronRight, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
 import type { ParcelDestination } from '../lib/parcelTracking';
-import { Shipment } from '../types';
+import { Shipment, shipmentLabel } from '../types';
 import { compareDateDesc } from '../lib/dateFormat';
 import { Parcel, formatDate } from './digiApi';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
@@ -250,7 +250,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                               onClick={() => onOpenShipment(s.id)}
                               className="mr-1 font-mono font-semibold text-[#623387] hover:underline dark:text-[#B688FF]"
                             >
-                              {s.id}
+                              {shipmentLabel(s)}
                             </button>
                           ))}
                     </td>

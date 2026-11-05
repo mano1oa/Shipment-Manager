@@ -11,6 +11,7 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { AIAssistantBubble } from './components/AIAssistantBubble';
 import { SettingsView } from './components/SettingsView';
 import { DigiInvoicesView } from './components/DigiInvoicesView';
+import { ReceivedArticlesView } from './components/ReceivedArticlesView';
 import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
 import { evaluateParcelAlerts } from './lib/parcelAlerts';
 import { DEFAULT_TRACKING_SETTINGS } from './lib/parcelTracking';
@@ -18,7 +19,7 @@ import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
 import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
 import { evaluateShipmentRules } from './lib/rulesEngine';
-import { Shipment, UserRole, MetricSummary, shipmentValue } from './types';
+import { Shipment, UserRole, MetricSummary, shipmentValue, shipmentLabel } from './types';
 import { CheckCircle2, AlertCircle, LayoutDashboard, BarChart3 } from 'lucide-react';
 
 type AuthUser = {
@@ -100,7 +101,8 @@ useEffect(() => {
   const [isLoadingDb, setIsLoadingDb] = useState(false);
 
   // Load live data from Neon PostgreSQL on startup - Neon is the sole source of truth
-  const loadShipmentsFromNeon = async () => {
+  const loadShipmentsFromNeon = async (): Promise<Shipment[] | null> => {
+    let loaded: Shipment[] | null = null;
     setIsLoadingDb(true);
     setShipmentsError(null);
     try {
@@ -111,7 +113,13 @@ useEffect(() => {
 
       if (res.ok && data.success && Array.isArray(data.shipments)) {
         setShipments(data.shipments);
+        // The open detail view follows (confirmation, invoices added or removed)
+        setSelectedShipment((prev) => {
+          const fresh = prev && (data.shipments as Shipment[]).find((s) => s.id === prev.id);
+          return fresh ? { ...fresh, alerts: prev.alerts } : prev;
+        });
         setDbConnected(true);
+        loaded = data.shipments;
         console.log(`[Neon DB] ${data.shipments.length} expédition(s) chargée(s) depuis Neon.`);
       } else {
         const errorMsg =
@@ -133,6 +141,7 @@ useEffect(() => {
     } finally {
       setIsLoadingDb(false);
     }
+    return loaded;
   };
 
   /** Phone / tablet: side menu opened from the top bar. */
@@ -189,7 +198,7 @@ useEffect(() => {
       if (selectedShipment?.id === shipmentId) {
         setSelectedShipment(null);
       }
-      showToast(`✅ Expédition ${shipmentId} supprimée de Neon PostgreSQL.`);
+      showToast(`✅ Expédition ${shipmentLabel(shipments.find((s) => s.id === shipmentId), shipmentId)} supprimée de Neon PostgreSQL.`);
     } catch (err: any) {
       showToast(`❌ Erreur réseau lors de la suppression de ${shipmentId}: ${err?.message || 'Erreur inconnue'}`);
     }
@@ -400,7 +409,7 @@ useEffect(() => {
       setShipments((prev) => prev.map((s) => (s.id === savedShipment.id ? savedShipment : s)));
       // Refresh the open detail view only: inline edits in the lists must not open it
       setSelectedShipment((prev) => (prev && prev.id === savedShipment.id ? savedShipment : prev));
-      showToast(`✅ Expédition ${savedShipment.id} mise à jour dans Neon PostgreSQL.`);
+      showToast(`✅ Expédition ${shipmentLabel(savedShipment)} mise à jour dans Neon PostgreSQL.`);
     } catch (err: any) {
       showToast(`❌ Erreur réseau lors de la mise à jour: ${err?.message || 'Erreur inconnue'}`);
     }
@@ -497,9 +506,9 @@ useEffect(() => {
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
-    supply_chain: ['dashboard', 'air', 'sea', 'digi', 'alerts', 'settings'],
-    sourcing: ['dashboard', 'air', 'sea', 'digi', 'alerts'],
-    direction: ['dashboard', 'air', 'sea'], // read only (canEdit false)
+    supply_chain: ['dashboard', 'air', 'sea', 'digi', 'received', 'alerts', 'settings'],
+    sourcing: ['dashboard', 'air', 'sea', 'digi', 'received', 'alerts'],
+    direction: ['dashboard', 'air', 'sea', 'received'], // read only (canEdit false)
   }), []);
 
   const allowedTabs = allowedTabsByRole[currentRole];
@@ -722,6 +731,8 @@ if (!authUser) {
             />
           )}
 
+          {activeTab === 'received' && <ReceivedArticlesView canEdit={canEdit} onOpenShipment={openShipmentById} />}
+
           {activeTab === 'alerts' && (
             <AlertsCenterView
               alerts={allAlertsWithResolved}
@@ -774,9 +785,12 @@ if (!authUser) {
           onClose={() => setShowNewModal(false)}
           onDone={async (shipmentId, emptied) => {
             setShowNewModal(false);
-            await loadShipmentsFromNeon();
+            const list = await loadShipmentsFromNeon();
             loadParcels();
-            showToast(`✅ Expédition ${shipmentId} créée.`);
+            // Opened at once: Supply Chain checks it, then confirms it
+            const created = list?.find((s) => s.id === shipmentId);
+            if (created) setSelectedShipment(created);
+            showToast(`✅ Expédition ${shipmentLabel(created, shipmentId)} créée : vérifiez-la puis confirmez-la.`);
             await offerToDeleteEmptied(emptied);
           }}
         />

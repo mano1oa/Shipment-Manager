@@ -155,6 +155,9 @@ export interface Shipment {
   legacy_global_status?: string | null;
   /** Saved before the parcel model and not departed: to regroup or delete. */
   needs_review?: boolean;
+  /** Confirmed by Supply Chain: no invoice or parcel can be added or removed (read only). */
+  confirmed_at?: string | null;
+  confirmed_by_email?: string | null;
   // Computed by the API from the linked DIGI invoices (read only)
   digi_invoice_count?: number;
   digi_invoice_total?: number | null;
@@ -166,6 +169,12 @@ export interface Shipment {
  */
 export function shipmentValue(s: Pick<Shipment, 'digi_invoice_total' | 'cost_eur'>): number {
   return s.digi_invoice_total ?? (Number(s.cost_eur) || 0);
+}
+
+/** Name of a shipment: its Réf FA DIGI-NXT, the internal id for the former ones without. */
+export function shipmentLabel(s: Pick<Shipment, 'id' | 'ref_fa_digi_nxt'> | undefined, fallbackId = ''): string {
+  if (!s) return fallbackId;
+  return s.ref_fa_digi_nxt?.trim() ? `FA ${s.ref_fa_digi_nxt.trim()}` : s.id;
 }
 
 export interface SeaTrackingEvent {

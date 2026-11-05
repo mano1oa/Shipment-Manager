@@ -1,9 +1,15 @@
-import { getShipmentByIdFromNeon, upsertShipmentInNeon, findShipmentByRefFa } from '../db/shipments.js';
+import {
+  getShipmentByIdFromNeon,
+  upsertShipmentInNeon,
+  findShipmentByRefFa,
+  setShipmentConfirmation,
+} from '../db/shipments.js';
 import { assignInvoiceToShipment, getDigiInvoice, listDigiInvoicesForShipment } from '../db/digiInvoices.js';
 import type { DigiInvoiceRecord } from '../db/digiInvoices.js';
 import { writeAuditLog, AuditActor } from '../db/audit.js';
-import { receptionDates } from '../db/parcels.js';
-import { Shipment, TrackingHistoryStep } from '../types.js';
+import { listParcelsForShipment, receptionDates } from '../db/parcels.js';
+import { shipmentChatMessage } from '../lib/shipmentChatMessage.js';
+import { Shipment, TrackingHistoryStep, shipmentLabel } from '../types.js';
 
 /**
  * Shipment Orly → Mada (or Rouen → Mada) = one sale invoice (Réf FA
@@ -38,6 +44,14 @@ export interface NotReceivedInvoice {
 }
 
 const label = (inv: DigiInvoiceRecord) => inv.ref || inv.odoo_move_name || inv.id.slice(0, 8);
+
+/** A confirmed shipment keeps its invoices and parcels until Supply Chain unlocks it. */
+export const confirmedMessage = (s: Pick<Shipment, 'id' | 'ref_fa_digi_nxt'>) =>
+  `L'expédition ${shipmentLabel(s)} est confirmée : ses factures et colis ne peuvent plus changer. Déverrouillez-la d'abord (Supply Chain).`;
+
+function assertNotConfirmed(shipment: Shipment) {
+  if (shipment.confirmed_at) throw new ShipmentGroupingError(confirmedMessage(shipment), 409);
+}
 const now = () => new Date().toISOString().slice(0, 16).replace('T', ' ');
 const isReceived = (inv: DigiInvoiceRecord) => inv.parcel_count > 0 && inv.parcel_received_count === inv.parcel_count;
 
@@ -64,8 +78,8 @@ async function checkInvoices(
     }
     if (inv.shipment_id && inv.shipment_exists && inv.shipment_id !== targetShipmentId) {
       const current = await getShipmentByIdFromNeon(inv.shipment_id);
-      if (current && !current.needs_review) {
-        throw new ShipmentGroupingError(`${name} : déjà dans l'expédition ${inv.shipment_id}.`, 409);
+      if (current && (!current.needs_review || current.confirmed_at)) {
+        throw new ShipmentGroupingError(`${name} : déjà dans l'expédition ${shipmentLabel(current)}.`, 409);
       }
     }
     invoices.push(inv);
@@ -253,6 +267,7 @@ export async function addInvoicesToShipment(
 ): Promise<{ shipment: Shipment; emptied: string[] }> {
   const shipment = await getShipmentByIdFromNeon(shipmentId);
   if (!shipment) throw new ShipmentGroupingError('Expédition introuvable.', 404);
+  assertNotConfirmed(shipment);
   const { invoices, notReceived } = await checkInvoices(invoiceIds, shipmentId, force);
   if (shipment.mode === 'Air') {
     const dates = await receptionDates(invoices.map((i) => i.id));
@@ -286,6 +301,7 @@ export async function addInvoicesToShipment(
 export async function removeInvoiceFromShipment(shipmentId: string, invoiceId: string, actor: AuditActor): Promise<Shipment> {
   const shipment = await getShipmentByIdFromNeon(shipmentId);
   if (!shipment) throw new ShipmentGroupingError('Expédition introuvable.', 404);
+  assertNotConfirmed(shipment);
   const inv = await getDigiInvoice(invoiceId);
   if (!inv || inv.shipment_id !== shipmentId) throw new ShipmentGroupingError('Cette facture n\'est pas dans l\'expédition.', 404);
   await assignInvoiceToShipment(invoiceId, null);
@@ -302,4 +318,98 @@ export async function removeInvoiceFromShipment(shipmentId: string, invoiceId: s
     details: { invoice_id: invoiceId, ref: inv.ref },
   });
   return saved;
+}
+
+export interface ConfirmationOutcome {
+  shipment: Shipment;
+  /** Google Chat memo of the parcels; chat_sent false when not posted (no webhook or rejected). */
+  message: string;
+  chat_sent: boolean;
+  chat_error: string | null;
+}
+
+/** Posts the memo on the Google Chat webhook of the server. */
+async function postToGoogleChat(text: string): Promise<string | null> {
+  const webhook = process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
+  if (!webhook) return 'Webhook Google Chat non configuré (GOOGLE_CHAT_WEBHOOK_URL).';
+  try {
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+      body: JSON.stringify({ text }),
+    });
+    if (res.ok) return null;
+    console.error('[Shipments] Google Chat memo rejected:', res.status, await res.text().catch(() => ''));
+    return `Google Chat a refusé le message (${res.status}).`;
+  } catch (err) {
+    console.error('[Shipments] Google Chat memo failed:', err);
+    return 'Google Chat injoignable.';
+  }
+}
+
+/** Memo of the shipment's parcels, dated by the hand-over at Orly (today when unknown). */
+export async function confirmationMessage(shipment: Shipment): Promise<string> {
+  const [invoices, parcels] = await Promise.all([
+    listDigiInvoicesForShipment(shipment.id),
+    listParcelsForShipment(shipment.id),
+  ]);
+  const date = shipment.orly_scan_date || new Date().toISOString().slice(0, 10);
+  return shipmentChatMessage(
+    date,
+    invoices.map((i) => ({ id: i.id, ref: label(i), supplier: i.supplier_display, amazon_order_ref: i.amazon_order_ref })),
+    parcels.map((p) => ({ tracking_number: p.tracking_number, invoice_ids: p.invoices.map((i) => i.id) })),
+    process.env.ODOO_DEST_PARTNER_NAME?.trim() || 'NextHope'
+  );
+}
+
+/**
+ * Supply Chain confirms the shipment: its invoices and parcels are frozen,
+ * then the memo of its parcels is posted on Google Chat (sent again at each
+ * new confirmation after an unlock).
+ */
+export async function confirmShipment(shipmentId: string, actor: AuditActor): Promise<ConfirmationOutcome> {
+  const shipment = await getShipmentByIdFromNeon(shipmentId);
+  if (!shipment) throw new ShipmentGroupingError('Expédition introuvable.', 404);
+  if (shipment.confirmed_at) throw new ShipmentGroupingError(`L'expédition ${shipmentLabel(shipment)} est déjà confirmée.`, 409);
+  if ((await listDigiInvoicesForShipment(shipmentId)).length === 0) {
+    throw new ShipmentGroupingError('Ajoutez au moins une facture avant de confirmer l\'expédition.');
+  }
+
+  await setShipmentConfirmation(shipmentId, actor.email);
+  const message = await confirmationMessage(shipment);
+  const chatError = await postToGoogleChat(message);
+  const history = [
+    ...(shipment.history || []),
+    {
+      date: now(),
+      location: '',
+      status: 'Expédition confirmée',
+      details: `Factures et colis verrouillés par ${actor.email}${chatError ? ` (message Google Chat non envoyé : ${chatError})` : ', message Google Chat envoyé'}`,
+    },
+  ];
+  await upsertShipmentInNeon({ ...shipment, history });
+  await writeAuditLog({
+    entityType: 'SHIPMENT',
+    entityId: shipmentId,
+    action: 'CONFIRM_SHIPMENT',
+    actor,
+    details: { chat_sent: !chatError, chat_error: chatError },
+  });
+  const saved = await getShipmentByIdFromNeon(shipmentId);
+  return { shipment: saved!, message, chat_sent: !chatError, chat_error: chatError };
+}
+
+/** Supply Chain unlocks a confirmed shipment to correct its invoices or parcels. */
+export async function unlockShipment(shipmentId: string, actor: AuditActor): Promise<Shipment> {
+  const shipment = await getShipmentByIdFromNeon(shipmentId);
+  if (!shipment) throw new ShipmentGroupingError('Expédition introuvable.', 404);
+  if (!shipment.confirmed_at) return shipment;
+  await setShipmentConfirmation(shipmentId, null);
+  const history = [
+    ...(shipment.history || []),
+    { date: now(), location: '', status: 'Expédition déverrouillée', details: `Par ${actor.email}` },
+  ];
+  await upsertShipmentInNeon({ ...shipment, history });
+  await writeAuditLog({ entityType: 'SHIPMENT', entityId: shipmentId, action: 'UNLOCK_SHIPMENT', actor, details: {} });
+  return (await getShipmentByIdFromNeon(shipmentId))!;
 }

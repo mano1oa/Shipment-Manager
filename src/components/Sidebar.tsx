@@ -8,6 +8,7 @@ import {
   PlusCircle,
   Database,
   ReceiptText,
+  ClipboardCheck,
 } from 'lucide-react';
 import { UserRole } from '../types';
 
@@ -17,6 +18,7 @@ export type NavTab =
   | 'air'
   | 'sea'
   | 'digi'
+  | 'received'
   | 'alerts'
   | 'settings';
 
@@ -70,6 +72,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: ReceiptText,
       badge: null,
       allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
+    },
+    {
+      id: 'received' as NavTab,
+      label: 'Articles reçus à Madagascar',
+      icon: ClipboardCheck,
+      badge: null,
+      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
     },
     {
       id: 'alerts' as NavTab,

@@ -577,7 +577,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:flex-row">
           {/* Photo viewer */}
           <div
-            className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
+            className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();

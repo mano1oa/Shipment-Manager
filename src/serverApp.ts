@@ -141,8 +141,13 @@ import {
   createShipmentFromInvoices,
   addInvoicesToShipment,
   removeInvoiceFromShipment,
+  confirmShipment,
+  unlockShipment,
+  confirmedMessage,
   ShipmentGroupingError,
 } from './services/digiShipments.js';
+import { findConfirmedShipmentOfInvoices } from './db/shipments.js';
+import { listReceivedArticles, setLineReceipt } from './db/lineReceipts.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 import { runParcelLossCheck } from './services/parcelLossNotifier.js';
 
@@ -1842,6 +1847,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(400).json({ success: false, error: 'no_shipment doit être un booléen.' });
     }
     try {
+      if (await refuseIfConfirmed([req.params.id], res)) return;
       const outcome = await setInvoiceNoShipment(req.params.id, noShipment);
       if (!outcome) {
         return res.status(404).json({ success: false, error: 'Facture introuvable' });
@@ -1877,6 +1883,69 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     console.error('[Shipments] Grouping error:', err);
     return res.status(500).json({ success: false, error: fallback });
   };
+
+  /** Sends a 409 and returns true when one of the invoices is in a confirmed shipment (frozen lines and parcels). */
+  const refuseIfConfirmed = async (invoiceIds: string[], res: any): Promise<boolean> => {
+    const locked = await findConfirmedShipmentOfInvoices(invoiceIds);
+    if (!locked) return false;
+    res.status(409).json({ success: false, error: confirmedMessage(locked) });
+    return true;
+  };
+
+  // Confirmation: frozen invoices and parcels, memo of the parcels on Google Chat
+  app.post('/api/shipments/:id/confirm', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    try {
+      return res.json({ success: true, ...(await confirmShipment(req.params.id, req.user)) });
+    } catch (err: any) {
+      return sendGroupingError(res, err, 'Impossible de confirmer l\'expédition');
+    }
+  });
+
+  app.post('/api/shipments/:id/unlock', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    try {
+      return res.json({ success: true, shipment: await unlockShipment(req.params.id, req.user) });
+    } catch (err: any) {
+      return sendGroupingError(res, err, 'Impossible de déverrouiller l\'expédition');
+    }
+  });
+
+  // Arrival check in Madagascar: goods lines of the confirmed shipments and their received quantities
+  app.get('/api/received-articles', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
+    const shipmentId = typeof req.query?.shipment_id === 'string' ? req.query.shipment_id.slice(0, 50) : undefined;
+    try {
+      return res.json({ success: true, articles: await listReceivedArticles(shipmentId) });
+    } catch (err: any) {
+      console.error('[Receipts] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les articles' });
+    }
+  });
+
+  app.put('/api/received-articles', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const { invoice_id: invoiceId, position, quantity_received: raw } = req.body || {};
+    if (typeof invoiceId !== 'string' || !UUID_RE.test(invoiceId) || !Number.isInteger(position)) {
+      return res.status(404).json({ success: false, error: 'Article introuvable' });
+    }
+    const quantity = raw === null || raw === '' ? null : Number(raw);
+    if (quantity !== null && (!Number.isFinite(quantity) || quantity < 0 || quantity > 1e9)) {
+      return res.status(400).json({ success: false, error: 'Quantité reçue invalide.' });
+    }
+    try {
+      if (!(await setLineReceipt(invoiceId, position, quantity, req.user.email))) {
+        return res.status(409).json({ success: false, error: 'Article introuvable ou expédition pas encore confirmée.' });
+      }
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: invoiceId,
+        action: 'SET_RECEIVED_QUANTITY',
+        actor: req.user,
+        details: { position, quantity_received: quantity },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Receipts] Save error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la quantité reçue' });
+    }
+  });
 
   /**
    * New shipment from invoices received at the hub, with its Réf FA DIGI-NXT.
@@ -1963,6 +2032,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
 
     try {
+      if (await refuseIfConfirmed([req.params.id], res)) return;
       const found = await updateDigiInvoice(req.params.id, value, req.user.email);
       if (!found) {
         return res.status(404).json({ success: false, error: 'Facture introuvable' });
@@ -2038,6 +2108,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (req.user.role !== 'SUPPLY_CHAIN' && current.validation_status === 'validated') {
         return res.status(403).json({ success: false, error: 'Facture validée : seule la Supply Chain peut la modifier.' });
       }
+      if (await refuseIfConfirmed([req.params.id], res)) return;
       await updateDirectInvoice(req.params.id, value, req.user.email, req.user.role === 'SUPPLY_CHAIN');
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
@@ -2094,6 +2165,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(400).json({ success: false, error: 'Tri invalide.' });
     }
     try {
+      if (await refuseIfConfirmed([req.params.id], res)) return;
       const outcome = await setInvoiceTriage(req.params.id, triage, req.user.email);
       if (!outcome) return res.status(404).json({ success: false, error: 'Facture introuvable' });
       await writeAuditLog({
@@ -2137,6 +2209,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
       return undefined;
     }
+    if (await refuseIfConfirmed(invoiceIds, res)) return undefined;
     return supplier;
   };
 
@@ -2366,11 +2439,16 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       const counts: Record<string, number> = {};
       for (const g of groups.values()) {
         const all = Array.from(new Map(g.sources.flatMap(invoicesOf).map((inv) => [inv.id, inv])).values());
-        const goods = all.filter((inv) => inv.triage !== 'services');
-        const refs = goods.map((inv) => inv.ref || '—');
+        const notServices = all.filter((inv) => inv.triage !== 'services');
+        // Invoices of a confirmed shipment keep their parcels
+        const locked = new Set<string>();
+        for (const inv of notServices) if (await findConfirmedShipmentOfInvoices([inv.id])) locked.add(inv.id);
+        const goods = notServices.filter((inv) => !locked.has(inv.id));
+        const refs = (goods.length > 0 ? goods : notServices).map((inv) => inv.ref || '—');
         let outcome: AmazonImportOutcome;
         if (all.length === 0) outcome = 'unknown_order';
-        else if (goods.length === 0) outcome = 'services';
+        else if (notServices.length === 0) outcome = 'services';
+        else if (goods.length === 0) outcome = 'locked';
         else {
           const ids = goods.map((inv) => inv.id);
           const existing = await findByTrackingNumber(g.number);
@@ -2464,6 +2542,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (parcel.status !== 'to_receive' && req.user.role !== 'SUPPLY_CHAIN') {
         return res.status(403).json({ success: false, error: 'Colis déjà traité à Orly : seule la Supply Chain peut le retirer.' });
       }
+      if (await refuseIfConfirmed([req.params.invoiceId], res)) return;
       const outcome = await unlinkParcelInvoice(req.params.id, req.params.invoiceId);
       if (!outcome.unlinked) return res.status(404).json({ success: false, error: 'Ce colis n\'est pas rattaché à cette facture' });
       await removePhotoObjects(outcome.photo_keys);
@@ -2904,6 +2983,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!current) {
         return res.status(404).json({ success: false, error: 'Facture introuvable' });
       }
+      if (await refuseIfConfirmed([req.params.id], res)) return;
       // An Odoo invoice still in Odoo would come back at the next sync
       if (current.source === 'odoo' && !current.odoo_missing) {
         return res.status(409).json({
@@ -3174,6 +3254,16 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (req.body?.global_status !== undefined && !isShipmentStatus(req.body.global_status)) {
         return res.status(400).json({ success: false, error: 'Statut d\'expédition invalide.' });
       }
+      // Order reference and LTA: Supply Chain only
+      const user = (req as any).user;
+      if (
+        user?.role !== 'SUPPLY_CHAIN' &&
+        (['order_reference', 'bl_awb'] as const).some(
+          (key) => req.body?.[key] !== undefined && (req.body[key] || '') !== (previous[key] || '')
+        )
+      ) {
+        return res.status(403).json({ success: false, error: 'Seule la Supply Chain modifie la référence d\'ordre et la LTA.' });
+      }
       const data = applyAutomaticShipmentStatus({ ...req.body, id: req.params.id });
       const saved = await upsertShipmentInNeon(data);
 
@@ -3215,6 +3305,9 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       const previous = await getShipmentByIdFromNeon(req.params.id);
       if (!previous) {
         return res.status(404).json({ success: false, error: 'Expédition introuvable' });
+      }
+      if (previous.confirmed_at) {
+        return res.status(409).json({ success: false, error: confirmedMessage(previous) });
       }
 
       await deleteShipmentInNeon(req.params.id);
