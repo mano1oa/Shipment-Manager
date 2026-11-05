@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Combine,
   FileSpreadsheet,
   Layers,
   Loader2,
@@ -21,6 +22,8 @@ import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/p
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { BoxesBadge } from './BoxesBadge';
+import { MergeParcelModal } from './MergeParcelModal';
+import { findMergeSuspects } from '../lib/parcelBoxes';
 import { AmazonReportImportModal } from './AmazonReportImportModal';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
@@ -106,6 +109,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [amazonOpen, setAmazonOpen] = useState(false);
   /** Parcel whose contents are shown under its row. */
   const [openId, setOpenId] = useState<string | null>(null);
+  /** "Fusionner dans le colis principal…": the parcel to merge, and the main parcel proposed. */
+  const [mergeOf, setMergeOf] = useState<{ parcel: Parcel; principalId: string | null } | null>(null);
+  const [showSuspects, setShowSuspects] = useState(false);
 
   const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
     useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
@@ -124,6 +130,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
     }),
     [own, settings]
   );
+
+  // A lost parcel and parcels created at a point for the same invoice: probably boxes of one shipment
+  const suspects = useMemo(() => (isSupplyChain ? findMergeSuspects(own) : []), [own, isSupplyChain]);
 
   const suppliers = useMemo(
     () => Array.from(new Set<string>(own.map((p) => p.supplier_name || '—'))).sort((a, b) => a.localeCompare(b, 'fr')),
@@ -250,6 +259,42 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </button>
         ))}
       </div>
+
+      {suspects.length > 0 && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
+          <button onClick={() => setShowSuspects((v) => !v)} className="flex w-full items-center gap-2 text-left font-bold">
+            <Combine className="h-4 w-4 shrink-0" />
+            Colis à fusionner ? {suspects.length} facture(s) ont un colis perdu et des colis créés au point (même fournisseur,
+            même transporteur) : ce sont peut-être les boîtes d'un même envoi.
+            {showSuspects ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+          </button>
+          {showSuspects && (
+            <ul className="mt-2 space-y-2">
+              {suspects.map((s) => (
+                <li key={`${s.invoice_id}-${s.principal.id}`} className="rounded-xl bg-white/70 p-2 dark:bg-slate-900/40">
+                  <div>
+                    Facture <strong>{s.invoice_ref || '—'}</strong> · {s.principal.supplier_name || '—'} · perdu :{' '}
+                    <span className="font-mono font-bold">{s.principal.tracking_number || 'sans n°'}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {s.boxes.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => setMergeOf({ parcel: b, principalId: s.principal.id })}
+                        className="flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-2 py-1 font-semibold hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900"
+                      >
+                        <Combine className="h-3.5 w-3.5" /> Fusionner{' '}
+                        <span className="font-mono">{b.tracking_number || 'sans n°'}</span>
+                        {b.received_at ? ` (reçu le ${formatDate(b.received_at)})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
         <button
@@ -596,6 +641,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
                               <Undo2 className="h-4 w-4" />
                             </button>
                           )}
+                          {isSupplyChain && p.status !== 'search' && (
+                            <button
+                              onClick={() => setMergeOf({ parcel: p, principalId: null })}
+                              disabled={busy !== null}
+                              title="Fusionner dans le colis principal… (boîte d'un envoi de plusieurs boîtes, créée à part)"
+                              className={`${iconButton} hover:text-[#623387]`}
+                            >
+                              <Combine className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -617,6 +672,24 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      {mergeOf && (
+        <MergeParcelModal
+          merged={mergeOf.parcel}
+          parcels={own}
+          initialPrincipalId={mergeOf.principalId}
+          onClose={() => setMergeOf(null)}
+          onMerged={(principal) => {
+            setActionMessage(
+              `Colis ${mergeOf.parcel.tracking_number || 'sans n°'} fusionné dans ${principal.tracking_number || 'le colis principal'} : ${
+                principal.boxes.length
+              } boîte(s) reçue(s)${principal.boxes_expected ? ` sur ${principal.boxes_expected}` : ''}.`
+            );
+            setMergeOf(null);
+            onReload();
+          }}
+        />
+      )}
 
       {photosOf && (
         <ParcelPhotosModal
