@@ -6,6 +6,7 @@ import {
   ChevronsUpDown,
   ClipboardCheck,
   Loader2,
+  Lock,
   Package,
   Plus,
   Printer,
@@ -14,7 +15,7 @@ import {
   Undo2,
   X,
 } from 'lucide-react';
-import { Shipment } from '../types';
+import { Shipment, shipmentLabel } from '../types';
 import { parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import {
   DigiInvoice,
@@ -29,6 +30,8 @@ import {
 } from './digiApi';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ShipmentInvoicesModal } from './ShipmentInvoicesModal';
+import { ReceivedArticle, articleKey, fetchReceivedArticles, receivedGap } from './shipmentApi';
+import { ReceivedQuantityInput } from './ReceivedQuantityInput';
 
 interface Props {
   shipment: Shipment;
@@ -36,6 +39,8 @@ interface Props {
   invoicesError: string | null;
   /** Supply Chain: adds / removes invoices, flags parcels missing on arrival. */
   isSupplyChain: boolean;
+  /** Sourcing and Supply Chain: type the quantities received in Madagascar. */
+  canEditReceipts: boolean;
   shipments: Shipment[];
   /** Invoices or parcels changed: reload the shipment, its invoices and the parcels. */
   onChanged: (emptied?: string[]) => void;
@@ -51,9 +56,11 @@ interface ControlArticle {
   invoice: string;
   name: string;
   quantity: number;
+  /** Typed on arrival (confirmed shipment), null while not checked. */
+  received: number | null;
 }
 
-const controlArticles = (invoices: DigiInvoice[]): ControlArticle[] =>
+const controlArticles = (invoices: DigiInvoice[], received: Map<string, ReceivedArticle>): ControlArticle[] =>
   invoices.flatMap((inv) =>
     inv.lines
       .filter((line) => !line.is_service)
@@ -63,6 +70,7 @@ const controlArticles = (invoices: DigiInvoice[]): ControlArticle[] =>
         invoice: inv.ref || inv.odoo_move_name || '—',
         name: line.name,
         quantity: line.quantity,
+        received: received.get(articleKey({ invoice_id: inv.id, position: line.position }))?.quantity_received ?? null,
       }))
   );
 
@@ -82,21 +90,22 @@ function printControlSheet(shipment: Shipment, parcels: Parcel[], articles: Cont
       (a) =>
         `<tr>${box}<td>${escapeHtml(a.name)}</td><td class="num">${escapeHtml(formatQuantity(a.quantity))}</td><td>${escapeHtml(
           a.supplier
-        )}</td><td>${escapeHtml(a.invoice)}</td><td></td></tr>`
+        )}</td><td>${escapeHtml(a.invoice)}</td><td class="num">${a.received === null ? '' : escapeHtml(formatQuantity(a.received))}</td></tr>`
     )
     .join('');
   const subtitle = [
-    shipment.ref_fa_digi_nxt && `FA ${shipment.ref_fa_digi_nxt}`,
+    shipment.order_reference && `Réf. ordre ${shipment.order_reference}`,
     shipment.bl_awb && `LTA/BL ${shipment.bl_awb}`,
     shipment.carrier,
   ]
     .filter(Boolean)
     .join(' · ');
-  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Contrôle ${escapeHtml(shipment.id)}</title>
+  const name = shipmentLabel(shipment);
+  const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Contrôle ${escapeHtml(name)}</title>
 <style>body{font:11px Arial,sans-serif;margin:16px;color:#111}h1{font-size:16px;margin:0}h2{font-size:13px;margin:18px 0 6px}
 p{margin:2px 0;color:#555}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:4px 6px;text-align:left;vertical-align:top}
 th{background:#f1f1f1}td.box{width:18px}td.num{text-align:right;white-space:nowrap}.mono{font-family:monospace}</style></head><body>
-<h1>Contrôle de réception à Madagascar — ${escapeHtml(shipment.id)}</h1><p>${escapeHtml(subtitle)}</p>
+<h1>Contrôle de réception à Madagascar — ${escapeHtml(name)}</h1><p>${escapeHtml(subtitle)}</p>
 <p>${parcels.length} colis · ${articles.length} article(s). Cochez ce qui est reçu, notez les écarts.</p>
 <h2>Colis (${parcels.length})</h2><table><tr><th></th><th>N° de suivi</th><th>Fournisseur</th><th>Factures</th><th>Remarque</th></tr>${parcelRows}</table>
 <h2>Articles (${articles.length})</h2><table><tr><th></th><th>Article</th><th>Qté</th><th>Fournisseur</th><th>Facture</th><th>Qté reçue</th></tr>${articleRows}</table>
@@ -123,18 +132,26 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
   invoices,
   invoicesError,
   isSupplyChain,
+  canEditReceipts,
   shipments,
   onChanged,
 }) => {
   const hub = shipment.mode === 'Air' ? 'Orly' : 'Rouen';
+  const locked = Boolean(shipment.confirmed_at);
+  const canChange = isSupplyChain && !locked;
   const [parcels, setParcels] = useState<Parcel[] | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showControl, setShowControl] = useState(false);
-  const articles = useMemo(() => controlArticles(invoices || []), [invoices]);
+  const [showControl, setShowControl] = useState(locked);
+  /** Received quantities of a confirmed shipment, by invoice + line position. */
+  const [received, setReceived] = useState<Map<string, ReceivedArticle>>(new Map());
+  const articles = useMemo(() => controlArticles(invoices || [], received), [invoices, received]);
   const allOpen = Boolean(invoices && invoices.length > 0 && invoices.every((i) => open.has(i.id)));
+  const receivedList = useMemo(() => Array.from(received.values()) as ReceivedArticle[], [received]);
+  const checked = receivedList.filter((a) => a.quantity_received !== null);
+  const gaps = checked.filter((a) => receivedGap(a) !== 0).length;
 
   const loadParcels = useCallback(() => {
     fetchShipmentParcels(shipment.id)
@@ -143,6 +160,20 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
   }, [shipment.id]);
 
   useEffect(loadParcels, [loadParcels, invoices]);
+
+  useEffect(() => {
+    if (!locked) {
+      setReceived(new Map());
+      return;
+    }
+    setShowControl(true);
+    fetchReceivedArticles(shipment.id)
+      .then((list) => setReceived(new Map(list.map((a) => [articleKey(a), a]))))
+      .catch((err) => setError(err.message));
+  }, [shipment.id, locked, invoices]);
+
+  const updateReceived = (a: ReceivedArticle, quantity: number | null) =>
+    setReceived((prev) => new Map(prev).set(articleKey(a), { ...a, quantity_received: quantity }));
 
   const toggle = (id: string) =>
     setOpen((prev) => {
@@ -153,7 +184,7 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
     });
 
   const handleRemove = async (inv: DigiInvoice) => {
-    if (!window.confirm(`Retirer la facture ${inv.ref || ''} de l'expédition ${shipment.id} ? Elle redevient à expédier.`)) return;
+    if (!window.confirm(`Retirer la facture ${inv.ref || ''} de l'expédition ${shipmentLabel(shipment)} ? Elle redevient à expédier.`)) return;
     setBusy(inv.id);
     setError(null);
     try {
@@ -204,7 +235,7 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
               {allOpen ? 'Tout replier' : 'Tout déplier'}
             </button>
           )}
-          {isSupplyChain && (
+          {canChange && (
             <button
               onClick={() => setAdding(true)}
               className="flex items-center gap-1 rounded-lg bg-[#623387] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#522870]"
@@ -217,11 +248,19 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
 
       {(invoicesError || error) && <p className="mb-2 text-xs text-rose-600">{invoicesError || error}</p>}
 
+      {locked && (
+        <p className="mb-3 flex items-center gap-1.5 rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:bg-slate-900 dark:text-slate-300">
+          <Lock className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+          Expédition confirmée : plus d'ajout ni de retrait de factures ou de colis.
+          {isSupplyChain && ' Déverrouillez-la (en haut) pour corriger.'}
+        </p>
+      )}
+
       {invoices === null ? (
         <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
       ) : invoices.length === 0 ? (
         <p className="text-xs text-slate-400">
-          Aucune facture dans cette expédition.{isSupplyChain && ' Ajoutez les factures reçues à ' + hub + '.'}
+          Aucune facture dans cette expédition.{canChange && ' Ajoutez les factures reçues à ' + hub + '.'}
         </p>
       ) : (
         <div className="divide-y divide-slate-100 text-xs dark:divide-slate-700/60">
@@ -246,7 +285,7 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
                   <span className="ml-auto font-semibold text-slate-800 dark:text-slate-100">
                     {formatAmount(inv.amount_total)} {inv.currency === 'USD' ? '$' : '€'}
                   </span>
-                  {isSupplyChain && (
+                  {canChange && (
                     <button
                       onClick={() => handleRemove(inv)}
                       disabled={busy === inv.id}
@@ -348,9 +387,22 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
             className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
           >
             {showControl ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            <ClipboardCheck className="h-3.5 w-3.5" /> Contrôle à l'arrivée : {parcels?.length ?? '…'} colis ·{' '}
+            <ClipboardCheck className="h-3.5 w-3.5" /> Contrôle à la réception : {parcels?.length ?? '…'} colis ·{' '}
             {articles.length} article(s)
           </button>
+          {locked && articles.length > 0 && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                checked.length < articles.length
+                  ? 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+                  : gaps > 0
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+              }`}
+            >
+              {checked.length}/{articles.length} contrôlé(s){gaps > 0 ? ` · ${gaps} écart(s)` : ''}
+            </span>
+          )}
           <button
             onClick={() => {
               if (!printControlSheet(shipment, parcels || [], articles)) setError('Autorisez les fenêtres pop-up pour imprimer.');
@@ -361,9 +413,50 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
             <Printer className="h-3 w-3" /> Imprimer la liste de contrôle
           </button>
         </div>
+        {showControl && !locked && articles.length > 0 && (
+          <p className="mt-2 text-[11px] text-slate-500">
+            Les quantités reçues se saisissent une fois l'expédition confirmée.
+          </p>
+        )}
         {showControl &&
           (articles.length === 0 ? (
             <p className="mt-2 text-xs text-slate-400">Aucun article : factures sans lignes (hors DIGI) ou pas encore chargées.</p>
+          ) : locked ? (
+            <table className="mt-2 w-full text-left text-xs">
+              <thead className="text-[10px] uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="py-1 pr-2">Article</th>
+                  <th className="px-2 py-1">Fournisseur</th>
+                  <th className="px-2 py-1">Facture</th>
+                  <th className="w-16 px-2 py-1 text-right">Qté</th>
+                  <th className="w-24 px-2 py-1 text-right">Qté reçue</th>
+                  <th className="w-14 py-1 pl-2 text-right">Écart</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
+                {receivedList.map((a) => {
+                  const gap = receivedGap(a);
+                  return (
+                    <tr key={articleKey(a)} className="text-slate-700 dark:text-slate-200">
+                      <td className="py-1 pr-2">{a.name}</td>
+                      <td className="px-2 py-1">{a.supplier || '—'}</td>
+                      <td className="px-2 py-1 text-slate-500">{a.invoice_ref || '—'}</td>
+                      <td className="px-2 py-1 text-right font-semibold">{formatQuantity(a.quantity)}</td>
+                      <td className="px-2 py-1 text-right">
+                        <ReceivedQuantityInput article={a} canEdit={canEditReceipts} onSaved={(q) => updateReceived(a, q)} />
+                      </td>
+                      <td
+                        className={`py-1 pl-2 text-right font-semibold ${
+                          gap === null ? 'text-slate-300' : gap === 0 ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {gap === null ? '—' : gap > 0 ? `+${formatQuantity(gap)}` : formatQuantity(gap)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           ) : (
             <table className="mt-2 w-full text-left text-xs">
               <thead className="text-[10px] uppercase tracking-wider text-slate-400">

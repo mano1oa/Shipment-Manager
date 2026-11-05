@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, AlertTriangle, Layers, Loader2, Search, X } from 'lucide-react';
-import { Shipment } from '../types';
+import { Shipment, shipmentLabel } from '../types';
 import {
   DigiInvoice,
   GroupingResult,
@@ -61,7 +61,8 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
   const inOtherShipment = (inv: DigiInvoice) => {
     if (!inv.shipment_id || !inv.shipment_exists) return null;
     if (inv.shipment_id === shipment?.id) return inv.shipment_id;
-    return shipmentById.get(inv.shipment_id)?.needs_review ? null : inv.shipment_id;
+    const current = shipmentById.get(inv.shipment_id);
+    return current?.needs_review && !current.confirmed_at ? null : inv.shipment_id;
   };
 
   const candidates = useMemo(
@@ -162,7 +163,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
             </div>
             <div>
               <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                {shipment ? `Ajouter des factures à ${shipment.id}` : `Nouvelle expédition ${hub} → Madagascar`}
+                {shipment ? `Ajouter des factures à ${shipmentLabel(shipment)}` : `Nouvelle expédition ${hub} → Madagascar`}
               </h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 Regroupement des factures reçues à {hub} : une expédition = une facture de vente (Réf FA DIGI-NXT).

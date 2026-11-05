@@ -44,7 +44,7 @@ import {
   setInvoiceValidation,
   fetchTrackingSettings,
 } from './digiApi';
-import { Shipment } from '../types';
+import { Shipment, shipmentLabel } from '../types';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
 import { DigiImportModal } from './DigiImportModal';
@@ -214,13 +214,15 @@ export const DigiInvoicesView: React.FC<Props> = ({
     to_sort: 'remise à trier',
   };
 
+  const shipmentName = (id: string) => shipmentLabel(shipments.find((s) => s.id === id), id);
+
   const handleTriage = async (inv: DigiInvoice, triage: InvoiceTriage) => {
     if (
       triage === 'services' &&
       inv.shipment_id &&
       inv.shipment_exists &&
       !window.confirm(
-        `Classer la facture ${inv.ref ?? ''} en services ? Elle sera détachée de l'expédition ${inv.shipment_id}, qui reste à supprimer si elle n'a plus lieu d'être.`
+        `Classer la facture ${inv.ref ?? ''} en services ? Elle sera détachée de l'expédition ${shipmentName(inv.shipment_id)}, qui reste à supprimer si elle n'a plus lieu d'être.`
       )
     ) {
       return;
@@ -454,7 +456,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
           className="text-left font-mono font-semibold text-[#623387] hover:underline dark:text-[#B688FF]"
           title={inv.shipment_global_status || undefined}
         >
-          {inv.shipment_id}
+          {shipmentName(inv.shipment_id)}
           <span className="ml-1 font-sans text-[10px] font-normal text-slate-400">{inv.shipment_global_status}</span>
         </button>
       );
