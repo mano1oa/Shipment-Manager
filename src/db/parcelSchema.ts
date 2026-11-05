@@ -154,6 +154,11 @@ export async function initParcelSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_parcel_numbers_parcel ON parcel_numbers (parcel_id);`;
   await runOnce('parcel_boxes_v1', createNumberGuards);
+  // Parcels received before boxes existed: one box per photo of a point, else one
+  // without photo (checked before: 108 received, 104 with one photo, 4 without, none with several)
+  await runOnce('parcel_boxes_backfill_v1', async () => {
+    await sql.transaction(backfillBoxesQueries(null));
+  });
   // Parcels created at a point before the column: found in the audit trail
   await runOnce('parcel_created_at_point_v1', async () => {
     const hasAudit = (await sql`SELECT to_regclass('system_audit_logs') IS NOT NULL AS ok`)[0]?.ok;
@@ -192,6 +197,36 @@ async function runOnce(key: string, conversion: () => Promise<void>): Promise<vo
     await sql`DELETE FROM app_migrations WHERE key = ${key}`;
     throw err;
   }
+}
+
+/**
+ * Boxes for the parcels received before boxes existed: one per photo matched
+ * at a point (date of the point), else one without photo at received_at.
+ * Skips a parcel that already has boxes. `parcelIds` null = every parcel.
+ */
+export function backfillBoxesQueries(parcelIds: string[] | null) {
+  const sql = getDb();
+  const all = parcelIds === null;
+  const ids = parcelIds ?? [];
+  return [
+    sql`
+      INSERT INTO parcel_receptions (parcel_id, point_id, photo_id, received_at, received_by_email, created_at)
+      SELECT p.id, ph.point_id, ph.id, COALESCE(rp.point_date, p.received_at, p.status_changed_at::date),
+        COALESCE(ph.linked_by_email, p.received_by_email), COALESCE(ph.linked_at, NOW())
+      FROM parcels p
+      JOIN parcel_photos ph ON ph.parcel_id = p.id AND ph.point_id IS NOT NULL
+      JOIN reception_points rp ON rp.id = ph.point_id
+      WHERE p.status IN ('received', 'search') AND (${all} OR p.id = ANY(${ids}::uuid[]))
+        AND NOT EXISTS (SELECT 1 FROM parcel_receptions r WHERE r.parcel_id = p.id)
+    `,
+    sql`
+      INSERT INTO parcel_receptions (parcel_id, received_at, received_by_email)
+      SELECT p.id, COALESCE(p.received_at, p.status_changed_at::date, p.created_at::date), p.received_by_email
+      FROM parcels p
+      WHERE p.status IN ('received', 'search') AND (${all} OR p.id = ANY(${ids}::uuid[]))
+        AND NOT EXISTS (SELECT 1 FROM parcel_receptions r WHERE r.parcel_id = p.id)
+    `,
+  ];
 }
 
 /** SQLSTATE raised when a number already belongs to a parcel (see NumberTakenError). */

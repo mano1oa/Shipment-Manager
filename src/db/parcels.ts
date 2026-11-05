@@ -5,7 +5,7 @@ import type { CarrierCode } from '../lib/carrierDetection.js';
 import type { DeliveryType, ParcelDestination, ParcelInput, ParcelStatus, TrackingSettings } from '../lib/parcelTracking.js';
 import { normalizeParcelNumber } from '../lib/parcelBoxes.js';
 import type { ParcelBox, ParcelNumberKind } from '../lib/parcelBoxes.js';
-import { NUMBER_TAKEN_SQLSTATE } from './parcelSchema.js';
+import { NUMBER_TAKEN_SQLSTATE, backfillBoxesQueries } from './parcelSchema.js';
 
 /**
  * Parcels (supplier → Orly): one per tracking number, linked to 1..n invoices
@@ -534,35 +534,8 @@ export function refreshBoxesQuery(parcelId: string, actorEmail: string) {
   `;
 }
 
-/**
- * Boxes for the parcels received before boxes existed: one per photo matched
- * at a point (date of the point), else one without photo at received_at.
- * Skips a parcel that already has boxes. `parcelIds` null = every parcel.
- */
-export function backfillBoxesQueries(parcelIds: string[] | null) {
-  const sql = getDb();
-  const all = parcelIds === null;
-  const ids = parcelIds ?? [];
-  return [
-    sql`
-      INSERT INTO parcel_receptions (parcel_id, point_id, photo_id, received_at, received_by_email, created_at)
-      SELECT p.id, ph.point_id, ph.id, COALESCE(rp.point_date, p.received_at, p.status_changed_at::date),
-        COALESCE(ph.linked_by_email, p.received_by_email), COALESCE(ph.linked_at, NOW())
-      FROM parcels p
-      JOIN parcel_photos ph ON ph.parcel_id = p.id AND ph.point_id IS NOT NULL
-      JOIN reception_points rp ON rp.id = ph.point_id
-      WHERE p.status IN ('received', 'search') AND (${all} OR p.id = ANY(${ids}::uuid[]))
-        AND NOT EXISTS (SELECT 1 FROM parcel_receptions r WHERE r.parcel_id = p.id)
-    `,
-    sql`
-      INSERT INTO parcel_receptions (parcel_id, received_at, received_by_email)
-      SELECT p.id, COALESCE(p.received_at, p.status_changed_at::date, p.created_at::date), p.received_by_email
-      FROM parcels p
-      WHERE p.status IN ('received', 'search') AND (${all} OR p.id = ANY(${ids}::uuid[]))
-        AND NOT EXISTS (SELECT 1 FROM parcel_receptions r WHERE r.parcel_id = p.id)
-    `,
-  ];
-}
+// Boxes of the parcels received before boxes existed (also run once for all, see parcelSchema)
+export { backfillBoxesQueries };
 
 export class BoxError extends Error {
   constructor(message: string, public status = 409, public code?: string) {
