@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, AlertTriangle, Layers, Loader2, Search, X } from 'lucide-react';
 import { Shipment } from '../types';
+import { invoiceBoxesLabel } from '../lib/parcelBoxes';
 import {
   DigiInvoice,
   GroupingResult,
@@ -285,6 +286,8 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
                             : inv.parcel_count === 0
                             ? 'Sans colis'
                             : `${inv.parcel_received_count}/${inv.parcel_count} colis reçu(s)`}
+                          {invoiceBoxesLabel(inv.box_received_count, inv.box_expected_total) &&
+                            ` · ${invoiceBoxesLabel(inv.box_received_count, inv.box_expected_total)}`}
                         </span>
                         {!inv.is_digi && <span className="text-[10px] text-slate-500">hors DIGI</span>}
                         {inv.validation_status === 'pending' && (
@@ -309,6 +312,7 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
               {exception.map((n) => (
                 <li key={n.id}>
                   {n.supplier || '—'} · facture {n.ref || '—'} : {n.parcels_received}/{n.parcels_total} colis reçu(s)
+                  {n.incomplete?.length > 0 && ` · ${n.incomplete.join(', ')}`}
                 </li>
               ))}
             </ul>

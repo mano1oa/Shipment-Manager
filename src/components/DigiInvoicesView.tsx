@@ -53,6 +53,7 @@ import { InvoiceParcelsPanel } from './InvoiceParcelsPanel';
 import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
 import { VALIDATION_STATUS_LABELS, amountInEur, triageDeadline } from '../lib/parcelTracking';
 import type { InvoiceTriage, TrackingSettings } from '../lib/parcelTracking';
+import { invoiceBoxesLabel } from '../lib/parcelBoxes';
 
 interface Props {
   canDelete: boolean;
@@ -483,6 +484,8 @@ export const DigiInvoicesView: React.FC<Props> = ({
         }`}
       >
         {received ? 'Reçue à Orly' : `${inv.parcel_received_count} / ${inv.parcel_count} reçu(s)`}
+        {invoiceBoxesLabel(inv.box_received_count, inv.box_expected_total) &&
+          ` · ${invoiceBoxesLabel(inv.box_received_count, inv.box_expected_total)}`}
       </span>
     );
   };

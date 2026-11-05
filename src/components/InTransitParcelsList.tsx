@@ -4,6 +4,7 @@ import type { ParcelDestination } from '../lib/parcelTracking';
 import { Shipment } from '../types';
 import { compareDateDesc } from '../lib/dateFormat';
 import { Parcel, formatDate } from './digiApi';
+import { BoxesBadge } from './BoxesBadge';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { ParcelFormModal } from './ParcelFormModal';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
@@ -235,7 +236,8 @@ export const InTransitParcelsList: React.FC<Props> = ({
                     <td className="px-3 py-2.5">
                       <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${STAGE_BADGES[stage]}`}>
                         {STAGE_LABELS[stage](hub)}
-                      </span>
+                      </span>{' '}
+                      <BoxesBadge parcel={p} />
                       {p.status === 'received' && p.received_at && (
                         <span className="ml-1 text-[10px] text-slate-400">reçu le {formatDate(p.received_at)}</span>
                       )}

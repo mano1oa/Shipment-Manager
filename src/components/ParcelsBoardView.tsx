@@ -20,6 +20,7 @@ import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabe
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
+import { BoxesBadge } from './BoxesBadge';
 import { AmazonReportImportModal } from './AmazonReportImportModal';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
@@ -62,8 +63,16 @@ export const parcelInvoiceDate = (p: Parcel) =>
 export const parcelMatches = (p: Parcel, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)]
-    .some((v) => v && v.toLowerCase().includes(q));
+  // Other numbers (supplier, carrier, box) find the parcel too, typed with or without spaces
+  const compactQ = q.replace(/[^a-z0-9]/g, '');
+  const numbers = (p.numbers || []).map((n) => n.number);
+  return (
+    [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, ...numbers, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)].some(
+      (v) => v && v.toLowerCase().includes(q)
+    ) ||
+    (compactQ.length >= 4 &&
+      [p.tracking_number, ...numbers].some((v) => v && v.toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactQ)))
+  );
 };
 
 /**
@@ -500,7 +509,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}
                         >
                           {parcelStatusLabel(p.status, p.destination)}
-                        </span>
+                        </span>{' '}
+                        <BoxesBadge parcel={p} />
                         {p.status === 'received' && p.received_at && (
                           <span className="ml-1 text-[10px] text-slate-400">le {formatDate(p.received_at)}</span>
                         )}

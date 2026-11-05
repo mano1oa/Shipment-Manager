@@ -1,4 +1,5 @@
 import { detectTrackingNumber } from './carrierDetection.js';
+import { parcelLossDeadline } from './parcelTracking.js';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from './parcelTracking.js';
 
 /**
@@ -76,21 +77,15 @@ export function invoiceBoxesLabel(received: number, expectedTotal: number | null
 
 /**
  * Date after which a parcel not complete is late: same rule as the automatic
- * loss (markOverdueParcelsLost) — expected delivery + N days, else earliest
+ * loss (parcelLossDeadline) — expected delivery + N days, else earliest
  * invoice date + M days. Null when neither date is known.
  */
 export function lossDeadline(
   p: { expected_delivery: string | null; invoices: { invoice_date: string | null }[] },
-  settings: Pick<TrackingSettings, 'parcel_loss_days_after_eta' | 'parcel_loss_days_without_eta'>
+  settings: TrackingSettings
 ): string | null {
-  const addDays = (iso: string, days: number) => {
-    const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + days);
-    return d.toISOString().slice(0, 10);
-  };
-  if (p.expected_delivery) return addDays(p.expected_delivery, settings.parcel_loss_days_after_eta);
-  const dates = p.invoices.map((i) => i.invoice_date).filter((d): d is string => Boolean(d)).sort();
-  return dates.length > 0 ? addDays(dates[0], settings.parcel_loss_days_without_eta) : null;
+  const firstInvoice = p.invoices.map((i) => i.invoice_date).filter((d): d is string => Boolean(d)).sort()[0] ?? null;
+  return parcelLossDeadline(p.expected_delivery, firstInvoice, settings);
 }
 
 export interface ParcelForPartial {
@@ -102,11 +97,7 @@ export interface ParcelForPartial {
 }
 
 /** "Reçu partiel": received, fewer boxes than expected and the loss delay is over (today > deadline). */
-export function isPartialOverdue(
-  p: ParcelForPartial,
-  settings: Pick<TrackingSettings, 'parcel_loss_days_after_eta' | 'parcel_loss_days_without_eta'>,
-  today: string
-): boolean {
+export function isPartialOverdue(p: ParcelForPartial, settings: TrackingSettings, today: string): boolean {
   if (p.status !== 'received' || p.boxes_expected === null || p.boxes.length === 0) return false;
   if (p.boxes.length >= p.boxes_expected) return false;
   const deadline = lossDeadline(p, settings);
