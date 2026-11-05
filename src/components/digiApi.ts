@@ -1,6 +1,7 @@
 import type { DigiInvoiceInput } from '../lib/digiInvoices';
 import type { DirectInvoiceInput } from '../lib/directInvoices';
 import type { CarrierCode } from '../lib/carrierDetection';
+import type { ParcelBox, ParcelNumberKind } from '../lib/parcelBoxes';
 import type { AmazonImportLine, AmazonImportOutcome, AmazonReportRow } from '../lib/amazonReport';
 import type {
   Currency,
@@ -61,6 +62,11 @@ export interface DigiInvoice {
   triaged_at: string | null;
   parcel_count: number;
   parcel_received_count: number;
+  /** Boxes received for its parcels (one per photo matched at a point). */
+  box_received_count: number;
+  /** Boxes announced in all, null when a parcel has no count. */
+  box_expected_total: number | null;
+  incomplete_parcels: { tracking_number: string | null; received: number; expected: number }[];
   created_by_email: string | null;
   updated_by_email: string | null;
   created_at: string;
@@ -112,7 +118,8 @@ export async function apiJson<T = any>(url: string, init?: RequestInit): Promise
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data?.success) {
-    throw new Error(data?.error || `Erreur ${res.status}`);
+    // `code`: refusal to confirm (e.g. BOXES_EXPECTED_CONFLICT)
+    throw Object.assign(new Error(data?.error || `Erreur ${res.status}`), { code: data?.code as string | undefined });
   }
   return data;
 }
@@ -150,6 +157,8 @@ export interface NotReceivedInvoice {
   supplier: string | null;
   parcels_received: number;
   parcels_total: number;
+  /** "colis 123 : 2/3 boîtes" */
+  incomplete: string[];
 }
 
 /**
@@ -278,6 +287,14 @@ export interface Parcel {
     currency: string;
   }[];
   photo_count: number;
+  /** Boxes announced (optional): "Reçu partiel" alert when fewer arrive in time. */
+  boxes_expected: number | null;
+  /** Boxes received, oldest first (one per photo matched at a point). */
+  boxes: ParcelBox[];
+  /** Other numbers (supplier, carrier, box): any of them finds the parcel. */
+  numbers: { id: string; number: string; kind: ParcelNumberKind }[];
+  /** Created at a reception point (label not found): may be a box of another parcel. */
+  created_at_point: boolean;
   created_by_email: string | null;
   created_at: string;
   updated_at: string;
@@ -401,17 +418,34 @@ export interface PhotoStorageCheck {
 /** Step-by-step check of the Google Drive set-up (Supply Chain). */
 export const checkPhotoStorage = () => apiJson<PhotoStorageCheck>('/api/photos/diagnostic');
 
+/** Optional box fields: number of the box, "x of N" of the label (a different N needs confirmation). */
+export interface PointBoxFields {
+  piece_number?: string | null;
+  box_index?: number | null;
+  boxes_expected?: number | null;
+  confirm_boxes_expected?: boolean;
+}
+
 export type PointPhotoLink =
-  | { parcel_id: string | null }
+  | { parcel_id: null }
+  | ({ parcel_id: string } & PointBoxFields)
   /** Parcel announced without number: the number read on the label completes it. */
-  | { parcel_id: string; tracking_number: string }
-  | { new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } }
+  | ({ parcel_id: string; tracking_number: string } & PointBoxFields)
+  | ({ new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } } & PointBoxFields)
   /** Received before its invoice is in the base: linked to it later by the same number. */
-  | { new_parcel: { tracking_number: string; supplier_name: string; without_invoice: true } };
+  | ({ new_parcel: { tracking_number: string; supplier_name: string; without_invoice: true } } & PointBoxFields);
 
 /** Matches a photo to a parcel (confirms its reception at the point date), or detaches it. */
 export const linkPointPhoto = (pointId: string, photoId: string, link: PointPhotoLink) =>
-  apiJson<{ parcel: Parcel | null; created?: boolean; reception_confirmed?: boolean }>(
+  apiJson<{
+    parcel: Parcel | null;
+    created?: boolean;
+    reception_confirmed?: boolean;
+    /** "x" already received on this parcel: probably the same box twice. */
+    duplicate_box_index?: boolean;
+    /** Detached: it was the only box, the parcel is "to receive" again. */
+    back_to_receive?: boolean;
+  }>(
     `/api/reception-points/${pointId}/photos/${photoId}`,
     { method: 'PATCH', body: JSON.stringify(link) }
   );
@@ -423,7 +457,7 @@ export const fetchInvoiceParcels = (invoiceId: string) =>
   apiJson<{ parcels: Parcel[] }>(`/api/digi-invoices/${invoiceId}/parcels`).then((d) => d.parcels);
 
 export const createParcel = (input: ParcelInput, invoiceIds: string[]) =>
-  apiJson<{ parcel: Parcel; existed: boolean }>('/api/parcels', {
+  apiJson<{ parcel: Parcel; existed: boolean; matched_by: 'primary' | ParcelNumberKind | null }>('/api/parcels', {
     method: 'POST',
     body: JSON.stringify({ ...input, invoice_ids: invoiceIds }),
   });
@@ -432,6 +466,28 @@ export const updateParcel = (id: string, input: ParcelInput) =>
   apiJson<{ parcel: Parcel }>(`/api/parcels/${id}`, { method: 'PUT', body: JSON.stringify(input) }).then(
     (d) => d.parcel
   );
+
+export const addParcelNumber = (parcelId: string, number: string, kind: ParcelNumberKind) =>
+  apiJson<{ parcel: Parcel }>(`/api/parcels/${parcelId}/numbers`, {
+    method: 'POST',
+    body: JSON.stringify({ number, kind }),
+  }).then((d) => d.parcel);
+
+export const removeParcelNumber = (parcelId: string, numberId: string) =>
+  apiJson<{ parcel: Parcel }>(`/api/parcels/${parcelId}/numbers/${numberId}`, { method: 'DELETE' }).then((d) => d.parcel);
+
+export const setParcelBoxesExpected = (parcelId: string, boxes: number | null) =>
+  apiJson<{ parcel: Parcel }>(`/api/parcels/${parcelId}/boxes-expected`, {
+    method: 'PATCH',
+    body: JSON.stringify({ boxes_expected: boxes }),
+  }).then((d) => d.parcel);
+
+/** Supply Chain: merges a parcel created apart (a box) into the main parcel. */
+export const mergeParcelInto = (parcelId: string, principalId: string, boxesExpected: number | null) =>
+  apiJson<{ parcel: Parcel }>(`/api/parcels/${parcelId}/merge-into`, {
+    method: 'POST',
+    body: JSON.stringify({ principal_id: principalId, boxes_expected: boxesExpected }),
+  }).then((d) => d.parcel);
 
 export const unlinkParcel = (parcelId: string, invoiceId: string) =>
   apiJson<{ deleted: boolean }>(`/api/parcels/${parcelId}/invoices/${invoiceId}`, { method: 'DELETE' });
