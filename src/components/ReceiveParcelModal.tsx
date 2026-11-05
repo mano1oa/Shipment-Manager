@@ -13,6 +13,7 @@ import {
   isGoodsInvoice,
   isInvoiceReceived,
 } from './digiApi';
+import DateInput from './DateInput';
 
 interface Props {
   destination: ParcelDestination;
@@ -169,11 +170,10 @@ export const ReceiveParcelModal: React.FC<Props> = ({ destination, onClose, onSa
           </label>
           <label>
             <span className={label}>Reçu le *</span>
-            <input
-              type="date"
+            <DateInput
               value={receivedAt}
               max={new Date().toISOString().slice(0, 10)}
-              onChange={(e) => setReceivedAt(e.target.value)}
+              onChange={setReceivedAt}
               className={inputClass}
               required
             />

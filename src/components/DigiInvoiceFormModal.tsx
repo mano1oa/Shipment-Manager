@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle, FilePlus2, Loader2, Plus, Trash2, X } from 'lucide-react';
 import { parseNumberValue, validateDigiInvoiceInput } from '../lib/digiInvoices';
 import { DigiInvoice, cellInputClass, inputClass, saveDigiInvoice } from './digiApi';
+import DateInput from './DateInput';
 
 interface LineDraft {
   key: number;
@@ -161,10 +162,9 @@ export const DigiInvoiceFormModal: React.FC<Props> = ({ invoice, defaultDestinat
             </div>
             <div>
               <label className={label}>Date de facturation</label>
-              <input
-                type="date"
+              <DateInput
                 value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
+                onChange={setInvoiceDate}
                 className={inputClass}
               />
             </div>

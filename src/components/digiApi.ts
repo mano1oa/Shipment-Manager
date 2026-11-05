@@ -367,6 +367,17 @@ export const createReceptionPoint = (destination: ParcelDestination, pointDate: 
     method: 'POST',
     body: JSON.stringify({ destination, point_date: pointDate }),
   }).then((d) => d.point);
+/** New date of the point: the parcels it confirmed at the old date follow. */
+export const updateReceptionPointDate = (id: string, pointDate: string) =>
+  apiJson<{ point: ReceptionPoint }>(`/api/reception-points/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ point_date: pointDate }),
+  }).then((d) => d.point);
+
+/** Deletes the point: matched photos stay on their parcel, the others are deleted. */
+export const deleteReceptionPoint = (id: string) =>
+  apiJson<{ deleted_photos: number; kept_photos: number }>(`/api/reception-points/${id}`, { method: 'DELETE' });
+
 
 export const fetchReceptionPoint = (id: string) =>
   apiJson<{ point: ReceptionPoint; photos: PointPhoto[]; storage_configured: boolean }>(`/api/reception-points/${id}`);

@@ -19,6 +19,7 @@ import {
   detectTrackingNumber,
 } from '../lib/carrierDetection';
 import { formatDateTime } from '../lib/dateFormat';
+import DateInput from './DateInput';
 
 type TrackingStatus =
   | 'UNKNOWN'
@@ -397,13 +398,22 @@ export const TrackingPanel: React.FC<TrackingPanelProps> = ({ shipmentId, canEdi
                   <div className="mt-2 space-y-2">
                     {eventFormFor === n.id && (
                       <div className="grid grid-cols-1 gap-2 rounded-lg border border-[#623387]/30 bg-white p-2.5 sm:grid-cols-2 dark:border-purple-900/60 dark:bg-slate-800">
-                        <input
-                          type="datetime-local"
-                          value={eventAt}
-                          onChange={(e) => setEventAt(e.target.value)}
-                          aria-label="Date de l'événement"
-                          className={inputClass}
-                        />
+                        <div className="flex gap-2">
+                          <DateInput
+                            value={eventAt.slice(0, 10)}
+                            onChange={(v) => setEventAt(v ? `${v}T${eventAt.slice(11, 16) || '00:00'}` : '')}
+                            aria-label="Date de l'événement"
+                            className={inputClass}
+                          />
+                          <input
+                            type="time"
+                            value={eventAt.slice(11, 16)}
+                            disabled={!eventAt}
+                            onChange={(e) => e.target.value && setEventAt(`${eventAt.slice(0, 10)}T${e.target.value}`)}
+                            aria-label="Heure de l'événement"
+                            className={inputClass.replace('w-full', 'w-24 shrink-0')}
+                          />
+                        </div>
                         <select
                           value={eventStatus}
                           onChange={(e) => setEventStatus(e.target.value as TrackingStatus | '')}

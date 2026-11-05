@@ -15,6 +15,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { SeaTrackingResult } from '../types';
+import { formatDate } from '../lib/dateFormat';
 
 interface SeaTrackingSearchProps {
   onSelectShipmentByContainer?: (query: string) => void;
@@ -173,7 +174,7 @@ export const SeaTrackingSearch: React.FC<SeaTrackingSearchProps> = () => {
                 <Navigation className="h-3.5 w-3.5" /> {result.status}
               </span>
               <div className="text-[10px] text-slate-400 font-mono mt-1">
-                Dernière maj: {result.last_update}
+                Dernière maj: {formatDate(result.last_update)}
               </div>
             </div>
           </div>
@@ -221,7 +222,7 @@ export const SeaTrackingSearch: React.FC<SeaTrackingSearchProps> = () => {
                   <div className="flex-1 rounded-lg bg-slate-50 dark:bg-slate-900 p-2.5 border border-slate-100 dark:border-slate-800">
                     <div className="flex items-center justify-between">
                       <span className="font-bold text-slate-900 dark:text-slate-100">{evt.status}</span>
-                      <span className="font-mono text-[10px] text-slate-400">{evt.date}</span>
+                      <span className="font-mono text-[10px] text-slate-400">{formatDate(evt.date)}</span>
                     </div>
                     <div className="text-[11px] text-sky-600 dark:text-sky-400 mt-0.5 flex items-center gap-1">
                       <MapPin className="h-3 w-3" /> {evt.location}

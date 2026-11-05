@@ -28,6 +28,7 @@ import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesE
 import { SHIPMENT_STATUSES } from '../lib/parcelTracking';
 import { compareDateDesc, formatDate, formatToday } from '../lib/dateFormat';
 import type { DigiValueMatch } from '../lib/digiShipmentValue';
+import DateInput from './DateInput';
 
 const digiAmountFormat = new Intl.NumberFormat('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -641,12 +642,11 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
                         {/* Date scan Orly (Manuelle) */}
                         {modeFilter === 'Air' && (
                           <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="date"
+                            <DateInput
                               value={shp.orly_scan_date || ''}
+                              wrapperClassName="w-32"
                               disabled={!canEdit}
-                              onChange={(e) => {
-                                const newDate = e.target.value;
+                              onChange={(newDate) => {
                                 if (onUpdateShipment) {
                                   onUpdateShipment({
                                     ...shp,
@@ -719,15 +719,15 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                         {/* Date de récep Mada */}
                         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="date"
+                          <DateInput
                             value={shp.mada_receipt_date || ''}
+                            wrapperClassName="w-32"
                             disabled={!canEdit}
-                            onChange={(e) => {
+                            onChange={(v) => {
                               if (onUpdateShipment) {
                                 onUpdateShipment({
                                   ...shp,
-                                  mada_receipt_date: e.target.value,
+                                  mada_receipt_date: v,
                                   updated_at: new Date().toISOString().split('T')[0],
                                 });
                               }

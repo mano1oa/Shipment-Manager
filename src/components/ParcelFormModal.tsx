@@ -12,6 +12,7 @@ import {
 import type { DeliveryType, ParcelDestination } from '../lib/parcelTracking';
 import { parseNumberValue } from '../lib/digiInvoices';
 import { DigiInvoice, Parcel, apiJson, createParcel, inputClass, updateParcel } from './digiApi';
+import DateInput from './DateInput';
 
 const compact = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
@@ -285,7 +286,7 @@ export const ParcelFormModal: React.FC<Props> = ({
           </div>
           <label>
             <span className={label}>Livraison prévue à {destination === 'ROUEN' ? 'Rouen' : 'Orly'}</span>
-            <input type="date" value={expected} onChange={(e) => setExpected(e.target.value)} className={inputClass} />
+            <DateInput value={expected} onChange={setExpected} className={inputClass} />
           </label>
           {destination === 'ROUEN' && (
             <>
