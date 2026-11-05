@@ -26,6 +26,7 @@ import { SeaDeliveriesTable } from './SeaDeliveriesTable';
 import { calculateDepartureMadagascar, calculateEtaMadaSDu } from '../lib/rulesEngine';
 import { DigiInvoice, fetchShipmentInvoices, formatDate } from './digiApi';
 import { ShipmentContentsPanel } from './ShipmentContentsPanel';
+import DateInput from './DateInput';
 
 interface ShipmentDetailModalProps {
   shipment: Shipment | null;
@@ -403,10 +404,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
 
               <Field label="ETA">
                 {isEditing ? (
-                  <input
-                    type="date"
+                  <DateInput
                     value={draft.eta || ''}
-                    onChange={(e) => set('eta', e.target.value)}
+                    onChange={(v) => set('eta', v)}
                     className={inputClass}
                   />
                 ) : view.eta ? (
@@ -473,10 +473,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               {!isSea && (
                 <Field label="Remise / scan à Orly" hint="donne le départ du samedi">
                   {isEditing ? (
-                    <input
-                      type="date"
+                    <DateInput
                       value={draft.orly_scan_date || ''}
-                      onChange={(e) => set('orly_scan_date', e.target.value)}
+                      onChange={(v) => set('orly_scan_date', v)}
                       className={inputClass}
                     />
                   ) : view.orly_scan_date ? (
@@ -497,10 +496,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
 
               <Field label="Réception Madagascar">
                 {isEditing ? (
-                  <input
-                    type="date"
+                  <DateInput
                     value={draft.mada_receipt_date || ''}
-                    onChange={(e) => set('mada_receipt_date', e.target.value)}
+                    onChange={(v) => set('mada_receipt_date', v)}
                     className={inputClass}
                   />
                 ) : view.mada_receipt_date ? (
@@ -561,10 +559,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             <div className="grid grid-cols-2 gap-5 sm:grid-cols-4">
               <Field label="ETD (départ)">
                 {isEditing ? (
-                  <input
-                    type="date"
+                  <DateInput
                     value={draft.etd || ''}
-                    onChange={(e) => set('etd', e.target.value)}
+                    onChange={(v) => set('etd', v)}
                     className={inputClass}
                   />
                 ) : view.etd ? (
@@ -575,10 +572,9 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
               </Field>
               <Field label="Arrivée réelle">
                 {isEditing ? (
-                  <input
-                    type="date"
+                  <DateInput
                     value={draft.actual_arrival_date || ''}
-                    onChange={(e) => set('actual_arrival_date', e.target.value)}
+                    onChange={(v) => set('actual_arrival_date', v)}
                     className={inputClass}
                   />
                 ) : actualArrival ? (

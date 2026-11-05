@@ -27,6 +27,7 @@ import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
 import { ReceptionPointView } from './ReceptionPointView';
 import { useParcelStatusActions } from './useParcelStatusActions';
+import DateInput from './DateInput';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
 
@@ -335,11 +336,11 @@ export const ParcelsBoardView: React.FC<Props> = ({
             <div className="flex flex-wrap items-center gap-2">
               <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
                 Reçu(s) le
-                <input
-                  type="date"
+                <DateInput
                   value={receptionDate}
+                  wrapperClassName="w-36"
                   max={today}
-                  onChange={(e) => setReceptionDate(e.target.value || today)}
+                  onChange={(v) => setReceptionDate(v || today)}
                   className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
                 />
               </label>

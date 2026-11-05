@@ -89,6 +89,8 @@ import {
   listReceptionPoints,
   getReceptionPoint,
   createReceptionPoint,
+  updateReceptionPointDate,
+  deleteReceptionPoint,
   listPointPhotos,
   addPointPhoto,
   linkPointPhoto,
@@ -2584,6 +2586,56 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(500).json({ success: false, error: 'Impossible de créer le point de réception' });
     }
   });
+  // New date of the point: the parcels it confirmed at the old date follow
+  app.patch('/api/reception-points/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
+    const pointDate = parseReceptionDate(req.body?.point_date);
+    if (!pointDate) return res.status(400).json({ success: false, error: 'Date du point invalide (pas dans le futur).' });
+    try {
+      const previous = await updateReceptionPointDate(req.params.id, pointDate, req.user.email);
+      if (previous === null) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      await writeAuditLog({
+        entityType: 'RECEPTION_POINT',
+        entityId: req.params.id,
+        action: 'UPDATE_RECEPTION_POINT',
+        actor: req.user,
+        details: { point_date: { before: previous, after: pointDate } },
+      });
+      return res.json({ success: true, point: await getReceptionPoint(req.params.id) });
+    } catch (err: any) {
+      console.error('[Points] Update error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier le point de réception' });
+    }
+  });
+
+  // Deletes the point: matched photos stay on their parcel, the others are trashed
+  app.delete('/api/reception-points/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
+    try {
+      const point = await getReceptionPoint(req.params.id);
+      if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      const outcome = await deleteReceptionPoint(point.id);
+      if (!outcome) return res.status(404).json({ success: false, error: 'Point introuvable' });
+      await removePhotoObjects(outcome.removedKeys);
+      await writeAuditLog({
+        entityType: 'RECEPTION_POINT',
+        entityId: point.id,
+        action: 'DELETE_RECEPTION_POINT',
+        actor: req.user,
+        details: {
+          destination: point.destination,
+          point_date: point.point_date,
+          deleted_photos: outcome.removedKeys.length,
+          kept_photos: outcome.keptPhotos,
+        },
+      });
+      return res.json({ success: true, deleted_photos: outcome.removedKeys.length, kept_photos: outcome.keptPhotos });
+    } catch (err: any) {
+      console.error('[Points] Delete error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer le point de réception' });
+    }
+  });
+
 
   // The point with its photos (short display URLs)
   app.get('/api/reception-points/:id', async (req: any, res) => {

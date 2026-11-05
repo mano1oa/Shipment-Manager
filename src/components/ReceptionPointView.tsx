@@ -3,6 +3,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Camera,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
   Link2,
   Loader2,
   PackagePlus,
+  Pencil,
   Plus,
   ShieldCheck,
   Trash2,
@@ -30,6 +32,7 @@ import {
   ReceptionPoint,
   checkPhotoStorage,
   createReceptionPoint,
+  deleteReceptionPoint,
   deletePointPhoto,
   fetchDigiInvoices,
   fetchReceptionPoint,
@@ -40,10 +43,12 @@ import {
   isGoodsInvoice,
   isInvoiceReceived,
   linkPointPhoto,
+  updateReceptionPointDate,
   uploadPointPhoto,
 } from './digiApi';
 import { compressPhoto } from './photoCompression';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
+import DateInput from './DateInput';
 
 interface Props {
   destination: ParcelDestination;
@@ -149,6 +154,45 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       const point = await createReceptionPoint(destination, newDate);
       loadPoints();
       await openPoint(point.id);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  // ---- Editing / deleting a point of the list ----
+  const [editing, setEditing] = useState<{ id: string; date: string } | null>(null);
+
+  const handleSaveDate = async () => {
+    if (!editing?.date) return;
+    setError(null);
+    setMessage(null);
+    setSaving(true);
+    try {
+      const point = await updateReceptionPointDate(editing.id, editing.date);
+      setEditing(null);
+      setMessage(`Point déplacé au ${formatDate(point.point_date)}.`);
+      loadPoints();
+      if (point.linked_count > 0) onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeletePoint = async (pt: ReceptionPoint) => {
+    const toMatch = pt.photo_count - pt.linked_count;
+    const details = [
+      toMatch > 0 && `${toMatch} photo(s) non rattachée(s) seront supprimée(s)`,
+      pt.linked_count > 0 && `${pt.linked_count} photo(s) rattachée(s) restent sur leur colis (réception conservée)`,
+    ].filter(Boolean);
+    if (!window.confirm(`Supprimer le point du ${formatDate(pt.point_date)} ?${details.length ? `\n${details.join(' ; ')}.` : ''}`)) return;
+    setError(null);
+    setMessage(null);
+    try {
+      await deleteReceptionPoint(pt.id);
+      setMessage(`Point du ${formatDate(pt.point_date)} supprimé.`);
+      loadPoints();
     } catch (err: any) {
       setError(err.message);
     }
@@ -435,12 +479,12 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
             <div className="mt-3 flex items-end gap-2">
               <label>
                 <span className={label}>Date du point</span>
-                <input
-                  type="date"
+                <DateInput
                   value={newDate}
                   max={today()}
-                  onChange={(e) => setNewDate(e.target.value)}
+                  onChange={setNewDate}
                   className={inputClass}
+                  wrapperClassName="w-44"
                 />
               </label>
               <button
@@ -460,26 +504,71 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
             <p className="mt-2 text-slate-500">Aucun point pour l'instant.</p>
           ) : (
             <div className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
-              {points.map((pt) => (
-                <button
-                  key={pt.id}
-                  onClick={() => openPoint(pt.id)}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800"
-                >
-                  <span className="font-bold text-slate-900 dark:text-white">{formatDate(pt.point_date)}</span>
-                  <span className="text-slate-500">par {pt.created_by_email || '—'}</span>
-                  <span
-                    className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                      pt.photo_count > 0 && pt.linked_count === pt.photo_count
-                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    }`}
-                  >
-                    {pt.linked_count} / {pt.photo_count} rattachée(s)
-                  </span>
-                  <ChevronRight className="h-4 w-4 text-slate-400" />
-                </button>
-              ))}
+              {points.map((pt) =>
+                editing?.id === pt.id ? (
+                  <div key={pt.id} className="flex flex-wrap items-center gap-2 bg-slate-50 px-4 py-2.5 dark:bg-slate-800/60">
+                    <DateInput
+                      value={editing.date}
+                      max={today()}
+                      onChange={(date) => setEditing({ id: pt.id, date })}
+                      className={inputClass}
+                      wrapperClassName="w-40"
+                      aria-label="Nouvelle date du point"
+                    />
+                    <button
+                      onClick={handleSaveDate}
+                      disabled={!editing.date || saving}
+                      className="flex items-center gap-1 rounded-lg bg-[#623387] px-3 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-50"
+                    >
+                      <Check className="h-3.5 w-3.5" /> Enregistrer
+                    </button>
+                    <button
+                      onClick={() => setEditing(null)}
+                      className="rounded-lg px-3 py-2 font-semibold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    >
+                      Annuler
+                    </button>
+                    {pt.linked_count > 0 && (
+                      <span className="basis-full text-[11px] text-slate-500">
+                        Les colis reçus à ce point le {formatDate(pt.point_date)} passeront à la nouvelle date.
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div key={pt.id} className="group flex items-center hover:bg-slate-50 dark:hover:bg-slate-800">
+                    <button onClick={() => openPoint(pt.id)} className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left">
+                      <span className="font-bold text-slate-900 dark:text-white">{formatDate(pt.point_date)}</span>
+                      <span className="truncate text-slate-500">par {pt.created_by_email || '—'}</span>
+                      <span
+                        className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          pt.photo_count > 0 && pt.linked_count === pt.photo_count
+                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        }`}
+                      >
+                        {pt.linked_count} / {pt.photo_count} rattachée(s)
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setEditing({ id: pt.id, date: pt.point_date })}
+                      title="Modifier la date"
+                      className="ml-2 rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-[#623387] dark:hover:bg-slate-700"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDeletePoint(pt)}
+                      title="Supprimer le point"
+                      className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button onClick={() => openPoint(pt.id)} title="Ouvrir" className="py-3 pl-1 pr-4">
+                      <ChevronRight className="h-4 w-4 text-slate-400" />
+                    </button>
+                  </div>
+                )
+              )}
             </div>
           )}
         </div>

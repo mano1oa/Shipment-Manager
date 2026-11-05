@@ -5,6 +5,7 @@ import { validateDirectInvoiceInput } from '../lib/directInvoices';
 import { CURRENCIES } from '../lib/parcelTracking';
 import type { Currency } from '../lib/parcelTracking';
 import { DigiInvoice, inputClass, saveDirectInvoice } from './digiApi';
+import DateInput from './DateInput';
 
 interface Props {
   invoice: DigiInvoice | null; // null = new invoice
@@ -131,10 +132,9 @@ export const DirectInvoiceFormModal: React.FC<Props> = ({ invoice, isSupplyChain
           </label>
           <label>
             <span className={label}>Date de facture *</span>
-            <input
-              type="date"
+            <DateInput
               value={invoiceDate}
-              onChange={(e) => setInvoiceDate(e.target.value)}
+              onChange={setInvoiceDate}
               className={inputClass}
               required
             />

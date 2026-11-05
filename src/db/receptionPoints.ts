@@ -75,6 +75,46 @@ export async function createReceptionPoint(
   return rows[0].id as string;
 }
 
+/**
+ * Changes the date of the point. The parcels confirmed by its photos at the
+ * old date follow it (a parcel received on another day keeps its date).
+ * Returns the old date, or null when the point does not exist.
+ */
+export async function updateReceptionPointDate(id: string, pointDate: string, actorEmail: string): Promise<string | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const before = await sql`SELECT TO_CHAR(point_date, 'YYYY-MM-DD') AS point_date FROM reception_points WHERE id = ${id}`;
+  if (!before[0]) return null;
+  const previous = before[0].point_date as string;
+  await sql.transaction([
+    sql`UPDATE reception_points SET point_date = ${pointDate} WHERE id = ${id}`,
+    sql`
+      UPDATE parcels SET received_at = ${pointDate}, updated_by_email = ${actorEmail}, updated_at = NOW()
+      WHERE received_at = ${previous}
+        AND id IN (SELECT parcel_id FROM parcel_photos WHERE point_id = ${id} AND parcel_id IS NOT NULL)
+    `,
+  ]);
+  return previous;
+}
+
+/**
+ * Deletes the point. The photos already matched stay on their parcel (and the
+ * parcels stay received); the photos still to match are deleted. Returns their
+ * Drive ids (files to trash), or null when the point does not exist.
+ */
+export async function deleteReceptionPoint(id: string): Promise<{ removedKeys: string[]; keptPhotos: number } | null> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const exists = await sql`SELECT 1 FROM reception_points WHERE id = ${id}`;
+  if (!exists[0]) return null;
+  const [kept, removed] = await sql.transaction([
+    sql`UPDATE parcel_photos SET point_id = NULL WHERE point_id = ${id} AND parcel_id IS NOT NULL RETURNING id`,
+    sql`DELETE FROM parcel_photos WHERE point_id = ${id} RETURNING storage_key`,
+    sql`DELETE FROM reception_points WHERE id = ${id}`,
+  ]);
+  return { removedKeys: (removed as any[]).map((r) => r.storage_key as string), keptPhotos: (kept as any[]).length };
+}
+
 export async function listPointPhotos(pointId: string): Promise<PointPhotoRecord[]> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
