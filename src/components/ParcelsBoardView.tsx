@@ -66,11 +66,13 @@ export const parcelInvoiceDate = (p: Parcel) =>
 export const parcelMatches = (p: Parcel, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  // Other numbers (supplier, carrier, box) find the parcel too, typed with or without spaces
+  // Other numbers (supplier, carrier, box) find the parcel too, typed with or without spaces;
+  // the reception date as shown (03-11-2026)
   const compactQ = q.replace(/[^a-z0-9]/g, '');
   const numbers = (p.numbers || []).map((n) => n.number);
+  const receivedOn = p.received_at ? formatDate(p.received_at) : null;
   return (
-    [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, ...numbers, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)].some(
+    [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, receivedOn, ...numbers, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)].some(
       (v) => v && v.toLowerCase().includes(q)
     ) ||
     (compactQ.length >= 4 &&
@@ -112,6 +114,17 @@ export const ParcelsBoardView: React.FC<Props> = ({
   /** "Fusionner dans le colis principal…": the parcel to merge, and the main parcel proposed. */
   const [mergeOf, setMergeOf] = useState<{ parcel: Parcel; principalId: string | null } | null>(null);
   const [showSuspects, setShowSuspects] = useState(false);
+  /** Received: only the parcels received on this date ('' = every date). */
+  const [receivedOn, setReceivedOn] = useState('');
+  /** Date groups opened or closed by hand (by default only the latest one is open). */
+  const [toggledGroups, setToggledGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setToggledGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
     useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
@@ -145,6 +158,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
         if (statusFilter === 'open' && p.status !== 'to_receive') return false;
         if (['received', 'lost', 'search', 'to_receive'].includes(statusFilter) && p.status !== statusFilter) return false;
         if (statusFilter === 'no_invoice' && p.invoices.length > 0) return false;
+        if (statusFilter === 'received' && receivedOn && p.received_at !== receivedOn) return false;
         if (supplierFilter !== 'all' && (p.supplier_name || '—') !== supplierFilter) return false;
         return parcelMatches(p, search) && parcelMatches(p, globalSearch);
       })
@@ -154,7 +168,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
             (statusFilter === 'received' ? compareDateDesc(a.received_at, b.received_at) : 0) ||
             compareDateDesc(a.expected_delivery, b.expected_delivery)
         ),
-    [own, statusFilter, supplierFilter, search, globalSearch, settings]
+    [own, statusFilter, supplierFilter, search, globalSearch, settings, receivedOn]
   );
 
   // Received at the hub: one group per reception date, to ship them together
@@ -347,6 +361,27 @@ export const ParcelsBoardView: React.FC<Props> = ({
             </option>
           ))}
         </select>
+        {statusFilter === 'received' && (
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Reçus le
+            <DateInput
+              value={receivedOn}
+              wrapperClassName="w-36"
+              max={today}
+              onChange={(v) => setReceivedOn(v || '')}
+              className={selectClass}
+            />
+            {receivedOn && (
+              <button
+                onClick={() => setReceivedOn('')}
+                title="Toutes les dates"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </label>
+        )}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={selectClass}>
           <option value="open">À recevoir</option>
           <option value="received">Reçus à {hub}</option>
@@ -461,13 +496,21 @@ export const ParcelsBoardView: React.FC<Props> = ({
                   </td>
                 </tr>
               ) : (
-                rowGroups.map((g) => {
+                rowGroups.map((g, groupIndex) => {
                   const groupSelected = g.parcels.every((p) => selected.has(p.id));
                   const groupToShip = invoicesToShip(g.parcels);
+                  const groupKey = g.date ?? 'none';
+                  // Latest date open by default; a search or a date filter opens every group shown
+                  const filteredView = Boolean(receivedOn || search.trim() || globalSearch.trim());
+                  const groupOpen =
+                    !g.grouped || filteredView || (groupIndex === 0) !== toggledGroups.has(groupKey);
                   return (
-                  <React.Fragment key={g.date ?? 'none'}>
+                  <React.Fragment key={groupKey}>
                   {g.grouped && (
-                    <tr className="bg-slate-50 dark:bg-slate-900/50">
+                    <tr
+                      onClick={() => !filteredView && toggleGroup(groupKey)}
+                      className={`bg-slate-50 dark:bg-slate-900/50 ${filteredView ? '' : 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900'}`}
+                    >
                       {isSupplyChain && (
                         <td className="px-3 py-2">
                           <input
@@ -475,12 +518,19 @@ export const ParcelsBoardView: React.FC<Props> = ({
                             aria-label={`Sélectionner les colis reçus le ${formatDate(g.date)}`}
                             checked={groupSelected}
                             onChange={() => toggleMany(g.parcels, !groupSelected)}
+                            onClick={(e) => e.stopPropagation()}
                             className="h-4 w-4 cursor-pointer accent-emerald-600"
                           />
                         </td>
                       )}
                       <td colSpan={columns - (isSupplyChain ? 1 : 0)} className="px-3 py-2">
                         <div className="flex flex-wrap items-center gap-2">
+                          {!filteredView &&
+                            (groupOpen ? (
+                              <ChevronDown className="h-4 w-4 text-slate-400" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-slate-400" />
+                            ))}
                           <span className="text-[11px] font-extrabold text-slate-800 dark:text-slate-100">
                             {g.date ? `Reçus le ${formatDate(g.date)}` : 'Date de réception inconnue'}
                           </span>
@@ -489,7 +539,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           </span>
                           {onGroupInShipment && groupToShip.length > 0 && (
                             <button
-                              onClick={() => onGroupInShipment(groupToShip)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onGroupInShipment(groupToShip);
+                              }}
                               title="Nouvelle expédition vers Madagascar avec les factures de ces colis (pas encore expédiés)"
                               className="ml-auto flex items-center gap-1 rounded-lg border border-[#623387]/40 px-2 py-1 text-[11px] font-bold text-[#623387] hover:bg-[#F8EEFF] dark:text-[#C09BE3] dark:hover:bg-purple-950/40"
                             >
@@ -500,7 +553,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       </td>
                     </tr>
                   )}
-                  {g.parcels.map((p) => {
+                  {(groupOpen ? g.parcels : []).map((p) => {
                   const late = overdue(p);
                   return (
                     <React.Fragment key={p.id}>

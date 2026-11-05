@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { Parcel, ParcelContentsInvoice, fetchParcelContents, formatAmount, formatDate, formatQuantity } from './digiApi';
+import { PARCEL_NUMBER_KIND_LABELS } from '../lib/parcelBoxes';
 
 /** Contents already loaded, per parcel (rows opened again stay instant). */
 const cache = new Map<string, ParcelContentsInvoice[]>();
@@ -33,9 +34,53 @@ export const ParcelContentsPreview: React.FC<{ parcel: Parcel }> = ({ parcel }) 
     parcel.notes && `Note : ${parcel.notes}`,
   ].filter(Boolean);
 
+  // Numbers of the boxes already shown with their box: the other numbers apart
+  const boxNumbers = new Set(parcel.boxes.map((b) => (b.piece_number || '').toUpperCase()).filter(Boolean));
+  const otherNumbers = parcel.numbers.filter((n) => !boxNumbers.has(n.number.toUpperCase()));
+  const showBoxes = parcel.boxes.length > 1 || parcel.boxes_expected !== null || boxNumbers.size > 0;
+
   return (
     <div className="space-y-3 bg-slate-50 px-4 py-3 text-xs dark:bg-slate-900/50">
       {details.length > 0 && <p className="text-slate-600 dark:text-slate-300">{details.join(' · ')}</p>}
+      {(showBoxes || otherNumbers.length > 0) && (
+        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-800">
+          {showBoxes && (
+            <>
+              <div className="font-bold text-slate-800 dark:text-slate-100">
+                Boîtes reçues : {parcel.boxes.length}
+                {parcel.boxes_expected !== null ? ` / ${parcel.boxes_expected}` : ''}
+              </div>
+              <ul className="mt-1 space-y-0.5 text-slate-600 dark:text-slate-300">
+                {parcel.boxes.map((b, i) => (
+                  <li key={b.id}>
+                    Boîte {b.box_index ?? i + 1}
+                    {parcel.boxes_expected !== null ? `/${parcel.boxes_expected}` : ''} · reçue le {formatDate(b.received_at)}
+                    {' · '}
+                    {b.piece_number ? (
+                      <>
+                        n° de suivi <span className="font-mono font-semibold">{b.piece_number}</span>
+                      </>
+                    ) : (
+                      <span className="text-slate-400">sans n° de pièce</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {otherNumbers.length > 0 && (
+            <div className={showBoxes ? 'mt-2' : ''}>
+              <span className="font-bold text-slate-800 dark:text-slate-100">Autres n° : </span>
+              {otherNumbers.map((n, i) => (
+                <span key={n.id} className="text-slate-600 dark:text-slate-300">
+                  {i > 0 && ' · '}
+                  {PARCEL_NUMBER_KIND_LABELS[n.kind]} <span className="font-mono font-semibold">{n.number}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {error ? (
         <p className="flex items-center gap-1.5 font-semibold text-rose-600">
           <AlertCircle className="h-4 w-4" /> {error}
