@@ -1,5 +1,6 @@
 import { getDb } from './neon.js';
 import { ensureDigiInvoicesSchema } from './digiInvoices.js';
+import { backfillBoxesQueries, refreshBoxesQuery } from './parcels.js';
 import type { ParcelDestination } from '../lib/parcelTracking.js';
 
 /**
@@ -88,10 +89,22 @@ export async function updateReceptionPointDate(id: string, pointDate: string, ac
   const previous = before[0].point_date as string;
   await sql.transaction([
     sql`UPDATE reception_points SET point_date = ${pointDate} WHERE id = ${id}`,
+    sql`UPDATE parcel_receptions SET received_at = ${pointDate} WHERE point_id = ${id} AND received_at = ${previous}`,
     sql`
       UPDATE parcels SET received_at = ${pointDate}, updated_by_email = ${actorEmail}, updated_at = NOW()
       WHERE received_at = ${previous}
         AND id IN (SELECT parcel_id FROM parcel_photos WHERE point_id = ${id} AND parcel_id IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM parcel_receptions r WHERE r.parcel_id = parcels.id)
+    `,
+    // Parcels with boxes: date of their first box
+    sql`
+      UPDATE parcels p SET received_at = b.first, updated_by_email = ${actorEmail}, updated_at = NOW()
+      FROM (
+        SELECT parcel_id, MIN(received_at) AS first FROM parcel_receptions
+        WHERE parcel_id IN (SELECT parcel_id FROM parcel_receptions WHERE point_id = ${id})
+        GROUP BY parcel_id
+      ) b
+      WHERE p.id = b.parcel_id AND p.status IN ('received', 'search') AND p.received_at IS DISTINCT FROM b.first
     `,
   ]);
   return previous;
@@ -166,13 +179,23 @@ export async function linkPointPhoto(
   return rows.length > 0;
 }
 
-export async function deletePointPhoto(pointId: string, photoId: string): Promise<string | null> {
+/** Deletes a photo of the point (its box too, when matched: `parcel_id` is to refresh). */
+export async function deletePointPhoto(
+  pointId: string,
+  photoId: string,
+  actorEmail: string
+): Promise<{ storage_key: string; parcel_id: string | null } | null> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
-  const rows = await sql`
-    DELETE FROM parcel_photos WHERE id = ${photoId} AND point_id = ${pointId} RETURNING storage_key
-  `;
-  return (rows[0]?.storage_key as string) ?? null;
+  const found = await sql`SELECT storage_key, parcel_id FROM parcel_photos WHERE id = ${photoId} AND point_id = ${pointId}`;
+  if (!found[0]) return null;
+  const parcelId = (found[0].parcel_id as string) ?? null;
+  await sql.transaction([
+    ...(parcelId ? backfillBoxesQueries([parcelId]) : []),
+    sql`DELETE FROM parcel_photos WHERE id = ${photoId} AND point_id = ${pointId}`,
+    ...(parcelId ? [refreshBoxesQuery(parcelId, actorEmail)] : []),
+  ]);
+  return { storage_key: found[0].storage_key as string, parcel_id: parcelId };
 }
 
 /** Records the Drive folder created for the point (kept if another upload created one first). */

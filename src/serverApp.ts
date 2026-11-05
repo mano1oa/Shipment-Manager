@@ -93,7 +93,6 @@ import {
   deleteReceptionPoint,
   listPointPhotos,
   addPointPhoto,
-  linkPointPhoto,
   deletePointPhoto,
   setPointFolder,
   getPhotoFile,
@@ -131,7 +130,17 @@ import {
   findByTrackingNumber,
   findAmazonOrderInvoices,
   linkParcelInvoices,
+  describeParcelOwner,
+  receiveBox,
+  removeBoxOfPhoto,
+  BoxError,
+  setBoxesExpected,
+  addParcelNumber,
+  removeParcelNumber,
+  NumberTakenError,
+  mergeParcelInto,
 } from './db/parcels.js';
+import { PARCEL_NUMBER_KIND_LABELS, isParcelNumberKind, normalizeParcelNumber } from './lib/parcelBoxes.js';
 import { AMAZON_IMPORT_MAX_ROWS, orderKey } from './lib/amazonReport.js';
 import type { AmazonImportLine, AmazonImportOutcome } from './lib/amazonReport.js';
 import type { CarrierCode } from './lib/carrierDetection.js';
@@ -2151,6 +2160,30 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     return value > today ? undefined : value;
   };
 
+  /** Number of boxes (1..999): null when absent, undefined when invalid. */
+  const parseBoxCount = (value: unknown): number | null | undefined => {
+    if (value === undefined || value === null || value === '') return null;
+    const n = typeof value === 'string' ? Number(value.trim()) : value;
+    return typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= 999 ? n : undefined;
+  };
+
+  /** Optional box fields of a photo matched at the point; a string is the error to show. */
+  const parseBoxFields = (
+    body: any
+  ): { piece_number: string | null; box_index: number | null; boxes_expected: number | null } | string => {
+    const box_index = parseBoxCount(body?.box_index);
+    const boxes_expected = parseBoxCount(body?.boxes_expected);
+    if (box_index === undefined) return 'N° de boîte (x) invalide.';
+    if (boxes_expected === undefined) return 'Nombre de boîtes (N) invalide.';
+    if (box_index !== null && boxes_expected !== null && box_index > boxes_expected) return 'La boîte x ne peut pas dépasser N.';
+    let piece_number: string | null = null;
+    if (typeof body?.piece_number === 'string' && body.piece_number.trim()) {
+      piece_number = normalizeParcelNumber('piece', body.piece_number);
+      if (!piece_number || piece_number.length > 100) return 'N° de pièce invalide.';
+    }
+    return { piece_number, box_index, boxes_expected };
+  };
+
   /** Trashes photo files in Google Drive; a failure only leaves an orphan file (logged). */
   const removePhotoObjects = async (keys: string[]) => {
     if (keys.length === 0 || !isPhotoStorageConfigured()) return;
@@ -2266,7 +2299,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       const receivedAt = receivedNow ? parseReceptionDate(req.body?.received_at) : null;
       if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
 
-      const { id, existed } = await createParcel(value, invoiceIds, supplier, req.user.email);
+      const { id, existed, matched } = await createParcel(value, invoiceIds, supplier, req.user.email);
       if (receivedNow) await setParcelStatus(id, 'received', receivedAt, req.user.email);
       const parcel = await getParcel(id);
       if (existed && parcel) {
@@ -2291,9 +2324,13 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           destination: value.destination,
           invoice_ids: invoiceIds,
           received: receivedNow,
+          matched_by: matched,
         },
       });
-      return res.status(existed ? 200 : 201).json({ success: true, existed, parcel: await getParcel(id) });
+      // Found by another number of the parcel: told to the user ("trouvé par son n° fournisseur")
+      return res
+        .status(existed ? 200 : 201)
+        .json({ success: true, existed, matched_by: matched, parcel: await getParcel(id) });
     } catch (err: any) {
       console.error('[Parcels] Create error:', err);
       return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer le colis' });
@@ -2373,7 +2410,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         else if (goods.length === 0) outcome = 'services';
         else {
           const ids = goods.map((inv) => inv.id);
-          const existing = await findByTrackingNumber(g.number);
+          // Main number or another number of a parcel (supplier, carrier, box)
+          const existing = (await findByTrackingNumber(g.number))?.id ?? null;
           const blank = goods.flatMap((inv) => inv.blank_parcel_ids).find((id) => !completedBlank.has(id));
           if (existing) {
             outcome = goods.every((inv) => inv.parcel_ids.includes(existing)) ? 'already' : 'linked';
@@ -2445,10 +2483,144 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.json({ success: true, parcel: await getParcel(req.params.id) });
     } catch (err: any) {
       if (err instanceof DuplicateParcelError) {
-        return res.status(409).json({ success: false, error: `Le n° de suivi ${value.tracking_number} est déjà utilisé par un autre colis.` });
+        const owner =
+          err.existingId === req.params.id ? 'un autre n° de ce colis' : `utilisé par le ${await describeParcelOwner(err.existingId)}`;
+        return res.status(409).json({ success: false, error: `Le n° de suivi ${value.tracking_number} est déjà ${owner}.` });
       }
       console.error('[Parcels] Update error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de modifier le colis' });
+    }
+  });
+
+  /**
+   * Other numbers of a parcel (supplier, carrier, box): any of them finds the
+   * parcel. A number belongs to one parcel only (main number or other).
+   */
+  app.post('/api/parcels/:id/numbers', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const kind = req.body?.kind;
+    if (!isParcelNumberKind(kind)) return res.status(400).json({ success: false, error: 'Type de n° invalide.' });
+    const number = typeof req.body?.number === 'string' ? normalizeParcelNumber(kind, req.body.number) : '';
+    if (!number || number.length > 100) return res.status(400).json({ success: false, error: 'N° invalide.' });
+    try {
+      const parcel = await getParcel(req.params.id);
+      if (!parcel) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      const added = await addParcelNumber(parcel.id, number, kind, req.user.email);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: parcel.id,
+        action: 'ADD_PARCEL_NUMBER',
+        actor: req.user,
+        details: { number, kind, tracking_number: parcel.tracking_number },
+      });
+      return res.status(201).json({ success: true, number: added, parcel: await getParcel(parcel.id) });
+    } catch (err: any) {
+      if (err instanceof NumberTakenError) {
+        const owner = err.ownerId === req.params.id ? 'déjà un n° de ce colis' : `déjà utilisé par le ${await describeParcelOwner(err.ownerId)}`;
+        return res.status(409).json({ success: false, error: `Le ${PARCEL_NUMBER_KIND_LABELS[kind].toLowerCase()} ${number} est ${owner}.` });
+      }
+      console.error('[Parcels] Add number error:', err);
+      return res.status(500).json({ success: false, error: "Impossible d'ajouter ce n°" });
+    }
+  });
+
+  app.delete('/api/parcels/:id/numbers/:numberId', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.numberId)) {
+      return res.status(404).json({ success: false, error: 'N° introuvable' });
+    }
+    try {
+      const removed = await removeParcelNumber(req.params.id, req.params.numberId);
+      if (!removed) return res.status(404).json({ success: false, error: 'N° introuvable' });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: req.params.id,
+        action: 'REMOVE_PARCEL_NUMBER',
+        actor: req.user,
+        details: { number: removed.number, kind: removed.kind },
+      });
+      return res.json({ success: true, parcel: await getParcel(req.params.id) });
+    } catch (err: any) {
+      console.error('[Parcels] Remove number error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer ce n°' });
+    }
+  });
+
+  // Boxes announced (supplier notice, "x of N" of the label); null = unknown (no "Reçu partiel" alert)
+  app.patch('/api/parcels/:id/boxes-expected', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    const boxes = parseBoxCount(req.body?.boxes_expected);
+    if (boxes === undefined) return res.status(400).json({ success: false, error: 'Nombre de boîtes invalide (1 à 999).' });
+    try {
+      const previous = await setBoxesExpected(req.params.id, boxes, req.user.email);
+      if (previous === undefined) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      if (previous !== boxes) {
+        await writeAuditLog({
+          entityType: 'PARCEL',
+          entityId: req.params.id,
+          action: 'SET_BOXES_EXPECTED',
+          actor: req.user,
+          details: { from: previous, to: boxes },
+        });
+      }
+      return res.json({ success: true, parcel: await getParcel(req.params.id) });
+    } catch (err: any) {
+      console.error('[Parcels] Boxes expected error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier le nombre de boîtes' });
+    }
+  });
+
+  /**
+   * Merges a parcel created apart (a box whose label was not found at the
+   * point) into the main parcel of the shipment: its boxes, photos, numbers and
+   * invoices move, its number becomes a box number, the row is deleted. Same
+   * supplier and hub only. Supply Chain.
+   */
+  app.post('/api/parcels/:id/merge-into', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const principalId = req.body?.principal_id;
+    if (!UUID_RE.test(req.params.id) || typeof principalId !== 'string' || !UUID_RE.test(principalId)) {
+      return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    }
+    if (principalId === req.params.id) return res.status(400).json({ success: false, error: 'Choisissez un autre colis principal.' });
+    const boxes = parseBoxCount(req.body?.boxes_expected);
+    if (boxes === undefined) return res.status(400).json({ success: false, error: 'Nombre de boîtes invalide (1 à 999).' });
+    try {
+      const [merged, principal] = await Promise.all([getParcel(req.params.id), getParcel(principalId)]);
+      if (!merged || !principal) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      const norm = (s: string | null) => (s || '').trim().toUpperCase();
+      if (norm(merged.supplier_name) !== norm(principal.supplier_name)) {
+        return res.status(409).json({ success: false, error: 'Les deux colis n\'ont pas le même fournisseur : fusion impossible.' });
+      }
+      if (merged.destination !== principal.destination) {
+        return res.status(409).json({ success: false, error: 'Les deux colis ne vont pas au même hub (Orly / Rouen) : fusion impossible.' });
+      }
+      if (merged.status === 'search') {
+        return res.status(409).json({ success: false, error: 'Ce colis est en avis de recherche : fusion impossible.' });
+      }
+      await mergeParcelInto(merged, principal, boxes, req.user.email);
+      const after = await getParcel(principal.id);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: principal.id,
+        action: 'MERGE_PARCEL',
+        actor: req.user,
+        details: {
+          merged_id: merged.id,
+          merged_tracking_number: merged.tracking_number,
+          merged_status: merged.status,
+          principal_tracking_number: principal.tracking_number,
+          status_before: principal.status,
+          status_after: after?.status,
+          boxes_after: after?.boxes.length,
+          boxes_expected: after?.boxes_expected ?? null,
+        },
+      });
+      return res.json({ success: true, parcel: after });
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        return res.status(409).json({ success: false, error: 'Une boîte du colis fusionné est déjà reçue sur le colis principal.' });
+      }
+      console.error('[Parcels] Merge error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de fusionner les colis' });
     }
   });
 
@@ -2736,8 +2908,11 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
    * - { parcel_id }: an existing parcel (number read on the label);
    * - { new_parcel: { tracking_number?, invoice_ids } }: a parcel not announced
    *   (or label unreadable), created for invoices of one supplier;
-   * - { parcel_id: null }: back to "to match" (the parcel keeps its state).
-   * The parcel is confirmed "received" at the point date (unless already received).
+   * - { parcel_id: null }: back to "to match": its box is removed (a received
+   *   parcel with no box left goes back to "to receive").
+   * Each photo matched is one box received at the point date; the parcel is
+   * received from its first box. Optional: piece_number (number of the box),
+   * box_index / boxes_expected ("x of N"); a different N needs confirm_boxes_expected.
    */
   app.patch('/api/reception-points/:id/photos/:photoId', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id) || !UUID_RE.test(req.params.photoId)) {
@@ -2748,10 +2923,34 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
 
       if (req.body?.parcel_id === null) {
-        if (!(await linkPointPhoto(point.id, req.params.photoId, null, req.user.email))) {
-          return res.status(404).json({ success: false, error: 'Photo introuvable' });
+        const removed = await removeBoxOfPhoto(point.id, req.params.photoId, req.user.email);
+        if (!removed) return res.status(404).json({ success: false, error: 'Photo introuvable' });
+        await writeAuditLog({
+          entityType: 'PARCEL',
+          entityId: removed.parcel_id,
+          action: 'UNRECEIVE_BOX',
+          actor: req.user,
+          details: {
+            point_id: point.id,
+            photo_id: req.params.photoId,
+            piece_number: removed.piece_number,
+            back_to_receive: removed.back_to_receive,
+          },
+        });
+        return res.json({ success: true, parcel: null, back_to_receive: removed.back_to_receive });
+      }
+
+      const box = parseBoxFields(req.body);
+      if (typeof box === 'string') return res.status(400).json({ success: false, error: box });
+      // Box number of another parcel: refused before anything is created
+      if (box.piece_number) {
+        const owner = await findByTrackingNumber(box.piece_number);
+        if (owner && owner.id !== req.body?.parcel_id) {
+          return res.status(409).json({
+            success: false,
+            error: `Le n° de pièce ${box.piece_number} est déjà utilisé par le ${await describeParcelOwner(owner.id)}.`,
+          });
         }
-        return res.json({ success: true, parcel: null });
       }
 
       let parcelId: string;
@@ -2781,7 +2980,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           return res.status(400).json({ success: false, error: 'Le n° de suivi est obligatoire pour un colis sans facture.' });
         }
         if (!(await applyParcelCarrier(value, res))) return;
-        const outcome = await createParcel(value, [], supplier, req.user.email);
+        const outcome = await createParcel(value, [], supplier, req.user.email, { createdAtPointId: point.id });
         parcelId = outcome.id;
         created = !outcome.existed;
       } else {
@@ -2794,26 +2993,62 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         if (!(await applyParcelCarrier(value, res))) return;
         const supplier = await checkParcelInvoices(input.invoice_ids, res);
         if (supplier === undefined) return;
-        const outcome = await createParcel(value, input.invoice_ids, supplier, req.user.email);
+        const outcome = await createParcel(value, input.invoice_ids, supplier, req.user.email, { createdAtPointId: point.id });
         parcelId = outcome.id;
         created = !outcome.existed;
       }
 
-      if (!(await linkPointPhoto(point.id, req.params.photoId, parcelId, req.user.email))) {
-        return res.status(404).json({ success: false, error: 'Photo introuvable' });
-      }
-      const parcel = await getParcel(parcelId);
-      const confirmed = parcel && parcel.status !== 'received' && parcel.status !== 'search';
-      if (confirmed) await setParcelStatus(parcelId, 'received', point.point_date, req.user.email);
+      const outcome = await receiveBox({
+        parcelId,
+        pointId: point.id,
+        photoId: req.params.photoId,
+        pointDate: point.point_date,
+        pieceNumber: box.piece_number,
+        boxIndex: box.box_index,
+        boxesExpected: box.boxes_expected,
+        confirmBoxesExpected: req.body?.confirm_boxes_expected === true,
+        actorEmail: req.user.email,
+      });
       await writeAuditLog({
         entityType: 'PARCEL',
         entityId: parcelId,
         action: 'LINK_POINT_PHOTO',
         actor: req.user,
-        details: { point_id: point.id, photo_id: req.params.photoId, created, reception_confirmed: Boolean(confirmed) },
+        details: { point_id: point.id, photo_id: req.params.photoId, created, reception_confirmed: outcome.confirmed },
       });
-      return res.json({ success: true, created, reception_confirmed: Boolean(confirmed), parcel: await getParcel(parcelId) });
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: parcelId,
+        action: 'RECEIVE_BOX',
+        actor: req.user,
+        details: {
+          point_id: point.id,
+          photo_id: req.params.photoId,
+          received_at: point.point_date,
+          piece_number: box.piece_number,
+          box_index: box.box_index,
+        },
+      });
+      if (outcome.boxes_expected_after !== outcome.boxes_expected_before) {
+        await writeAuditLog({
+          entityType: 'PARCEL',
+          entityId: parcelId,
+          action: 'SET_BOXES_EXPECTED',
+          actor: req.user,
+          details: { from: outcome.boxes_expected_before, to: outcome.boxes_expected_after, source: 'point' },
+        });
+      }
+      return res.json({
+        success: true,
+        created,
+        reception_confirmed: outcome.confirmed,
+        duplicate_box_index: outcome.duplicate_index,
+        parcel: await getParcel(parcelId),
+      });
     } catch (err: any) {
+      if (err instanceof BoxError) {
+        return res.status(err.status).json({ success: false, error: err.message, code: err.code });
+      }
       console.error('[Points] Link photo error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de rattacher la photo' });
     }
@@ -2824,9 +3059,9 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(404).json({ success: false, error: 'Photo introuvable' });
     }
     try {
-      const key = await deletePointPhoto(req.params.id, req.params.photoId);
-      if (!key) return res.status(404).json({ success: false, error: 'Photo introuvable' });
-      await removePhotoObjects([key]);
+      const deleted = await deletePointPhoto(req.params.id, req.params.photoId, req.user.email);
+      if (!deleted) return res.status(404).json({ success: false, error: 'Photo introuvable' });
+      await removePhotoObjects([deleted.storage_key]);
       await writeAuditLog({
         entityType: 'RECEPTION_POINT',
         entityId: req.params.id,
@@ -2846,7 +3081,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(404).json({ success: false, error: 'Photo introuvable' });
     }
     try {
-      const key = await deleteParcelPhoto(req.params.id, req.params.photoId);
+      const key = await deleteParcelPhoto(req.params.id, req.params.photoId, req.user.email);
       if (!key) return res.status(404).json({ success: false, error: 'Photo introuvable' });
       await removePhotoObjects([key]);
       await writeAuditLog({

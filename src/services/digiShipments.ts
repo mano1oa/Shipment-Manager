@@ -35,11 +35,17 @@ export interface NotReceivedInvoice {
   supplier: string | null;
   parcels_received: number;
   parcels_total: number;
+  /** Received parcels with boxes missing: "colis 123 : 2/3 boîtes". */
+  incomplete: string[];
 }
 
 const label = (inv: DigiInvoiceRecord) => inv.ref || inv.odoo_move_name || inv.id.slice(0, 8);
 const now = () => new Date().toISOString().slice(0, 16).replace('T', ' ');
-const isReceived = (inv: DigiInvoiceRecord) => inv.parcel_count > 0 && inv.parcel_received_count === inv.parcel_count;
+/** All its parcels received, with every announced box (an incomplete parcel needs the exception). */
+const isReceived = (inv: DigiInvoiceRecord) =>
+  inv.parcel_count > 0 && inv.parcel_received_count === inv.parcel_count && inv.incomplete_parcels.length === 0;
+const incompleteLabels = (inv: DigiInvoiceRecord) =>
+  inv.incomplete_parcels.map((p) => `colis ${p.tracking_number || 'sans n°'} : ${p.received}/${p.expected} boîtes`);
 
 /**
  * Checks the invoices for `targetShipmentId` (null = new shipment).
@@ -78,10 +84,11 @@ async function checkInvoices(
       supplier: inv.supplier_display,
       parcels_received: inv.parcel_received_count,
       parcels_total: inv.parcel_count,
+      incomplete: incompleteLabels(inv),
     }));
   if (notReceived.length > 0 && !force) {
     throw new ShipmentGroupingError(
-      `${notReceived.length} facture(s) dont les colis ne sont pas tous confirmés reçus : exception à confirmer.`,
+      `${notReceived.length} facture(s) dont les colis ne sont pas tous confirmés reçus (ou avec des boîtes manquantes) : exception à confirmer.`,
       409,
       notReceived
     );
@@ -114,8 +121,11 @@ function exceptionStep(notReceived: NotReceivedInvoice[], actor: AuditActor): Tr
     date: now(),
     location: '',
     status: 'Exception Supply Chain',
-    details: `Factures ajoutées sans tous leurs colis confirmés reçus (par ${actor.email}) : ${notReceived
-      .map((n) => `${n.ref || '—'} (${n.parcels_received}/${n.parcels_total} colis)`)
+    details: `Factures ajoutées sans tous leurs colis (ou boîtes) confirmés reçus (par ${actor.email}) : ${notReceived
+      .map(
+        (n) =>
+          `${n.ref || '—'} (${n.parcels_received}/${n.parcels_total} colis${n.incomplete.length > 0 ? ` ; ${n.incomplete.join(', ')}` : ''})`
+      )
       .join(', ')}`,
   };
 }
