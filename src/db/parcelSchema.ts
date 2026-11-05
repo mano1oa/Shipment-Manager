@@ -117,6 +117,56 @@ export async function initParcelSchema(): Promise<void> {
   await sql`ALTER TABLE parcel_photos ADD COLUMN IF NOT EXISTS linked_at TIMESTAMPTZ;`;
   await sql`CREATE INDEX IF NOT EXISTS idx_parcel_photos_point ON parcel_photos (point_id);`;
 
+  // Boxes of a parcel: one row per box received (a photo matched at a point, or a
+  // reception confirmed without photo). parcels.received_at = date of the first box.
+  await sql`
+    CREATE TABLE IF NOT EXISTS parcel_receptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      parcel_id UUID NOT NULL REFERENCES parcels(id) ON DELETE CASCADE,
+      point_id UUID REFERENCES reception_points(id) ON DELETE SET NULL,
+      photo_id UUID UNIQUE REFERENCES parcel_photos(id) ON DELETE CASCADE,
+      piece_number VARCHAR(100),
+      box_index INTEGER CHECK (box_index >= 1),
+      received_at DATE NOT NULL,
+      received_by_email VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_parcel_receptions_parcel ON parcel_receptions (parcel_id);`;
+  // Boxes announced (supplier, "x of N" of the label): optional
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS boxes_expected INTEGER CHECK (boxes_expected >= 1);`;
+  // Incomplete parcels already announced on Google Chat (daily summary)
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS partial_notified_at TIMESTAMPTZ;`;
+  // Point where the parcel was created (label not found): finds the split boxes to merge
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS created_at_point_id UUID;`;
+
+  // Other numbers of a parcel (supplier, carrier, box): search only, the
+  // tracking connector keeps tracking_number
+  await sql`
+    CREATE TABLE IF NOT EXISTS parcel_numbers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      parcel_id UUID NOT NULL REFERENCES parcels(id) ON DELETE CASCADE,
+      number VARCHAR(100) NOT NULL,
+      kind VARCHAR(10) NOT NULL CHECK (kind IN ('supplier', 'carrier', 'piece')),
+      created_by_email VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_parcel_numbers_parcel ON parcel_numbers (parcel_id);`;
+  await runOnce('parcel_boxes_v1', createNumberGuards);
+  // Parcels created at a point before the column: found in the audit trail
+  await runOnce('parcel_created_at_point_v1', async () => {
+    const hasAudit = (await sql`SELECT to_regclass('system_audit_logs') IS NOT NULL AS ok`)[0]?.ok;
+    if (!hasAudit) return;
+    await sql`
+      UPDATE parcels p SET created_at_point_id = (a.details->>'point_id')::uuid
+      FROM system_audit_logs a
+      WHERE a.action = 'LINK_POINT_PHOTO' AND a.details->>'created' = 'true'
+        AND a.entity_id = p.id::text AND p.created_at_point_id IS NULL
+        AND a.details->>'point_id' ~ '^[0-9a-f-]{36}$'
+    `;
+  });
+
   await runOnce('parcel_model_v1', runConversion);
   // After the conversion (which fills the NULLs): new DIGI invoices start unsorted
   await sql`ALTER TABLE digi_invoices ALTER COLUMN triage SET DEFAULT 'to_sort';`;
@@ -142,6 +192,62 @@ async function runOnce(key: string, conversion: () => Promise<void>): Promise<vo
     await sql`DELETE FROM app_migrations WHERE key = ${key}`;
     throw err;
   }
+}
+
+/** SQLSTATE raised when a number already belongs to a parcel (see NumberTakenError). */
+export const NUMBER_TAKEN_SQLSTATE = 'P0420';
+
+/**
+ * One-time DDL: a number exists once in tracking_number ∪ parcel_numbers.
+ * The HTTP driver has no interactive transaction, so Postgres checks it: the
+ * trigger locks the number (two writers wait for each other), then looks in
+ * both tables. DETAIL = id of the parcel that owns the number.
+ */
+async function createNumberGuards(): Promise<void> {
+  const sql = getDb();
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_parcel_numbers_number_ci ON parcel_numbers (UPPER(TRIM(number)));`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_parcel_receptions_piece_ci
+      ON parcel_receptions (parcel_id, UPPER(TRIM(piece_number)))
+      WHERE piece_number IS NOT NULL;
+  `;
+  await sql.query(`
+    CREATE OR REPLACE FUNCTION parcel_number_guard() RETURNS trigger AS $$
+    DECLARE
+      n TEXT;
+      owner UUID;
+    BEGIN
+      IF TG_TABLE_NAME = 'parcels' THEN
+        n := UPPER(TRIM(NEW.tracking_number));
+      ELSE
+        n := UPPER(TRIM(NEW.number));
+      END IF;
+      IF n IS NULL OR n = '' THEN
+        RETURN NEW;
+      END IF;
+      PERFORM pg_advisory_xact_lock(hashtext('parcel_number:' || n));
+      IF TG_TABLE_NAME = 'parcels' THEN
+        SELECT parcel_id INTO owner FROM parcel_numbers WHERE UPPER(TRIM(number)) = n LIMIT 1;
+      ELSE
+        SELECT id INTO owner FROM parcels WHERE UPPER(TRIM(tracking_number)) = n LIMIT 1;
+      END IF;
+      IF owner IS NOT NULL THEN
+        RAISE EXCEPTION 'Number % already used', n USING ERRCODE = '${NUMBER_TAKEN_SQLSTATE}', DETAIL = owner::text;
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+  await sql`DROP TRIGGER IF EXISTS trg_parcels_number_guard ON parcels;`;
+  await sql`
+    CREATE TRIGGER trg_parcels_number_guard BEFORE INSERT OR UPDATE OF tracking_number ON parcels
+      FOR EACH ROW EXECUTE FUNCTION parcel_number_guard();
+  `;
+  await sql`DROP TRIGGER IF EXISTS trg_parcel_numbers_guard ON parcel_numbers;`;
+  await sql`
+    CREATE TRIGGER trg_parcel_numbers_guard BEFORE INSERT OR UPDATE OF number ON parcel_numbers
+      FOR EACH ROW EXECUTE FUNCTION parcel_number_guard();
+  `;
 }
 
 const RECEP_ROUEN_RECEIVED = 'Oui';
