@@ -42,6 +42,8 @@ export interface DigiInvoice {
   odoo_state: string | null;
   odoo_missing: boolean;
   odoo_synced_at: string | null;
+  /** Supplier typed in the app, when Odoo has another name for it (same BL). */
+  entered_supplier_name: string | null;
   amount_total: number | null;
   shipment_id: string | null;
   shipment_exists: boolean;
@@ -82,7 +84,6 @@ export interface DigiConfig {
   odoo_configured: boolean;
   last_sync: DigiSyncRun | null;
   dest_partner_name: string;
-  dest_partner_id: number | null;
   import_max_invoices: number;
 }
 
@@ -367,6 +368,7 @@ export const createReceptionPoint = (destination: ParcelDestination, pointDate: 
     method: 'POST',
     body: JSON.stringify({ destination, point_date: pointDate }),
   }).then((d) => d.point);
+
 /** New date of the point: the parcels it confirmed at the old date follow. */
 export const updateReceptionPointDate = (id: string, pointDate: string) =>
   apiJson<{ point: ReceptionPoint }>(`/api/reception-points/${id}`, {
@@ -377,7 +379,6 @@ export const updateReceptionPointDate = (id: string, pointDate: string) =>
 /** Deletes the point: matched photos stay on their parcel, the others are deleted. */
 export const deleteReceptionPoint = (id: string) =>
   apiJson<{ deleted_photos: number; kept_photos: number }>(`/api/reception-points/${id}`, { method: 'DELETE' });
-
 
 export const fetchReceptionPoint = (id: string) =>
   apiJson<{ point: ReceptionPoint; photos: PointPhoto[]; storage_configured: boolean }>(`/api/reception-points/${id}`);

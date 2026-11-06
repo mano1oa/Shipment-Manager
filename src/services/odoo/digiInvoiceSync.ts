@@ -1,4 +1,4 @@
-import { OdooError, OdooSession } from './client.js';
+import { MirrorError, MirrorInvoice, fetchInvoiceDetails, fetchInvoiceIndex } from './mirrorClient.js';
 import {
   deleteOdooInvoices,
   recordOdooSyncRun,
@@ -12,32 +12,18 @@ import type { DigiInvoiceLineInput } from '../../lib/digiInvoices.js';
 import type { AuditActor } from '../../db/audit.js';
 
 /**
- * Pulls the DIGI LOGISTIC invoices addressed to NextHope from Odoo.
+ * Pulls the DIGI LOGISTIC invoices addressed to NextHope from the mirror API
+ * (PostgreSQL copy of Odoo). The API owns the filters (destination, invoice
+ * types, states) and lists cancelled invoices too, so that the ones synced
+ * earlier are removed here.
  *
- * Conditions: account.move whose `dest_partner_id` is the NextHope entity
- * (ODOO_DEST_PARTNER_ID when set, otherwise name contains
- * ODOO_DEST_PARTNER_NAME, "NextHope" by default), drafts included,
- * cancelled invoices excluded (and removed when already synced).
- *
- * Only invoices changed since the last sync (Odoo write_date) are re-read.
- * Invoices that disappear from the filter are flagged, never deleted.
+ * 1. Light index (id, state, sync_date) of every invoice of the perimeter.
+ * 2. Details of the new invoices and of those whose sync_date changed.
+ * 3. Invoices that disappear from the index are flagged, never deleted.
  */
 
-const MOVE_FIELDS = [
-  'name',
-  'state',
-  'write_date',
-  'partner_id',
-  'dest_partner_id',
-  'ref',
-  'invoice_date',
-  'num_cmd_amz',
-  'sale_move_id',
-  'invoice_line_ids',
-];
-const LINE_FIELDS = ['name', 'product_id', 'quantity', 'price_unit', 'price_subtotal', 'display_type'];
-const READ_CHUNK = 100;
-const MAX_LISTED_INVOICES = 50_000;
+// The mirror needs ~4 s per invoice: small chunks stay under the request timeout
+const READ_CHUNK = 10;
 
 export interface DigiOdooSyncResult {
   listed: number;
@@ -51,50 +37,32 @@ export interface DigiOdooSyncResult {
   complete: boolean;
 }
 
-export function getDestinationFilter(): { id: number | null; name: string } {
-  const rawId = process.env.ODOO_DEST_PARTNER_ID?.trim();
-  const id = rawId && /^\d+$/.test(rawId) ? Number(rawId) : null;
-  const name = process.env.ODOO_DEST_PARTNER_NAME?.trim() || DEFAULT_DEST_PARTNER_NAME;
-  return { id, name };
+/** Destination shown in the app and used to filter Excel imports. */
+export function getDestinationFilter(): { name: string } {
+  return { name: process.env.ODOO_DEST_PARTNER_NAME?.trim() || DEFAULT_DEST_PARTNER_NAME };
 }
 
-function destinationDomain(): unknown[] {
-  const dest = getDestinationFilter();
-  return dest.id !== null
-    ? [['dest_partner_id', '=', dest.id]]
-    : [['dest_partner_id.name', 'ilike', dest.name]];
-}
-
-/** Odoo returns `false` for empty values. */
 function text(value: unknown): string | null {
   if (typeof value === 'string') return value.trim() || null;
   if (typeof value === 'number') return String(value);
   return null;
 }
 
-/** Many2one → [id, display_name] or false. */
-function m2o(value: unknown): { id: number | null; name: string | null } {
-  if (Array.isArray(value) && typeof value[0] === 'number') {
-    return { id: value[0], name: text(value[1]) };
-  }
-  return { id: null, name: null };
+function id(value: unknown): number | null {
+  const n = Number(value);
+  return value !== null && value !== undefined && Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/** PostgreSQL numerics may come as strings. */
 function amount(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const n = typeof value === 'string' ? Number(value) : value;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
 }
 
-function toInvoice(move: any, linesById: Map<number, any>): OdooInvoiceInput {
-  const supplier = m2o(move.partner_id);
-  const dest = m2o(move.dest_partner_id);
-  const sale = m2o(move.sale_move_id);
-
+function toInvoice(move: MirrorInvoice): OdooInvoiceInput {
   const lines: DigiInvoiceLineInput[] = [];
-  for (const lineId of (move.invoice_line_ids || []) as number[]) {
-    const line = linesById.get(lineId);
-    if (!line) continue;
-    if (line.display_type === 'line_section' || line.display_type === 'line_note') continue;
-    const productName = m2o(line.product_id).name;
+  for (const line of move.invoice_lines || []) {
+    const productName = text(line.product_name);
     // Odoo can leave the label empty: fall back to the product name.
     let name = text(line.name) || productName || '(sans libellé dans Odoo)';
     // Fee product ([DEEE], [RCP], [FRDP]) with an edited label: keep its code
@@ -106,46 +74,44 @@ function toInvoice(move: any, linesById: Map<number, any>): OdooInvoiceInput {
       quantity: amount(line.quantity),
       price_unit: amount(line.price_unit),
       price_subtotal: amount(line.price_subtotal),
-      odoo_line_id: lineId,
+      odoo_line_id: id(line.id),
     });
   }
 
+  // Only one sale invoice is stored for now: the first one
+  const sale = (move.sale_move_ids || [])[0];
+
   return {
-    odoo_move_id: move.id,
-    odoo_move_name: text(move.name),
+    odoo_move_id: Number(move.odoo_move_id),
+    // Draft invoices are named "/" in Odoo
+    odoo_move_name: text(move.name) === '/' ? null : text(move.name),
     odoo_state: text(move.state),
-    odoo_write_date: text(move.write_date),
-    supplier_name: supplier.name,
-    supplier_odoo_id: supplier.id,
-    dest_partner_name: dest.name,
-    dest_partner_odoo_id: dest.id,
+    odoo_write_date: text(move.sync_date),
+    supplier_name: text(move.partner_name),
+    supplier_odoo_id: id(move.partner_id),
+    dest_partner_name: text(move.dest_partner_name),
+    dest_partner_odoo_id: id(move.dest_partner_id),
     ref: text(move.ref),
-    invoice_date: text(move.invoice_date),
+    invoice_date: text(move.invoice_date)?.slice(0, 10) ?? null,
     amazon_order_ref: text(move.num_cmd_amz),
-    sale_move_ref: sale.name,
-    sale_move_odoo_id: sale.id,
+    sale_move_ref: sale ? text(sale.name) : null,
+    sale_move_odoo_id: sale ? id(sale.id) : null,
     lines: mergeServiceLines(lines),
   };
 }
 
 export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }): Promise<DigiOdooSyncResult> {
   const startedAt = Date.now();
-  const odoo = await OdooSession.connect();
 
-  // 1. Every matching invoice id with its state and last modification date
-  // (light call). Cancelled ones are listed too, to remove those synced before.
-  const all = await odoo.searchRead<{ id: number; write_date: string; state: string }>(
-    'account.move',
-    destinationDomain(),
-    ['write_date', 'state'],
-    { order: 'id asc', limit: MAX_LISTED_INVOICES }
-  );
+  // 1. Every invoice of the perimeter with its state and last change (light call).
+  // Cancelled ones are listed too, to remove those synced before.
+  const all = await fetchInvoiceIndex();
   const listed = all.filter((m) => m.state !== 'cancel');
-  const cancelledIds = all.filter((m) => m.state === 'cancel').map((m) => m.id);
+  const cancelledIds = all.filter((m) => m.state === 'cancel').map((m) => m.odoo_move_id);
 
   const known = await getOdooWriteDates();
-  const cancelledRemoved = await deleteOdooInvoices(cancelledIds.filter((id) => known.has(id)));
-  const toRead = listed.filter((m) => known.get(m.id) !== m.write_date).map((m) => m.id);
+  const cancelledRemoved = await deleteOdooInvoices(cancelledIds.filter((moveId) => known.has(moveId)));
+  const toRead = listed.filter((m) => known.get(m.odoo_move_id) !== m.sync_date).map((m) => m.odoo_move_id);
 
   const result: DigiOdooSyncResult = {
     listed: listed.length,
@@ -159,7 +125,7 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
     complete: true,
   };
 
-  // 2. Changed invoices, by chunks, within the time budget
+  // 2. New and changed invoices, by chunks, within the time budget
   for (let offset = 0; offset < toRead.length; offset += READ_CHUNK) {
     if (Date.now() - startedAt > options.timeBudgetMs) {
       result.remaining = toRead.length - offset;
@@ -167,32 +133,25 @@ export async function syncDigiInvoicesFromOdoo(options: { timeBudgetMs: number }
       break;
     }
 
-    const ids = toRead.slice(offset, offset + READ_CHUNK);
-    const moves = await odoo.read<any>('account.move', ids, MOVE_FIELDS);
-    const lineIds = moves.flatMap((m) => (m.invoice_line_ids || []) as number[]);
-    const lines = await odoo.read<any>('account.move.line', lineIds, LINE_FIELDS);
-    const linesById = new Map(lines.map((l) => [l.id as number, l]));
-
+    const moves = await fetchInvoiceDetails(toRead.slice(offset, offset + READ_CHUNK));
     for (const move of moves) {
-      // Cancelled between the listing and the read: not tracked
+      // Cancelled between the index and the details: not tracked
       if (move.state === 'cancel') {
-        await deleteOdooInvoices([move.id]);
+        await deleteOdooInvoices([Number(move.odoo_move_id)]);
         continue;
       }
       try {
-        const outcome = await upsertOdooInvoice(toInvoice(move, linesById));
+        const outcome = await upsertOdooInvoice(toInvoice(move));
         result[outcome]++;
       } catch (err: any) {
         result.failed++;
-        console.error('[DIGI Odoo Sync] Could not store invoice', move.id, err?.message || err);
+        console.error('[DIGI Mirror Sync] Could not store invoice', move.odoo_move_id, err?.message || err);
       }
     }
   }
 
-  // 3. Flag invoices no longer returned by Odoo (only after a full listing)
-  if (all.length < MAX_LISTED_INVOICES) {
-    result.missing = await markMissingOdooInvoices(listed.map((m) => m.id));
-  }
+  // 3. Flag invoices no longer returned by the mirror
+  result.missing = await markMissingOdooInvoices(listed.map((m) => m.odoo_move_id));
 
   return result;
 }
@@ -226,7 +185,7 @@ export async function runDigiOdooSync(params: {
       started_at: startedAt,
       success: false,
       result: null,
-      error: err instanceof OdooError ? err.publicMessage : 'Échec de la synchronisation Odoo',
+      error: err instanceof MirrorError ? err.publicMessage : 'Échec de la synchronisation Odoo',
     });
     throw err;
   }

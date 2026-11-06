@@ -265,7 +265,9 @@ UPS, DHL et FedEx. Une fois un fournisseur branché :
 
 Le menu « Factures fournisseurs » liste les factures de la base Odoo **DIGI
 LOGISTIC** dont l'**entité de destination est NextHope** (avec leurs lignes de
-produits) et les **factures hors DIGI** saisies à la main.
+produits) et les **factures hors DIGI** saisies à la main. Les factures Odoo
+sont lues dans une **copie PostgreSQL d'Odoo** (base miroir), au travers d'une
+API hébergée ailleurs (voir « Contrat de l'API du miroir » ci-dessous).
 
 | Donnée | Champ Odoo (`account.move`) |
 |---|---|
@@ -282,27 +284,31 @@ Trois façons d'alimenter la liste :
 1. **Synchronisation Odoo**, automatique **chaque jour** (cron Vercel
    `/api/cron/sync-digi-invoices`, vers 5 h UTC soit 8 h à Madagascar, à ±59 min
    près sur le plan Hobby) et **à la demande** avec le bouton « Synchroniser
-   Odoo ». Conditions :
-   - `dest_partner_id` = `ODOO_DEST_PARTNER_ID` si renseigné, sinon nom de
-     l'entité contenant `ODOO_DEST_PARTNER_NAME` (« NextHope » par défaut) ;
-   - factures **brouillon incluses** (badge « Brouillon ») ;
-   - factures **annulées exclues** : une facture annulée dans Odoo après avoir
-     été synchronisée est retirée de la liste.
+   Odoo ». Le **périmètre est défini par l'API du miroir** (destination
+   NextHope, types de pièces, brouillons ou non) ; l'application :
+   - retire de la liste une facture **annulée** après avoir été synchronisée
+     (l'API renvoie donc aussi les factures annulées) ;
+   - ne relit que les factures nouvelles ou dont la date de modification
+     (`sync_date`) a changé ; une synchronisation trop longue s'arrête
+     proprement et indique combien de factures restent.
 
    L'écran affiche la date, l'origine (automatique ou utilisateur) et le
    résultat de la dernière synchronisation, y compris en cas d'échec.
-   - Seules les factures modifiées dans Odoo depuis la dernière
-     synchronisation sont relues (`write_date`) ; une synchronisation trop
-     longue s'arrête proprement et indique combien de factures restent.
-   - Les lignes de section et de note sont ignorées ; un libellé vide prend le
-     nom du produit.
+   - Un libellé de ligne vide prend le nom du produit.
+   - Une seule facture de vente est conservée par facture : la première
+     renvoyée par l'API.
    - Une facture Odoo est **en lecture seule** dans l'application : elle se
      corrige dans Odoo puis se resynchronise.
    - Une facture qui n'est plus renvoyée par Odoo est marquée « Absente
      d'Odoo », jamais supprimée automatiquement.
-   - Si une facture saisie à la main ou importée existe déjà (même fournisseur
-     et même référence), elle est **rattachée** à la facture Odoo au lieu
-     d'être dupliquée : Odoo devient sa source.
+   - Si une facture saisie à la main ou importée existe déjà avec le même BL,
+     elle est **rattachée** à la facture Odoo au lieu d'être dupliquée : Odoo
+     devient sa source. Le BL suffit quand une seule facture le porte ; si le
+     nom du fournisseur saisi diffère de celui d'Odoo, la facture affiche
+     « Fournisseur différent » (jusqu'à ce que les deux noms concordent).
+   - Dans l'autre sens, une saisie ou un import Excel dont le BL est déjà
+     celui d'une facture Odoo est refusé comme doublon, quel que soit le nom
+     du fournisseur.
 2. **Import Excel** (`.xlsx` ou `.csv`, première feuille) : en-têtes reconnus
    en libellés Odoo (« Fournisseur », « Référence », « Lignes de
    facture/Libellé »…) ou en noms techniques (`partner_id`, `ref`,
@@ -366,6 +372,29 @@ Valider / Refuser (hors DIGI, Supply Chain), Supprimer (Supply Chain ; pas les
 factures encore présentes dans Odoo). Les échecs sont listés avec la raison.
 
 Toutes ces actions sont tracées dans le journal d'audit.
+
+### Contrat de l'API du miroir
+
+L'API (hors de ce projet) lit la copie PostgreSQL d'Odoo et applique les
+filtres. L'application l'appelle avec `Authorization: Bearer <MIRROR_API_KEY>`
+sur `MIRROR_API_URL` :
+
+| Route | Réponse |
+|---|---|
+| `GET /invoices/index` | `{ "items": [{ "odoo_move_id", "state", "sync_date" }] }` : toutes les factures du périmètre, **annulées comprises** |
+| `POST /invoices/details`, corps `{ "ids": [101, 102] }` (100 au plus) | `{ "items": [facture] }` |
+
+Une facture : `odoo_move_id`, `name`, `state`, `sync_date`, `partner_id`,
+`partner_name`, `dest_partner_id`, `dest_partner_name`, `ref`,
+`invoice_date` (`AAAA-MM-JJ`), `num_cmd_amz`,
+`sale_move_ids` (`[{ "id", "name" }]`) et `invoice_lines`
+(`[{ "id", "name", "product_name", "quantity", "price_unit", "price_subtotal" }]`,
+lignes de produits seulement, `name` brut, éventuellement vide).
+
+`sync_date` est la dernière modification de la facture **ou de ses lignes**
+(`GREATEST(account_move.write_date, MAX(account_move_line.write_date))`). Il
+doit être calculé et formaté **à l'identique** dans les deux routes (avec les
+microsecondes) : l'application le compare tel quel pour savoir quoi relire.
 
 ---
 
@@ -516,8 +545,8 @@ Node.js 20+ et une base Neon PostgreSQL.
 | `GEMINI_API_KEY` | Assistant IA |
 | `GOOGLE_CHAT_WEBHOOK_URL` | Relances Google Chat et récapitulatif quotidien des colis perdus |
 | `CRON_SECRET` | Obligatoire pour les crons quotidiens (suivi transporteur, factures DIGI et colis perdus) |
-| `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, `ODOO_API_KEY` | Connexion en lecture à Odoo DIGI LOGISTIC (API JSON-RPC ; clé API de l'utilisateur) |
-| `ODOO_DEST_PARTNER_ID` / `ODOO_DEST_PARTNER_NAME` | Entité de destination filtrée : identifiant du partenaire, sinon nom (« NextHope » par défaut) |
+| `MIRROR_API_URL`, `MIRROR_API_KEY` | API du miroir Odoo DIGI LOGISTIC (lecture seule) : URL de base et clé envoyée en `Authorization: Bearer` |
+| `ODOO_DEST_PARTNER_NAME` | Nom de l'entité de destination affiché et utilisé pour filtrer les imports Excel (« NextHope » par défaut) ; le filtre Odoo est fait par l'API |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_DRIVE_PHOTOS_FOLDER_ID` | Photos des colis : compte de service Google (API Drive activée) membre « Gestionnaire de contenu » d'un Drive partagé ; clé privée du fichier JSON (avec ses `\n`) ; identifiant du dossier des photos (ou du Drive partagé) |
 | `GOOGLE_SHEET_AIR_URL` / `GOOGLE_SHEET_SEA_URL` | Facultatif : liens vers les anciens fichiers Google Sheets, affichés dans Paramètres › Intégrations (consultation, aucune synchronisation) |
 | `NODE_ENV` | `production` en production (cookie `Secure`) |

@@ -585,6 +585,14 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   Absente d'Odoo
                 </span>
               )}
+              {inv.entered_supplier_name && (
+                <span
+                  title={`Même BL : facture saisie sous « ${inv.entered_supplier_name} », reprise par Odoo sous « ${inv.supplier_name || '—'} »`}
+                  className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                >
+                  Fournisseur différent
+                </span>
+              )}
             </div>
           </td>
           <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
@@ -794,7 +802,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
             title={
               config?.odoo_configured
                 ? 'Récupérer les factures depuis Odoo DIGI LOGISTIC'
-                : 'Connexion Odoo non configurée (variables ODOO_* côté serveur)'
+                : 'API du miroir Odoo non configurée (variables MIRROR_API_* côté serveur)'
             }
             className={`${button} bg-[#623387] text-white hover:bg-[#522870]`}
           >
@@ -826,7 +834,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            La connexion à Odoo DIGI LOGISTIC n'est pas encore configurée : l'import Excel et la saisie manuelle restent
+            L'API du miroir Odoo DIGI LOGISTIC n'est pas encore configurée : l'import Excel et la saisie manuelle restent
             disponibles.
           </span>
         </div>

@@ -136,7 +136,7 @@ import { AMAZON_IMPORT_MAX_ROWS, orderKey } from './lib/amazonReport.js';
 import type { AmazonImportLine, AmazonImportOutcome } from './lib/amazonReport.js';
 import type { CarrierCode } from './lib/carrierDetection.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
-import { isOdooConfigured, OdooError } from './services/odoo/client.js';
+import { isMirrorConfigured, MirrorError } from './services/odoo/mirrorClient.js';
 import {
   createShipmentFromInvoices,
   addInvoicesToShipment,
@@ -570,9 +570,9 @@ export function createServerApp(): Express {
       parcelLosses = { error: 'Parcel loss check failed' };
     }
 
-    if (!isOdooConfigured()) {
-      console.log('[DIGI Cron] Odoo is not configured: nothing to sync.');
-      return res.json({ success: true, skipped: 'ODOO_NOT_CONFIGURED', parcel_losses: parcelLosses });
+    if (!isMirrorConfigured()) {
+      console.log('[DIGI Cron] Mirror API is not configured: nothing to sync.');
+      return res.json({ success: true, skipped: 'MIRROR_NOT_CONFIGURED', parcel_losses: parcelLosses });
     }
 
     try {
@@ -1728,9 +1728,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
     res.json({
       success: true,
-      odoo_configured: isOdooConfigured(),
+      odoo_configured: isMirrorConfigured(),
       dest_partner_name: dest.name,
-      dest_partner_id: dest.id,
       import_max_invoices: DIGI_IMPORT_MAX_INVOICES,
       last_sync: lastRun,
     });
@@ -1787,7 +1786,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (err instanceof DuplicateDigiInvoiceError) {
         return res.status(409).json({
           success: false,
-          error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.`,
+          error: `Une facture avec le BL ${value.ref} existe déjà (même fournisseur, ou facture Odoo).`,
         });
       }
       console.error('[DIGI] Create invoice error:', err);
@@ -2061,7 +2060,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (err instanceof DuplicateDigiInvoiceError) {
         return res.status(409).json({
           success: false,
-          error: `La facture ${value.ref} de ${value.supplier_name} existe déjà.`,
+          error: `Une facture avec le BL ${value.ref} existe déjà (même fournisseur, ou facture Odoo).`,
         });
       }
       console.error('[DIGI] Update invoice error:', err);
@@ -2665,6 +2664,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(500).json({ success: false, error: 'Impossible de créer le point de réception' });
     }
   });
+
   // New date of the point: the parcels it confirmed at the old date follow
   app.patch('/api/reception-points/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Point introuvable' });
@@ -2714,7 +2714,6 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.status(500).json({ success: false, error: 'Impossible de supprimer le point de réception' });
     }
   });
-
 
   // The point with its photos (short display URLs)
   app.get('/api/reception-points/:id', async (req: any, res) => {
@@ -3010,8 +3009,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   });
 
   app.post('/api/digi-invoices/sync-odoo', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
-    if (!isOdooConfigured()) {
-      return res.status(503).json({ success: false, error: 'La connexion Odoo DIGI LOGISTIC n\'est pas configurée.' });
+    if (!isMirrorConfigured()) {
+      return res.status(503).json({ success: false, error: 'L\'API du miroir Odoo DIGI LOGISTIC n\'est pas configurée.' });
     }
 
     // Throttle Odoo syncs across all users
@@ -3041,7 +3040,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       return res.json({ success: true, ...result });
     } catch (err: any) {
       console.error('[DIGI] Odoo sync error:', err);
-      const message = err instanceof OdooError ? err.publicMessage : 'Échec de la synchronisation Odoo';
+      const message = err instanceof MirrorError ? err.publicMessage : 'Échec de la synchronisation Odoo';
       return res.status(502).json({ success: false, error: message });
     }
   });
