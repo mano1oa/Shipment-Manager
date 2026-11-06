@@ -19,6 +19,7 @@ import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
 import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
 import { evaluateShipmentRules } from './lib/rulesEngine';
+import { DashboardTab, LOGIN_PATH, pathForRoute, routeFromPath, titleForRoute } from './lib/routes';
 import { Shipment, UserRole, MetricSummary, shipmentValue, shipmentLabel } from './types';
 import { CheckCircle2, AlertCircle, LayoutDashboard, BarChart3 } from 'lucide-react';
 
@@ -40,9 +41,11 @@ export default function App() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [shipmentsError, setShipmentsError] = useState<string | null>(null);
 
-  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  // The section opened at load comes from the address (/suivi-aerien, /alertes…)
+  const [initialRoute] = useState(() => routeFromPath(window.location.pathname));
+  const [activeTab, setActiveTab] = useState<NavTab>(initialRoute.tab);
   // Dashboard & KPI: overview / analytics sub-tabs
-  const [dashboardTab, setDashboardTab] = useState<'overview' | 'analytics'>('overview');
+  const [dashboardTab, setDashboardTab] = useState<DashboardTab>(initialRoute.dashboardTab);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const currentRole: UserRole =
   authUser?.role === 'SUPPLY_CHAIN'
@@ -553,6 +556,40 @@ useEffect(() => {
       setActiveTab('dashboard');
     }
   }, [currentRole, activeTab, allowedTabsByRole]);
+
+  // --- ADDRESS BAR ---
+  // Each section has its own address: the bar follows the navigation, back / forward
+  // switch sections and a copied link reopens the same section (after login if needed).
+  const firstSync = React.useRef(true);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const route = routeFromPath(window.location.pathname);
+      setActiveTab(route.tab);
+      setDashboardTab(route.dashboardTab);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!authUser) {
+      if (window.location.pathname !== LOGIN_PATH) window.history.replaceState(null, '', LOGIN_PATH);
+      document.title = 'Connexion · Shipment Manager';
+      firstSync.current = true;
+      return;
+    }
+    const route = { tab: activeTab, dashboardTab };
+    const path = pathForRoute(route);
+    document.title = titleForRoute(route);
+    if (window.location.pathname !== path) {
+      // Right after login, the login address is replaced instead of kept in the history
+      if (firstSync.current) window.history.replaceState(null, '', path);
+      else window.history.pushState(null, '', path);
+    }
+    firstSync.current = false;
+  }, [authLoading, authUser?.id, activeTab, dashboardTab]);
 
 if (authLoading) {
   return (
