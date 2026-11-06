@@ -65,11 +65,20 @@ export interface MirrorInvoice {
 // The mirror is slow (index up to ~25 s, details ~4 s per invoice)
 const REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * Routes live under /api. Accepts the site root, the docs page or a full
+ * route URL too, as people paste what they have at hand.
+ */
+function normalizeMirrorUrl(raw: string): string {
+  const url = raw.replace(/\/+$/, '').replace(/\/(docs|invoices\/(index|details))$/i, '');
+  return /\/api$/i.test(url) ? url : `${url}/api`;
+}
+
 export function getMirrorConfig(): MirrorConfig | null {
-  const url = process.env.MIRROR_API_URL?.trim().replace(/\/+$/, '');
+  const raw = process.env.MIRROR_API_URL?.trim();
   const apiKey = process.env.MIRROR_API_KEY?.trim();
-  if (!url || !apiKey || !/^https?:\/\//i.test(url)) return null;
-  return { url, apiKey };
+  if (!raw || !apiKey || !/^https?:\/\//i.test(raw)) return null;
+  return { url: normalizeMirrorUrl(raw), apiKey };
 }
 
 export function isMirrorConfigured(): boolean {
@@ -109,7 +118,7 @@ async function call(path: string, body?: unknown): Promise<unknown[]> {
   if (!response.ok) {
     throw new MirrorError(
       'REMOTE',
-      `Mirror HTTP ${response.status}`,
+      `Mirror HTTP ${response.status} on ${config.url}${path}`,
       `L'API du miroir Odoo a répondu une erreur HTTP ${response.status}.`
     );
   }
