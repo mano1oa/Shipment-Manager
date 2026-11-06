@@ -21,10 +21,12 @@ import {
 } from 'lucide-react';
 import { detectTrackingNumber } from '../lib/carrierDetection';
 import { ZoomableImage } from './ZoomableImage';
+import { PointParcelModal } from './PointParcelModal';
+import type { PointParcelFields } from './PointParcelModal';
 import { compareDateDesc } from '../lib/dateFormat';
 import { parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
-import { PARCEL_NUMBER_KIND_LABELS, boxSummary, invoiceBoxesLabel } from '../lib/parcelBoxes';
+import { PARCEL_NUMBER_KIND_LABELS, boxSummary, invoiceBoxesLabel, parcelNumberKindText } from '../lib/parcelBoxes';
 import type { ParcelNumberKind } from '../lib/parcelBoxes';
 import {
   DigiInvoice,
@@ -127,6 +129,9 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   /** Supplier typed when not in the list ("Autre fournisseur"). */
   const [otherSupplier, setOtherSupplier] = useState('');
   const [chosenInvoices, setChosenInvoices] = useState<Set<string>>(new Set());
+  /** Form of a parcel not found by its number: the one announced to complete, or null = new. */
+  const [parcelForm, setParcelForm] = useState<{ parcel: Parcel | null } | null>(null);
+  const [parcelFormError, setParcelFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   /** Parcel chosen in the suggestions; null = the exact match, if any. */
   const [picked, setPicked] = useState<string | null>(null);
@@ -341,6 +346,21 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     () => waitingWithoutNumber.filter((p) => (p.supplier_name || '—') === supplier),
     [waitingWithoutNumber, supplier]
   );
+  // Parcels of the supplier expected here with another number and no BL: the label may show their BL
+  const supplierWaitingWithNumber = useMemo(
+    () =>
+      parcels
+        .filter(
+          (p) =>
+            p.tracking_number &&
+            !p.numbers.some((n) => n.kind === 'supplier') &&
+            (p.supplier_name || '—') === supplier &&
+            p.destination === destination &&
+            (p.status === 'to_receive' || p.status === 'lost' || p.status === 'search')
+        )
+        .sort((a, b) => compareDateDesc(a.expected_delivery, b.expected_delivery)),
+    [parcels, supplier, destination]
+  );
 
   const suppliers = useMemo(
     () =>
@@ -374,8 +394,12 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     boxes_expected: boxNumber(boxCount),
   });
 
-  const link = async (body: Parameters<typeof linkPointPhoto>[2], label: string) => {
-    if (!current || !photo) return;
+  const link = async (
+    body: Parameters<typeof linkPointPhoto>[2],
+    label: string,
+    onError: (message: string) => void = setError
+  ): Promise<boolean> => {
+    if (!current || !photo) return false;
     setSaving(true);
     setError(null);
     try {
@@ -404,11 +428,36 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       fetchDigiInvoices()
         .then((list) => setInvoices(list.filter((i) => isGoodsInvoice(i) && !isInvoiceReceived(i))))
         .catch(() => {});
+      return true;
     } catch (err: any) {
-      setError(err.message);
+      onError(err.message);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  const openParcelForm = (parcel: Parcel | null) => {
+    setParcelFormError(null);
+    setParcelForm({ parcel });
+  };
+
+  /** Form of the point saved: the photo is matched to the parcel completed or created. */
+  const submitParcelForm = async (fields: PointParcelFields) => {
+    if (!parcelForm) return;
+    const target = parcelForm.parcel;
+    const ok = target
+      ? await link(
+          { parcel_id: target.id, ...fields, ...boxFields() },
+          fields.tracking_number || fields.bl_number ? 'Colis complété et rattaché' : 'Rattachée',
+          setParcelFormError
+        )
+      : await link(
+          { new_parcel: { ...fields, invoice_ids: Array.from(chosenInvoices) }, ...boxFields() },
+          'Colis créé et rattaché',
+          setParcelFormError
+        );
+    if (ok) setParcelForm(null);
   };
 
   const handleDeletePhoto = async () => {
@@ -836,7 +885,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     )}
                     {chosenMatch && chosenMatch.matched !== 'primary' && (
                       <p className="text-[11px] font-semibold text-sky-700 dark:text-sky-300">
-                        Trouvé par son {PARCEL_NUMBER_KIND_LABELS[chosenMatch.matched].toLowerCase()} {chosenMatch.value} :
+                        Trouvé par son {parcelNumberKindText(chosenMatch.matched)} {chosenMatch.value} :
                         vérifiez que c'est bien ce colis, puis cliquez sur Rattacher.
                       </p>
                     )}
@@ -952,7 +1001,8 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     {typed && matches.length === 0 && (
                       <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                         Aucun colis en base avec ce n°. Vérifiez la saisie, sinon choisissez le fournisseur : ce colis est
-                        peut-être annoncé sans n° de suivi, ou il faut le créer pour sa facture.
+                        peut-être annoncé sans n° de suivi ou avec un autre n° (ce n° est alors son BL), ou il faut le
+                        créer pour sa facture.
                       </p>
                     )}
 
@@ -1011,7 +1061,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                                 </span>
                               </span>
                               <button
-                                onClick={() => linkChosen(p)}
+                                onClick={() => openParcelForm(p)}
                                 disabled={saving}
                                 className="shrink-0 rounded-lg bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
                               >
@@ -1019,8 +1069,38 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                               </button>
                             </div>
                           ))}
-                          <span className="block pt-1 text-[10px] text-slate-400">Sinon, créez le colis pour sa facture :</span>
                         </div>
+                      )}
+                      {supplier && typed && supplierWaitingWithNumber.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          <span className={label}>Colis attendus avec un autre n° : {typed} est peut-être leur BL</span>
+                          <div className="max-h-40 space-y-1 overflow-y-auto">
+                            {supplierWaitingWithNumber.map((p) => (
+                              <div
+                                key={p.id}
+                                className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 dark:border-slate-700"
+                              >
+                                <span className="min-w-0 truncate">
+                                  <span className="font-mono font-semibold">{p.tracking_number}</span>
+                                  <span className="ml-1 text-slate-500">
+                                    · {p.invoices.map((inv) => inv.ref || '—').join(', ') || '—'}
+                                    {p.expected_delivery ? ` · prévu le ${formatDate(p.expected_delivery)}` : ''}
+                                  </span>
+                                </span>
+                                <button
+                                  onClick={() => openParcelForm(p)}
+                                  disabled={saving}
+                                  className="shrink-0 rounded-lg bg-emerald-600 px-2 py-1 text-[11px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  C'est ce colis
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {supplier && (supplierWaiting.length > 0 || (typed && supplierWaitingWithNumber.length > 0)) && (
+                        <span className="mt-2 block text-[10px] text-slate-400">Sinon, créez le colis pour sa facture :</span>
                       )}
                       {supplier && (
                         <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
@@ -1047,15 +1127,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                         </div>
                       )}
                       <button
-                        onClick={() =>
-                          link(
-                            {
-                              new_parcel: { tracking_number: number.trim() || null, invoice_ids: Array.from(chosenInvoices) },
-                              ...boxFields(),
-                            },
-                            'Colis créé et rattaché'
-                          )
-                        }
+                        onClick={() => openParcelForm(null)}
                         disabled={saving || chosenInvoices.size === 0}
                         className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2.5 font-bold text-white hover:bg-[#522870] disabled:opacity-40"
                       >
@@ -1109,6 +1181,25 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
             )}
           </div>
         </div>
+      )}
+      {parcelForm && current && (
+        <PointParcelModal
+          // A new photo or parcel: fresh form
+          key={`${photo?.id}-${parcelForm.parcel?.id ?? 'new'}`}
+          readNumber={number.trim()}
+          parcel={parcelForm.parcel}
+          supplier={parcelForm.parcel?.supplier_name || supplierName || '—'}
+          invoiceRefs={
+            parcelForm.parcel
+              ? parcelForm.parcel.invoices.map((inv) => inv.ref || '—')
+              : supplierInvoices.filter((inv) => chosenInvoices.has(inv.id)).map((inv) => inv.ref || '—')
+          }
+          pointDate={current.point.point_date}
+          saving={saving}
+          error={parcelFormError}
+          onCancel={() => setParcelForm(null)}
+          onSubmit={submitParcelForm}
+        />
       )}
     </div>
   );

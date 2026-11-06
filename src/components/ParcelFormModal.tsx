@@ -52,6 +52,8 @@ export const ParcelFormModal: React.FC<Props> = ({
   onSaved,
 }) => {
   const [trackingNumber, setTrackingNumber] = useState(parcel?.tracking_number ?? '');
+  // New parcel only: an existing one adds its BL in "Autres n°"
+  const [blNumber, setBlNumber] = useState('');
   // '' = from the tracking number format (carrier linked to the detected connector)
   const [carrierName, setCarrierName] = useState(parcel?.carrier_name ?? '');
   const [carriers, setCarriers] = useState<CarrierOption[]>([]);
@@ -166,7 +168,8 @@ export const ParcelFormModal: React.FC<Props> = ({
         for (const c of checked) {
           last = await createParcel(
             c.value!,
-            invoices.map((i) => i.id)
+            invoices.map((i) => i.id),
+            several ? null : blNumber.trim() || null
           );
           existed = existed || last.existed;
         }
@@ -275,6 +278,17 @@ export const ParcelFormModal: React.FC<Props> = ({
               </span>
             )}
           </label>
+          {!parcel && !several && (
+            <label className="sm:col-span-2">
+              <span className={label}>BL (bon de livraison)</span>
+              <input
+                value={blNumber}
+                onChange={(e) => setBlNumber(e.target.value)}
+                placeholder="Facultatif — retrouve aussi le colis à la réception"
+                className={`${inputClass} font-mono`}
+              />
+            </label>
+          )}
           <div>
             <ReferenceSelect
               label="Transporteur"
@@ -359,7 +373,7 @@ export const ParcelFormModal: React.FC<Props> = ({
         {live && <ParcelBoxesSection parcel={live} onChanged={setLive} />}
 
         <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">
-          Sans date de livraison prévue, l'alerte de perte part de la date de facture. Un n° de suivi déjà connu rattache
+          Sans date de livraison prévue, l'alerte de perte part de la date de facture. Un n° de suivi ou un BL déjà connu rattache
           ces factures au colis existant (un colis peut couvrir plusieurs factures du même fournisseur).
         </p>
 

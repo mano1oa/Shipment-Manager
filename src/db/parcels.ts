@@ -282,6 +282,31 @@ export async function assignParcelTrackingNumber(
 }
 
 /**
+ * Gives its carrier (Settings list) to a parcel that has none (form of the
+ * point). The tracking connector linked to the carrier replaces the one
+ * detected from the number. Returns false when the parcel already has one.
+ */
+export async function setParcelCarrierIfEmpty(
+  id: string,
+  carrierName: string,
+  carrier: CarrierCode | null,
+  actorEmail: string
+): Promise<boolean> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    UPDATE parcels SET
+      carrier_name = ${carrierName},
+      carrier = COALESCE(${carrier}, carrier),
+      updated_by_email = ${actorEmail},
+      updated_at = NOW()
+    WHERE id = ${id} AND COALESCE(TRIM(carrier_name), '') = ''
+    RETURNING id
+  `;
+  return rows.length > 0;
+}
+
+/**
  * Supplier shown for the invoices (AMAZON for an Amazon order). A parcel only
  * covers invoices of one supplier: returns null when they differ or are unknown.
  */

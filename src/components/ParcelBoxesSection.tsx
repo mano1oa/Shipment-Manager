@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Camera, Loader2, Plus, Trash2 } from 'lucide-react';
-import { PARCEL_NUMBER_KINDS, PARCEL_NUMBER_KIND_LABELS, boxSummary } from '../lib/parcelBoxes';
+import { PARCEL_NUMBER_KINDS, PARCEL_NUMBER_KIND_LABELS, boxSummary, parcelNumberKindText } from '../lib/parcelBoxes';
 import type { ParcelNumberKind } from '../lib/parcelBoxes';
 import { Parcel, addParcelNumber, formatDate, inputClass, removeParcelNumber } from './digiApi';
 
@@ -39,7 +39,7 @@ export const ParcelBoxesSection: React.FC<Props> = ({ parcel, onChanged }) => {
   return (
     <div className="mt-4 space-y-4 border-t border-slate-100 pt-4 dark:border-slate-800">
       <div>
-        <span className={label}>Autres n° (fournisseur / transporteur / pièce)</span>
+        <span className={label}>Autres n° (BL / transporteur / pièce)</span>
         <p className="text-[10px] text-slate-500">Quel que soit le n° saisi au Point ou dans la recherche, on retombe sur ce colis.</p>
         {parcel.numbers.length > 0 && (
           <ul className="mt-1 space-y-1">
@@ -53,7 +53,7 @@ export const ParcelBoxesSection: React.FC<Props> = ({ parcel, onChanged }) => {
                   type="button"
                   disabled={busy}
                   onClick={() =>
-                    window.confirm(`Supprimer le ${PARCEL_NUMBER_KIND_LABELS[n.kind].toLowerCase()} ${n.number} ?`) &&
+                    window.confirm(`Supprimer le ${parcelNumberKindText(n.kind)} ${n.number} ?`) &&
                     run(() => removeParcelNumber(parcel.id, n.id))
                   }
                   title="Supprimer ce n°"

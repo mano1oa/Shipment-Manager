@@ -431,7 +431,16 @@ export type PointPhotoLink =
   | ({ parcel_id: string } & PointBoxFields)
   /** Parcel announced without number: the number read on the label completes it. */
   | ({ parcel_id: string; tracking_number: string } & PointBoxFields)
-  | ({ new_parcel: { tracking_number: string | null; invoice_ids: string[]; carrier_name?: string | null } } & PointBoxFields)
+  /** Form of the point: completes the parcel (number if it has none, BL, carrier if it has none). */
+  | ({ parcel_id: string; tracking_number?: string | null; bl_number?: string | null; carrier_name?: string | null } & PointBoxFields)
+  | ({
+      new_parcel: {
+        tracking_number: string | null;
+        bl_number?: string | null;
+        invoice_ids: string[];
+        carrier_name?: string | null;
+      };
+    } & PointBoxFields)
   /** Received before its invoice is in the base: linked to it later by the same number. */
   | ({ new_parcel: { tracking_number: string; supplier_name: string; without_invoice: true } } & PointBoxFields);
 
@@ -456,10 +465,11 @@ export const deletePointPhoto = (pointId: string, photoId: string) =>
 export const fetchInvoiceParcels = (invoiceId: string) =>
   apiJson<{ parcels: Parcel[] }>(`/api/digi-invoices/${invoiceId}/parcels`).then((d) => d.parcels);
 
-export const createParcel = (input: ParcelInput, invoiceIds: string[]) =>
+/** blNumber: BL of the new parcel, saved as another number of it. */
+export const createParcel = (input: ParcelInput, invoiceIds: string[], blNumber: string | null = null) =>
   apiJson<{ parcel: Parcel; existed: boolean; matched_by: 'primary' | ParcelNumberKind | null }>('/api/parcels', {
     method: 'POST',
-    body: JSON.stringify({ ...input, invoice_ids: invoiceIds }),
+    body: JSON.stringify({ ...input, invoice_ids: invoiceIds, bl_number: blNumber }),
   });
 
 export const updateParcel = (id: string, input: ParcelInput) =>
