@@ -64,6 +64,8 @@ export interface DigiInvoiceRecord {
   odoo_state: string | null;
   odoo_missing: boolean;
   odoo_synced_at: string | null;
+  /** Supplier typed in the app, when Odoo has another name for it (same BL). */
+  entered_supplier_name: string | null;
   amount_total: number | null;
   /** Shipment created for this invoice (null = none yet). */
   shipment_id: string | null;
@@ -154,7 +156,7 @@ async function initDigiInvoicesSchema(): Promise<void> {
       odoo_move_id INTEGER UNIQUE,
       odoo_move_name VARCHAR(255),
       odoo_state VARCHAR(30),
-      odoo_write_date VARCHAR(30),
+      odoo_write_date VARCHAR(40),
       odoo_missing BOOLEAN NOT NULL DEFAULT FALSE,
       odoo_synced_at TIMESTAMPTZ,
       created_by_email VARCHAR(255),
@@ -195,6 +197,10 @@ async function initDigiInvoicesSchema(): Promise<void> {
   await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS no_shipment BOOLEAN NOT NULL DEFAULT FALSE;`;
   await sql`CREATE INDEX IF NOT EXISTS idx_digi_invoices_shipment ON digi_invoices (shipment_id);`;
   await sql`ALTER TABLE digi_invoice_lines ADD COLUMN IF NOT EXISTS is_service BOOLEAN NOT NULL DEFAULT FALSE;`;
+  // Mirror sync_date (microseconds, maybe a time zone) is longer than Odoo's write_date
+  await sql`ALTER TABLE digi_invoices ALTER COLUMN odoo_write_date TYPE VARCHAR(40);`;
+  // Supplier typed in the app when Odoo took the invoice over under another name
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS entered_supplier_name VARCHAR(255);`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS app_migrations (
@@ -300,6 +306,7 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     odoo_state: row.odoo_state,
     odoo_missing: row.odoo_missing,
     odoo_synced_at: row.odoo_synced_at,
+    entered_supplier_name: row.entered_supplier_name ?? null,
     amount_total: isDigi ? linesTotal : toNumber(row.amount),
     shipment_id: row.shipment_id,
     shipment_exists: Boolean(row.shipment_exists),
@@ -334,7 +341,7 @@ const SELECT_WITH_LINES = `
     i.id, i.source, i.supplier_name, i.dest_partner_name, i.ref,
     TO_CHAR(i.invoice_date, 'YYYY-MM-DD') AS invoice_date,
     i.amazon_order_ref, i.sale_move_ref, i.odoo_move_id, i.odoo_move_name,
-    i.odoo_state, i.odoo_missing, i.odoo_synced_at,
+    i.odoo_state, i.odoo_missing, i.odoo_synced_at, i.entered_supplier_name,
     i.shipment_id, i.no_shipment,
     i.is_digi, i.amount, i.currency, i.buyer, i.validation_status, i.rejection_reason,
     i.validated_by_email, i.validated_at, i.triage, i.triaged_at,
@@ -409,6 +416,42 @@ async function findBySupplierAndRef(
   return (rows[0] as any) ?? null;
 }
 
+/** Odoo invoice with this BL, whatever the supplier name (often spelled differently by hand). */
+async function findOdooByRef(ref: string): Promise<{ id: string } | null> {
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id FROM digi_invoices
+    WHERE odoo_move_id IS NOT NULL AND LOWER(TRIM(ref)) = LOWER(TRIM(${ref}))
+    LIMIT 1
+  `;
+  return (rows[0] as any) ?? null;
+}
+
+/** Same supplier + BL, or an Odoo invoice with this BL. */
+async function findDuplicate(supplierName: string, ref: string): Promise<{ id: string } | null> {
+  return (await findBySupplierAndRef(supplierName, ref)) ?? (await findOdooByRef(ref));
+}
+
+function sameSupplier(a: string | null, b: string | null): boolean {
+  return (a ?? '').trim().toLowerCase() === (b ?? '').trim().toLowerCase();
+}
+
+/**
+ * Excel/manual invoice an Odoo invoice takes over: same BL and same supplier,
+ * else the only one with this BL (the supplier name was typed differently).
+ */
+async function findInvoiceToTakeOver(
+  supplierName: string | null,
+  ref: string
+): Promise<{ id: string; supplier_name: string | null } | null> {
+  const sql = getDb();
+  const rows = (await sql`
+    SELECT id, supplier_name FROM digi_invoices
+    WHERE odoo_move_id IS NULL AND LOWER(TRIM(ref)) = LOWER(TRIM(${ref}))
+  `) as { id: string; supplier_name: string | null }[];
+  return rows.find((r) => sameSupplier(r.supplier_name, supplierName)) ?? (rows.length === 1 ? rows[0] : null);
+}
+
 /**
  * Statements replacing the lines of an invoice (to run in a transaction).
  */
@@ -446,7 +489,7 @@ export async function createDigiInvoice(
   await ensureDigiInvoicesSchema();
   const sql = getDb();
 
-  const existing = await findBySupplierAndRef(input.supplier_name, input.ref);
+  const existing = await findDuplicate(input.supplier_name, input.ref);
   if (existing) throw new DuplicateDigiInvoiceError(existing.id);
 
   const id = crypto.randomUUID();
@@ -491,7 +534,7 @@ export async function updateDigiInvoice(
   if (rows[0].source === 'odoo') throw new ReadOnlyDigiInvoiceError();
   if (rows[0].is_digi === false) throw new WrongInvoiceKindError();
 
-  const existing = await findBySupplierAndRef(input.supplier_name, input.ref);
+  const existing = await findDuplicate(input.supplier_name, input.ref);
   if (existing && existing.id !== id) throw new DuplicateDigiInvoiceError(existing.id);
 
   try {
@@ -551,23 +594,30 @@ export async function getOdooWriteDates(): Promise<Map<number, string | null>> {
 /**
  * Inserts or replaces an invoice coming from Odoo.
  *
- * When an Excel/manual invoice with the same supplier + ref exists, it is
- * converted into the Odoo invoice (no duplicate): Odoo becomes its source.
+ * When an Excel/manual invoice with the same BL exists, it is converted into
+ * the Odoo invoice (no duplicate): Odoo becomes its source. If it was typed
+ * under another supplier name, that name is kept to show a warning.
  */
 export async function upsertOdooInvoice(input: OdooInvoiceInput): Promise<'created' | 'updated'> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
 
-  const byOdooId = await sql`SELECT id FROM digi_invoices WHERE odoo_move_id = ${input.odoo_move_id}`;
+  const byOdooId = await sql`
+    SELECT id, entered_supplier_name FROM digi_invoices WHERE odoo_move_id = ${input.odoo_move_id}
+  `;
   let id: string | null = byOdooId[0]?.id ?? null;
+  let enteredSupplier: string | null = byOdooId[0]?.entered_supplier_name ?? null;
   let outcome: 'created' | 'updated' = 'updated';
 
-  if (!id && input.supplier_name && input.ref) {
-    const sameRef = await findBySupplierAndRef(input.supplier_name, input.ref);
-    if (sameRef && sameRef.odoo_move_id === null) {
-      id = sameRef.id;
+  if (!id && input.ref) {
+    const taken = await findInvoiceToTakeOver(input.supplier_name, input.ref);
+    if (taken) {
+      id = taken.id;
+      enteredSupplier = taken.supplier_name;
     }
   }
+  // Warning dropped once Odoo has the same name
+  if (sameSupplier(enteredSupplier, input.supplier_name)) enteredSupplier = null;
   if (!id) {
     id = crypto.randomUUID();
     outcome = 'created';
@@ -578,14 +628,15 @@ export async function upsertOdooInvoice(input: OdooInvoiceInput): Promise<'creat
       INSERT INTO digi_invoices (
         id, source, supplier_name, supplier_odoo_id, dest_partner_name, dest_partner_odoo_id,
         ref, invoice_date, amazon_order_ref, sale_move_ref, sale_move_odoo_id,
-        odoo_move_id, odoo_move_name, odoo_state, odoo_write_date, odoo_missing, odoo_synced_at
+        odoo_move_id, odoo_move_name, odoo_state, odoo_write_date, odoo_missing, odoo_synced_at,
+        entered_supplier_name
       ) VALUES (
         ${id}, 'odoo', ${input.supplier_name}, ${input.supplier_odoo_id},
         ${input.dest_partner_name}, ${input.dest_partner_odoo_id},
         ${input.ref}, ${input.invoice_date}, ${input.amazon_order_ref},
         ${input.sale_move_ref}, ${input.sale_move_odoo_id},
         ${input.odoo_move_id}, ${input.odoo_move_name}, ${input.odoo_state},
-        ${input.odoo_write_date}, FALSE, NOW()
+        ${input.odoo_write_date}, FALSE, NOW(), ${enteredSupplier}
       )
       ON CONFLICT (id) DO UPDATE SET
         source = 'odoo',
@@ -604,6 +655,7 @@ export async function upsertOdooInvoice(input: OdooInvoiceInput): Promise<'creat
         odoo_write_date = EXCLUDED.odoo_write_date,
         odoo_missing = FALSE,
         odoo_synced_at = NOW(),
+        entered_supplier_name = EXCLUDED.entered_supplier_name,
         updated_at = NOW()
     `,
     ...replaceLinesQueries(id, input.lines),
@@ -692,7 +744,8 @@ function invoiceKey(supplierName: string, ref: string): string {
 
 /**
  * Creates many invoices at once. Invoices whose supplier + ref already exist
- * (whatever their source) are left untouched and reported as duplicates.
+ * (whatever their source), or whose BL is an Odoo invoice's, are left
+ * untouched and reported as duplicates.
  */
 export async function importDigiInvoices(
   inputs: DigiInvoiceInput[],
@@ -702,16 +755,21 @@ export async function importDigiInvoices(
   const sql = getDb();
 
   const existingRows = await sql`
-    SELECT supplier_name, ref FROM digi_invoices
-    WHERE supplier_name IS NOT NULL AND ref IS NOT NULL
+    SELECT supplier_name, ref, odoo_move_id FROM digi_invoices
+    WHERE ref IS NOT NULL
   `;
-  const existing = new Set(existingRows.map((r: any) => invoiceKey(r.supplier_name, r.ref)));
+  const existing = new Set(
+    existingRows.filter((r: any) => r.supplier_name !== null).map((r: any) => invoiceKey(r.supplier_name, r.ref))
+  );
+  const odooRefs = new Set(
+    existingRows.filter((r: any) => r.odoo_move_id !== null).map((r: any) => String(r.ref).trim().toLowerCase())
+  );
 
   const duplicates: string[] = [];
   const fresh: DigiInvoiceInput[] = [];
   for (const input of inputs) {
     const key = invoiceKey(input.supplier_name, input.ref);
-    if (existing.has(key)) {
+    if (existing.has(key) || odooRefs.has(input.ref.trim().toLowerCase())) {
       duplicates.push(input.ref);
     } else {
       existing.add(key);

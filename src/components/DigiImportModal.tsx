@@ -151,7 +151,7 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
             <p className="mt-1">
               Si la colonne « Entité de destination » est présente, seules les factures {destination} sont importées.
               Les factures annulées (colonne « État ») sont ignorées. Une facture déjà connue (même fournisseur et même
-              référence) n'est jamais écrasée.
+              BL, ou même BL qu'une facture Odoo) n'est jamais écrasée.
             </p>
           </div>
 

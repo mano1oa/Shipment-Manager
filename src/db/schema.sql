@@ -187,7 +187,7 @@ CREATE TABLE IF NOT EXISTS digi_invoices (
     odoo_move_id INTEGER UNIQUE,
     odoo_move_name VARCHAR(255),
     odoo_state VARCHAR(30),
-    odoo_write_date VARCHAR(30),
+    odoo_write_date VARCHAR(40),         -- sync_date du miroir (facture ou lignes)
     odoo_missing BOOLEAN NOT NULL DEFAULT FALSE,
     odoo_synced_at TIMESTAMPTZ,
     created_by_email VARCHAR(255),
@@ -237,3 +237,4 @@ ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS shipment_created_at TIMESTAMP
 ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS no_shipment BOOLEAN NOT NULL DEFAULT FALSE; -- services, pas d'expédition
 CREATE INDEX IF NOT EXISTS idx_digi_invoices_shipment ON digi_invoices (shipment_id);
 ALTER TABLE digi_invoice_lines ADD COLUMN IF NOT EXISTS is_service BOOLEAN NOT NULL DEFAULT FALSE; -- ligne [SERVICES] (DEEE, RCP, FRDP)
+ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS entered_supplier_name VARCHAR(255); -- fournisseur saisi, quand Odoo a repris la facture (même BL) sous un autre nom
