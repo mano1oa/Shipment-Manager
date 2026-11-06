@@ -12,11 +12,17 @@ import type { ParcelDestination, ParcelStatus, TrackingSettings } from './parcel
 export const PARCEL_NUMBER_KINDS = ['supplier', 'carrier', 'piece'] as const;
 export type ParcelNumberKind = (typeof PARCEL_NUMBER_KINDS)[number];
 
+/** "BL", not "n° fournisseur": too close to the invoice reference of the supplier. */
 export const PARCEL_NUMBER_KIND_LABELS: Record<ParcelNumberKind, string> = {
-  supplier: 'N° fournisseur',
+  supplier: 'BL',
   carrier: 'N° transporteur',
   piece: 'N° de pièce',
 };
+
+/** Label inside a sentence ("le BL …", "le n° de pièce …"). */
+export function parcelNumberKindText(kind: ParcelNumberKind): string {
+  return kind === 'supplier' ? PARCEL_NUMBER_KIND_LABELS.supplier : PARCEL_NUMBER_KIND_LABELS[kind].toLowerCase();
+}
 
 export function isParcelNumberKind(value: unknown): value is ParcelNumberKind {
   return typeof value === 'string' && (PARCEL_NUMBER_KINDS as readonly string[]).includes(value);

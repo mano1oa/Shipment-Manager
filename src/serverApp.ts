@@ -138,9 +138,10 @@ import {
   addParcelNumber,
   removeParcelNumber,
   NumberTakenError,
+  setParcelCarrierIfEmpty,
   mergeParcelInto,
 } from './db/parcels.js';
-import { PARCEL_NUMBER_KIND_LABELS, isParcelNumberKind, normalizeParcelNumber } from './lib/parcelBoxes.js';
+import { PARCEL_NUMBER_KIND_LABELS, isParcelNumberKind, normalizeParcelNumber, parcelNumberKindText } from './lib/parcelBoxes.js';
 import { AMAZON_IMPORT_MAX_ROWS, orderKey } from './lib/amazonReport.js';
 import type { AmazonImportLine, AmazonImportOutcome } from './lib/amazonReport.js';
 import type { CarrierCode } from './lib/carrierDetection.js';
@@ -2370,8 +2371,27 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       const receivedAt = receivedNow ? parseReceptionDate(req.body?.received_at) : null;
       if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
+      // BL typed in the form: another number of the parcel, refused when another parcel has it
+      const bl =
+        typeof req.body?.bl_number === 'string' && req.body.bl_number.trim()
+          ? normalizeParcelNumber('supplier', req.body.bl_number)
+          : null;
+      if (bl && bl.length > 100) return res.status(400).json({ success: false, error: 'BL : 100 caractères maximum.' });
+      const blOwner = bl ? (await findByTrackingNumber(bl))?.id ?? null : null;
+      const numberOwner = value.tracking_number ? (await findByTrackingNumber(value.tracking_number))?.id ?? null : null;
+      if (blOwner && blOwner !== numberOwner) {
+        return res.status(409).json({ success: false, error: `Le BL ${bl} est déjà utilisé par le ${await describeParcelOwner(blOwner)}.` });
+      }
 
       const { id, existed, matched } = await createParcel(value, invoiceIds, supplier, req.user.email);
+      if (bl && blOwner !== id) {
+        try {
+          await addParcelNumber(id, bl, 'supplier', req.user.email);
+        } catch (err: any) {
+          // The BL is the number just given (same text): nothing to add
+          if (!(err instanceof NumberTakenError)) throw err;
+        }
+      }
       if (receivedNow) await setParcelStatus(id, 'received', receivedAt, req.user.email);
       const parcel = await getParcel(id);
       if (existed && parcel) {
@@ -2392,6 +2412,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         actor: req.user,
         details: {
           tracking_number: value.tracking_number,
+          bl_number: bl,
           carrier: value.carrier,
           destination: value.destination,
           invoice_ids: invoiceIds,
@@ -2399,7 +2420,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           matched_by: matched,
         },
       });
-      // Found by another number of the parcel: told to the user ("trouvé par son n° fournisseur")
+      // Found by another number of the parcel: told to the user ("trouvé par son BL")
       return res
         .status(existed ? 200 : 201)
         .json({ success: true, existed, matched_by: matched, parcel: await getParcel(id) });
@@ -2594,7 +2615,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     } catch (err: any) {
       if (err instanceof NumberTakenError) {
         const owner = err.ownerId === req.params.id ? 'déjà un n° de ce colis' : `déjà utilisé par le ${await describeParcelOwner(err.ownerId)}`;
-        return res.status(409).json({ success: false, error: `Le ${PARCEL_NUMBER_KIND_LABELS[kind].toLowerCase()} ${number} est ${owner}.` });
+        return res.status(409).json({ success: false, error: `Le ${parcelNumberKindText(kind)} ${number} est ${owner}.` });
       }
       console.error('[Parcels] Add number error:', err);
       return res.status(500).json({ success: false, error: "Impossible d'ajouter ce n°" });
@@ -2983,8 +3004,9 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
   /**
    * Matches a photo of the point:
-   * - { parcel_id }: an existing parcel (number read on the label);
-   * - { new_parcel: { tracking_number?, invoice_ids } }: a parcel not announced
+   * - { parcel_id }: an existing parcel (number read on the label), optionally
+   *   completed by tracking_number (parcel without one), bl_number, carrier_name;
+   * - { new_parcel: { tracking_number?, bl_number?, carrier_name?, invoice_ids } }: a parcel not announced
    *   (or label unreadable), created for invoices of one supplier;
    * - { parcel_id: null }: back to "to match": its box is removed (a received
    *   parcel with no box left goes back to "to receive").
@@ -3031,6 +3053,21 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         }
       }
 
+      // BL of the parcel (form of the point): refused before anything is created when another parcel has it
+      const blInput = typeof req.body?.bl_number === 'string' ? req.body.bl_number : req.body?.new_parcel?.bl_number;
+      const bl = typeof blInput === 'string' && blInput.trim() ? normalizeParcelNumber('supplier', blInput) : null;
+      if (bl && bl.length > 100) return res.status(400).json({ success: false, error: 'BL : 100 caractères maximum.' });
+      let blOwner: string | null = null;
+      if (bl) {
+        blOwner = (await findByTrackingNumber(bl))?.id ?? null;
+        if (blOwner && blOwner !== req.body?.parcel_id) {
+          return res.status(409).json({
+            success: false,
+            error: `Le BL ${bl} est déjà utilisé par le ${await describeParcelOwner(blOwner)} : choisissez ce colis.`,
+          });
+        }
+      }
+
       let parcelId: string;
       let created = false;
       if (typeof req.body?.parcel_id === 'string') {
@@ -3046,6 +3083,19 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
               error: `Le n° ${typed.number} est déjà utilisé par un autre colis : choisissez ce colis.`,
             });
           }
+        }
+        // Carrier chosen in the form of the point: only for a parcel without one
+        const carrierName = typeof req.body?.carrier_name === 'string' ? req.body.carrier_name.trim() : '';
+        if (carrierName && !target.carrier_name) {
+          const resolved = await resolveParcelCarrier(carrierName, target.carrier);
+          if (!resolved) {
+            return res.status(400).json({
+              success: false,
+              error: `Transporteur « ${carrierName} » inconnu ou désactivé : ajoutez-le dans Paramètres › Transporteurs.`,
+            });
+          }
+          const code = resolved.trackingCode && isCarrierCode(resolved.trackingCode) ? resolved.trackingCode : null;
+          await setParcelCarrierIfEmpty(parcelId, resolved.name, code, req.user.email);
         }
       } else if (req.body?.new_parcel?.without_invoice === true) {
         // Received before its invoice is in the base: the invoice is linked later by the same number
@@ -3074,6 +3124,23 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         const outcome = await createParcel(value, input.invoice_ids, supplier, req.user.email, { createdAtPointId: point.id });
         parcelId = outcome.id;
         created = !outcome.existed;
+      }
+
+      // The BL becomes another number of the parcel (any of them finds it)
+      if (bl && blOwner !== parcelId) {
+        try {
+          await addParcelNumber(parcelId, bl, 'supplier', req.user.email);
+          await writeAuditLog({
+            entityType: 'PARCEL',
+            entityId: parcelId,
+            action: 'ADD_PARCEL_NUMBER',
+            actor: req.user,
+            details: { number: bl, kind: 'supplier', source: 'point' },
+          });
+        } catch (err: any) {
+          // Taken meanwhile, or the BL is the number just given: the photo is still matched
+          if (!(err instanceof NumberTakenError)) throw err;
+        }
       }
 
       const outcome = await receiveBox({
