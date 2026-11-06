@@ -2,6 +2,7 @@ import { getTrackingSettings } from '../db/settings.js';
 import { listLostParcelsToNotify, markLossesNotified, markOverdueParcelsLost } from '../db/parcels.js';
 import type { LostParcelToNotify } from '../db/parcels.js';
 import { formatDate } from '../lib/dateFormat.js';
+import { sendChatMessage } from './googleChat.js';
 
 /**
  * Daily check (8 h, Madagascar): parcels not confirmed in time become "lost",
@@ -26,25 +27,18 @@ export function lostParcelsMessage(parcels: LostParcelToNotify[]): string {
   return `🚨 *Colis non reçus — ${parcels.length} à réclamer aux fournisseurs*\n${lines.join('\n')}${more}\n👉 Détail et messages de réclamation dans Shipment Manager › Alertes.`;
 }
 
-export async function runParcelLossCheck(): Promise<{ marked_lost: number; announced: number; webhook: boolean }> {
+export async function runParcelLossCheck(): Promise<{ marked_lost: number; announced: number; chat_error: string | null }> {
   const settings = await getTrackingSettings();
   const markedLost = await markOverdueParcelsLost(settings);
   const toNotify = await listLostParcelsToNotify();
-  const webhook = process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
-  if (toNotify.length === 0 || !webhook) {
-    return { marked_lost: markedLost, announced: 0, webhook: Boolean(webhook) };
-  }
+  if (toNotify.length === 0) return { marked_lost: markedLost, announced: 0, chat_error: null };
 
-  const res = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-    body: JSON.stringify({ text: lostParcelsMessage(toNotify) }),
-  });
-  if (!res.ok) {
+  const { sent, error } = await sendChatMessage('parcel_lost', lostParcelsMessage(toNotify));
+  if (sent === 0) {
     // Not marked: announced again at the next run
-    console.error('[Parcels] Google Chat summary rejected:', res.status, await res.text().catch(() => ''));
-    return { marked_lost: markedLost, announced: 0, webhook: true };
+    console.error('[Parcels] Google Chat summary not sent:', error);
+    return { marked_lost: markedLost, announced: 0, chat_error: error };
   }
   await markLossesNotified(toNotify.map((p) => p.id));
-  return { marked_lost: markedLost, announced: toNotify.length, webhook: true };
+  return { marked_lost: markedLost, announced: toNotify.length, chat_error: error };
 }

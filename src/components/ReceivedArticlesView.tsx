@@ -93,7 +93,7 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-extrabold text-slate-900 dark:text-white">
-            <ClipboardCheck className="h-5 w-5 text-[#623387]" /> Articles reçus à Madagascar
+            <ClipboardCheck className="h-5 w-5 text-[#623387]" /> Réception Madagascar
           </h1>
           <p className="mt-1 text-xs text-slate-500">
             Articles des expéditions confirmées : saisissez la quantité reçue de chaque article à l'arrivée.

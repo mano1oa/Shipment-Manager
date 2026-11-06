@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   Database,
-  Workflow,
-  Radio,
   CheckCircle2,
   RefreshCw,
-  Send,
   ExternalLink,
   Server,
   AlertCircle,
@@ -273,12 +270,10 @@ export const NeonDatabasePanel: React.FC = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Intégrations : N8N / Google Chat, Google Sheets, seuils d'alerte
+// Intégrations : Google Sheets, seuils d'alerte (Google Chat : SettingsWebhooksPanel)
 // ---------------------------------------------------------------------------
 
 export const IntegrationsPanel: React.FC = () => {
-  const [webhookStatus, setWebhookStatus] = useState<{ ok: boolean; text: string } | null>(null);
-  const [testingWebhook, setTestingWebhook] = useState(false);
   // Legacy Google Sheets (read only, no sync): URLs come from server env vars, not from the code
   const [sheetLinks, setSheetLinks] = useState<{ air: string | null; sea: string | null }>({ air: null, sea: null });
 
@@ -289,73 +284,8 @@ export const IntegrationsPanel: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  const handleTestN8NWebhook = async () => {
-    setTestingWebhook(true);
-    setWebhookStatus(null);
-    try {
-      const res = await fetch('/api/google-chat-webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          message: '🧪 Test d\'intégration N8N -> webhook Google Chat depuis Shipment Manager (Paramètres)',
-          recipientSpace: 'SupplyChain-Alerts',
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data?.success) {
-        setWebhookStatus({ ok: true, text: 'Succès ! Message de test transmis à Google Chat.' });
-      } else {
-        setWebhookStatus({ ok: false, text: `Échec : ${data?.error || `erreur ${res.status}`}` });
-      }
-    } catch (err) {
-      setWebhookStatus({ ok: false, text: 'Erreur lors de la transmission au webhook.' });
-    } finally {
-      setTestingWebhook(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
-      <SettingsCard
-        icon={Workflow}
-        iconClass="bg-pink-50 text-[#9E1B65] dark:bg-pink-950/40 dark:text-[#ED5DB2]"
-        title="Intégration N8N et webhook Google Chat"
-        description="Relances et alertes envoyées dans l'espace Google Chat de la Supply Chain."
-        actions={
-          <button
-            onClick={handleTestN8NWebhook}
-            disabled={testingWebhook}
-            className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870] disabled:opacity-50"
-          >
-            <Send className="h-3.5 w-3.5" />
-            {testingWebhook ? 'Test en cours...' : 'Tester le webhook'}
-          </button>
-        }
-      >
-        <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-          Les relances (Centre d'alertes, fiche expédition) et le test ci-dessus sont envoyés par le serveur vers le
-          webhook de la variable <code className="font-mono text-[11px]">GOOGLE_CHAT_WEBHOOK_URL</code> (Google Chat
-          directement, ou un workflow N8N). Les données viennent uniquement de Neon : aucune lecture
-          ni écriture dans Google Sheets.
-        </p>
-        <div className="mt-3 flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
-          <Radio className="h-4 w-4 text-emerald-500" /> Webhook Google Chat configuré côté serveur
-        </div>
-
-        {webhookStatus && (
-          <div
-            className={`mt-3 rounded-lg border p-2.5 text-xs font-semibold ${
-              webhookStatus.ok
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400'
-                : 'border-rose-200 bg-rose-50 text-rose-600 dark:border-rose-900 dark:bg-rose-950 dark:text-rose-400'
-            }`}
-          >
-            {webhookStatus.text}
-          </div>
-        )}
-      </SettingsCard>
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <SettingsCard
           icon={Database}

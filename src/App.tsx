@@ -290,7 +290,7 @@ useEffect(() => {
     const evaluated = evaluateShipmentRules(shipments, valueOfShipment);
     // Parcel alerts: lost before the hub, avis de recherche, DIGI invoices not sorted
     const parcelAlerts = parcelsOverview
-      ? evaluateParcelAlerts(parcelsOverview.parcels, parcelsOverview.late_triage_invoices)
+      ? evaluateParcelAlerts(parcelsOverview.parcels)
       : [];
     return { ...evaluated, allAlerts: [...evaluated.allAlerts, ...parcelAlerts] };
   }, [shipments, digiValueFor, parcelsOverview]);

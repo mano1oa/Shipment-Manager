@@ -466,37 +466,6 @@ export async function markLossesNotified(ids: string[]): Promise<void> {
   await sql`UPDATE parcels SET loss_notified_at = NOW() WHERE id = ANY(${ids}::uuid[])`;
 }
 
-export interface LateTriageInvoice {
-  id: string;
-  ref: string | null;
-  supplier_display: string | null;
-  created_at: string;
-}
-
-/** DIGI invoices still unsorted after the delay of the settings. */
-export async function listLateTriageInvoices(settings: TrackingSettings): Promise<LateTriageInvoice[]> {
-  await ensureDigiInvoicesSchema();
-  const sql = getDb();
-  const rows = await sql`
-    SELECT i.id, i.ref, i.supplier_name, i.amazon_order_ref, i.created_at
-    FROM digi_invoices i
-    WHERE i.is_digi AND COALESCE(i.triage, 'to_sort') = 'to_sort' AND NOT i.no_shipment
-      AND i.created_at < NOW() - make_interval(days => ${settings.triage_alert_days}::int)
-      -- fee-only invoices are services without sorting
-      AND (
-        NOT EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id)
-        OR EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id AND NOT l.is_service)
-      )
-    ORDER BY i.created_at
-  `;
-  return (rows as any[]).map((r) => ({
-    id: r.id,
-    ref: r.ref,
-    supplier_display: trackingSupplierName(r.supplier_name, r.amazon_order_ref),
-    created_at: r.created_at,
-  }));
-}
-
 // ---------------------------------------------------------------------------
 // Photos (object storage key only)
 // ---------------------------------------------------------------------------
@@ -555,6 +524,12 @@ export async function listGoodsInvoicesWithoutParcel(): Promise<InvoiceWithoutPa
       AND i.validation_status <> 'rejected'
       AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.invoice_id = i.id)
       AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = i.shipment_id)
+      -- fee-only DIGI invoices (DEEE, port…) are services: nothing to ship
+      AND (
+        NOT i.is_digi
+        OR NOT EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id)
+        OR EXISTS (SELECT 1 FROM digi_invoice_lines l WHERE l.invoice_id = i.id AND NOT l.is_service)
+      )
     ORDER BY i.invoice_date NULLS LAST, i.ref
   `;
   return (rows as any[]).map((r) => ({
@@ -609,7 +584,7 @@ export async function findAmazonOrderInvoices(orderKeys: string[], refKeys: stri
     SELECT i.id, i.ref,
       COALESCE(regexp_replace(UPPER(i.amazon_order_ref), '[^A-Z0-9]', '', 'g'), '') AS order_key,
       COALESCE(regexp_replace(UPPER(i.ref), '[^A-Z0-9]', '', 'g'), '') AS ref_key,
-      COALESCE(i.triage, 'to_sort') AS triage,
+      COALESCE(i.triage, 'goods') AS triage,
       COALESCE((SELECT array_agg(pi.parcel_id::text ORDER BY p.created_at) FROM parcel_invoices pi
         JOIN parcels p ON p.id = pi.parcel_id WHERE pi.invoice_id = i.id), '{}') AS parcel_ids,
       COALESCE((SELECT array_agg(pi.parcel_id::text ORDER BY p.created_at) FROM parcel_invoices pi

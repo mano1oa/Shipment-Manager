@@ -315,7 +315,7 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     rejection_reason: row.rejection_reason ?? null,
     validated_by_email: row.validated_by_email ?? null,
     validated_at: row.validated_at ?? null,
-    triage: (row.triage as InvoiceTriage) || (row.no_shipment ? 'services' : 'to_sort'),
+    triage: (row.triage as InvoiceTriage) || (row.no_shipment ? 'services' : 'goods'),
     triaged_at: row.triaged_at ?? null,
     parcel_count: Number(row.parcel_count) || 0,
     parcel_received_count: Number(row.parcel_received_count) || 0,
@@ -858,7 +858,7 @@ export async function setInvoiceNoShipment(
   await sql`
     UPDATE digi_invoices SET
       no_shipment = ${noShipment},
-      triage = CASE WHEN ${noShipment} THEN 'services' WHEN triage = 'services' THEN 'to_sort' ELSE triage END,
+      triage = CASE WHEN ${noShipment} THEN 'services' ELSE 'goods' END,
       triaged_at = NOW(),
       shipment_id = CASE WHEN ${noShipment} THEN NULL ELSE shipment_id END,
       updated_at = NOW()
@@ -869,7 +869,7 @@ export async function setInvoiceNoShipment(
 
 /**
  * Sorts a DIGI invoice: goods (tracked: parcels, loss alerts), services (out
- * of tracking, detached from its shipment) or back to "to sort".
+ * of tracking, detached from its shipment).
  * `no_shipment` mirrors "services" for the screens not yet using the sort.
  */
 export async function setInvoiceTriage(

@@ -75,7 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'received' as NavTab,
-      label: 'Articles reçus à Madagascar',
+      label: 'Réception Madagascar',
       icon: ClipboardCheck,
       badge: null,
       allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],

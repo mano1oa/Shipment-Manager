@@ -20,7 +20,6 @@ import {
   Package,
   ShieldCheck,
   ShieldX,
-  Undo2,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -51,7 +50,7 @@ import { DigiImportModal } from './DigiImportModal';
 import { ParcelFormModal } from './ParcelFormModal';
 import { InvoiceParcelsPanel } from './InvoiceParcelsPanel';
 import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
-import { VALIDATION_STATUS_LABELS, amountInEur, triageDeadline } from '../lib/parcelTracking';
+import { VALIDATION_STATUS_LABELS, amountInEur } from '../lib/parcelTracking';
 import type { InvoiceTriage, TrackingSettings } from '../lib/parcelTracking';
 
 interface Props {
@@ -69,17 +68,16 @@ interface Props {
 }
 
 /**
- * to_sort: DIGI invoices not sorted yet · goods: tracked (parcels) ·
- * services: nothing to ship · validation: "hors DIGI" waiting for Supply Chain.
+ * goods: tracked (parcels), every invoice by default ·
+ * services: nothing to ship (changed by hand, or fee-only) · validation: "hors DIGI" waiting for Supply Chain.
  */
-type Section = 'to_sort' | 'goods' | 'services' | 'validation';
+type Section = 'goods' | 'services' | 'validation';
 
 const sectionsOf = (inv: DigiInvoice): Section[] => {
   if (isServicesInvoice(inv)) return ['services'];
   const sections: Section[] = [];
   if (isAwaitingValidation(inv)) sections.push('validation');
   if (isGoodsInvoice(inv)) sections.push('goods');
-  else if (inv.is_digi) sections.push('to_sort');
   return sections;
 };
 
@@ -98,6 +96,10 @@ const parcelState = (inv: DigiInvoice): Exclude<ParcelFilter, 'all'> =>
 
 const NO_SUPPLIER = '— Sans fournisseur —';
 const supplierOf = (inv: DigiInvoice) => inv.supplier_display || NO_SUPPLIER;
+
+/** DIGI invoice set to services by hand (fee-only invoices stay in services). */
+const canBackToGoods = (inv: DigiInvoice) =>
+  inv.is_digi && (inv.triage === 'services' || inv.no_shipment) && !(inv.lines.length > 0 && !inv.has_items);
 
 const SOURCE_BADGES: Record<DigiInvoiceSource, string> = {
   odoo: 'bg-[#EAD7F9] text-[#623387] dark:bg-purple-950 dark:text-[#B688FF]',
@@ -125,7 +127,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | DigiInvoiceSource>('all');
-  const [section, setSection] = useState<Section>('to_sort');
+  const [section, setSection] = useState<Section>('goods');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [supplierFilter, setSupplierFilter] = useState('all');
@@ -211,7 +213,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
   const TRIAGE_DONE: Record<InvoiceTriage, string> = {
     goods: 'classée en marchandises (suivi des colis)',
     services: 'classée en services (pas de colis)',
-    to_sort: 'remise à trier',
   };
 
   const shipmentName = (id: string) => shipmentLabel(shipments.find((s) => s.id === id), id);
@@ -287,26 +288,15 @@ export const DigiInvoicesView: React.FC<Props> = ({
   /** Sourcing corrects its "hors DIGI" invoices until they are validated. */
   const canEditDirect = (inv: DigiInvoice) => isSupplyChain || inv.validation_status !== 'validated';
 
-  const today = new Date().toISOString().slice(0, 10);
-  const isTriageLate = (inv: DigiInvoice) => {
-    const deadline = triageDeadline(inv.created_at, settings);
-    return deadline !== null && today > deadline;
-  };
-
   const sectionInvoices = useMemo(
     () => invoices.filter((inv) => sectionsOf(inv).includes(section)),
     [invoices, section]
   );
   const sectionCounts = useMemo(() => {
-    const counts: Record<Section, number> = { to_sort: 0, goods: 0, services: 0, validation: 0 };
+    const counts: Record<Section, number> = { goods: 0, services: 0, validation: 0 };
     invoices.forEach((inv) => sectionsOf(inv).forEach((s) => counts[s]++));
     return counts;
   }, [invoices]);
-
-  // "À trier" is hidden when empty: open on the goods instead
-  useEffect(() => {
-    if (!loading && section === 'to_sort' && sectionCounts.to_sort === 0) setSection('goods');
-  }, [loading, section, sectionCounts.to_sort]);
 
   const suppliers = useMemo(
     () => Array.from(new Set<string>(sectionInvoices.map(supplierOf))).sort((a, b) => a.localeCompare(b, 'fr')),
@@ -368,10 +358,9 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return n === 0 ? false : n === list.length ? true : 'mixed';
   };
 
-  const toGoods = selectedInvoices.filter((i) => i.is_digi && i.triage !== 'goods' && !isServicesInvoice(i));
-  const toServices = selectedInvoices.filter((i) => i.is_digi && i.triage !== 'services');
-  // Fee-only invoices stay in services: only the ones sorted by hand go back
-  const backToSort = selectedInvoices.filter((i) => i.is_digi && i.triage !== 'to_sort' && (i.triage !== 'services' || i.has_items));
+  // Fee-only invoices stay in services: only the ones changed by hand go back
+  const toGoods = selectedInvoices.filter(canBackToGoods);
+  const toServices = selectedInvoices.filter((i) => i.is_digi && !isServicesInvoice(i));
   const forParcel = selectedInvoices.filter((i) => isGoodsInvoice(i));
   const toValidate = selectedInvoices.filter((i) => i.validation_status === 'pending');
   const toReject = selectedInvoices.filter((i) => !i.is_digi && i.validation_status === 'pending');
@@ -406,7 +395,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
   };
 
   const handleBulkTriage = async (triage: InvoiceTriage) => {
-    const list = triage === 'goods' ? toGoods : triage === 'services' ? toServices : backToSort;
+    const list = triage === 'goods' ? toGoods : toServices;
     const withShipment = list.filter((i) => i.shipment_id && i.shipment_exists);
     const question =
       triage === 'services'
@@ -414,9 +403,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
           (withShipment.length > 0
             ? ` ${withShipment.length} seront détachées de leur expédition, qui reste à supprimer si elle n'a plus lieu d'être.`
             : '')
-        : triage === 'goods'
-        ? `Classer ${list.length} facture(s) en marchandises ? Leurs colis seront suivis jusqu'à Orly (alertes de perte).`
-        : `Remettre ${list.length} facture(s) à trier ?`;
+        : `Remettre ${list.length} facture(s) en marchandises ? Leurs colis seront suivis jusqu'à Orly (alertes de perte).`;
     if (!window.confirm(question)) return;
     let detached = false;
     const done = await runBulk('Tri', list, async (inv) => {
@@ -538,14 +525,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
           </td>
           <td className="px-3 py-3">
             {formatDate(inv.invoice_date)}
-            {section === 'to_sort' && isTriageLate(inv) && (
-              <span
-                title={`Arrivée le ${formatDate(inv.created_at)} : à trier sous ${settings?.triage_alert_days ?? 3} jours`}
-                className="mt-0.5 block w-fit rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700 dark:bg-rose-950 dark:text-rose-300"
-              >
-                Tri en retard
-              </span>
-            )}
           </td>
           <td className="px-3 py-3 font-mono">{inv.amazon_order_ref || '—'}</td>
           <td className="px-3 py-3">{inv.sale_move_ref || '—'}</td>
@@ -625,34 +604,24 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   <Package className="h-4 w-4" />
                 </button>
               )}
-              {inv.is_digi && inv.triage !== 'goods' && !isServicesInvoice(inv) && (
+              {canBackToGoods(inv) && (
                 <button
                   onClick={() => handleTriage(inv, 'goods')}
                   disabled={busyId === inv.id}
-                  title="Marchandises : suivre ses colis jusqu'à Orly"
+                  title="Remettre en marchandises : suivre ses colis jusqu'à Orly"
                   className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
                 >
                   <PackageCheck className="h-4 w-4" />
                 </button>
               )}
-              {inv.is_digi && inv.triage !== 'services' && (
+              {inv.is_digi && !isServicesInvoice(inv) && (
                 <button
                   onClick={() => handleTriage(inv, 'services')}
                   disabled={busyId === inv.id}
-                  title="Services : pas de colis"
+                  title="Changer en services : pas de colis"
                   className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
                 >
                   <Wrench className="h-4 w-4" />
-                </button>
-              )}
-              {inv.is_digi && inv.triage !== 'to_sort' && (inv.triage !== 'services' || inv.has_items) && (
-                <button
-                  onClick={() => handleTriage(inv, 'to_sort')}
-                  disabled={busyId === inv.id}
-                  title="Remettre à trier"
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
-                >
-                  <Undo2 className="h-4 w-4" />
                 </button>
               )}
               {editable && (inv.is_digi || canEditDirect(inv)) && (
@@ -853,17 +822,15 @@ export const DigiInvoicesView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Sections: "À trier" only when it holds invoices */}
+      {/* Sections */}
       <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-200/60 p-1 text-xs font-semibold w-fit dark:bg-slate-800">
         {(
           [
-            ['to_sort', 'À trier'],
             ['goods', 'Marchandises (suivi colis)'],
             ['services', 'Services'],
             ['validation', 'Hors DIGI à valider'],
           ] as [Section, string][]
         )
-          .filter(([key]) => key !== 'to_sort' || sectionCounts.to_sort > 0)
           .map(([key, label]) => (
             <button
               key={key}
@@ -880,12 +847,10 @@ export const DigiInvoicesView: React.FC<Props> = ({
       </div>
 
       <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
-        {section === 'to_sort' &&
-          `Factures DIGI pas encore triées : aucune alerte de perte tant qu'elles ne sont pas classées en marchandises. Signalées « Tri en retard » après ${settings?.triage_alert_days ?? 3} jours.`}
         {section === 'goods' &&
-          'Factures dont les colis sont suivis jusqu\'à Orly (alerte de perte si un colis n\'est pas confirmé à temps). Les factures hors DIGI à valider y figurent aussi : leurs colis peuvent déjà être suivis.'}
+          'Toutes les factures importées (Odoo ou fichier) arrivent ici : leurs colis sont suivis jusqu\'à Orly (alerte de perte si un colis n\'est pas confirmé à temps). Une facture de services se change avec le bouton « Services ». Les factures hors DIGI à valider y figurent aussi.'}
         {section === 'services' &&
-          'Factures sans article à expédier (frais DEEE, RCP, port… ou classées à la main) : pas de colis, traitement manuel.'}
+          'Factures sans article à expédier (frais DEEE, RCP, port… ou changées à la main) : pas de colis, traitement manuel.'}
         {section === 'validation' &&
           (isSupplyChain
             ? 'Factures hors DIGI saisies par le Sourcing : validez-les pour qu\'elles puissent entrer dans une expédition, ou refusez-les avec un motif.'
@@ -979,16 +944,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
           </div>
           {!bulkProgress && (
             <div className="flex flex-wrap gap-2">
-              {section === 'to_sort' && (
-                <button
-                  onClick={() => handleBulkTriage('goods')}
-                  disabled={toGoods.length === 0}
-                  title="Marchandises : leurs colis sont suivis jusqu'à Orly"
-                  className={`${bulkButton} bg-[#623387] text-white hover:bg-[#522870]`}
-                >
-                  <PackageCheck className="h-3.5 w-3.5" /> Marchandises ({toGoods.length})
-                </button>
-              )}
               {section === 'goods' && (
                 <button
                   onClick={() => openParcelForm(forParcel)}
@@ -999,24 +954,24 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   <Package className="h-3.5 w-3.5" /> Ajouter un colis ({forParcel.length})
                 </button>
               )}
-              {(section === 'to_sort' || section === 'goods') && (
+              {section === 'goods' && (
                 <button
                   onClick={() => handleBulkTriage('services')}
                   disabled={toServices.length === 0}
-                  title="Services : pas de colis"
+                  title="Changer en services : pas de colis"
                   className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
                 >
                   <Wrench className="h-3.5 w-3.5" /> Services ({toServices.length})
                 </button>
               )}
-              {(section === 'goods' || section === 'services') && (
+              {section === 'services' && (
                 <button
-                  onClick={() => handleBulkTriage('to_sort')}
-                  disabled={backToSort.length === 0}
-                  title="Seules les factures DIGI triées à la main reviennent ; celles qui ne contiennent que des frais restent en services."
-                  className={`${bulkButton} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
+                  onClick={() => handleBulkTriage('goods')}
+                  disabled={toGoods.length === 0}
+                  title="Seules les factures changées à la main reviennent ; celles qui ne contiennent que des frais restent en services."
+                  className={`${bulkButton} bg-[#623387] text-white hover:bg-[#522870]`}
                 >
-                  <Undo2 className="h-3.5 w-3.5" /> Remettre à trier ({backToSort.length})
+                  <PackageCheck className="h-3.5 w-3.5" /> Remettre en marchandises ({toGoods.length})
                 </button>
               )}
               {section === 'validation' && isSupplyChain && (
