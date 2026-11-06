@@ -30,6 +30,14 @@ export async function ensureNeonSchema(): Promise<void> {
         // Confirmed shipment: its invoices and parcels are frozen (not written by the upsert)
         await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS confirmed_at TIMESTAMPTZ;`;
         await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS confirmed_by_email VARCHAR(255);`;
+        // Sea: internal ref (MAR/2026/014, name of the shipment), container type, shipping line
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS internal_ref VARCHAR(30) NOT NULL DEFAULT '';`;
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS container_type VARCHAR(30) NOT NULL DEFAULT '';`;
+        await sql`ALTER TABLE shipments ADD COLUMN IF NOT EXISTS shipping_line VARCHAR(100) NOT NULL DEFAULT '';`;
+        await sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_shipments_internal_ref
+          ON shipments (UPPER(internal_ref)) WHERE internal_ref <> '';
+        `;
       } catch (err: any) {
         schemaEnsuredPromise = null; // Permet de réessayer lors de l'appel suivant
         if (
@@ -88,6 +96,9 @@ export async function getShipmentsFromNeon(): Promise<Shipment[]> {
         orly_shipment_status,
         orly_scan_date,
         ref_fa_digi_nxt,
+        internal_ref,
+        container_type,
+        shipping_line,
         mada_receipt_date,
         etd,
         actual_arrival_date,
@@ -183,6 +194,9 @@ export async function upsertShipmentInNeon(shipment: Shipment, skipEnsure = fals
   const orly_scan_date = shipment.orly_scan_date || '';
   const ref_fa_digi_nxt = shipment.ref_fa_digi_nxt || '';
   const mada_receipt_date = shipment.mada_receipt_date || '';
+  const internal_ref = (shipment.internal_ref || '').trim().toUpperCase();
+  const container_type = shipment.container_type || '';
+  const shipping_line = (shipment.shipping_line || '').trim();
 
   const etd = shipment.etd || '';
   const actual_arrival_date = shipment.actual_arrival_date || '';
@@ -211,7 +225,7 @@ export async function upsertShipmentInNeon(shipment: Shipment, skipEnsure = fals
       orly_shipment_status, orly_scan_date, ref_fa_digi_nxt, mada_receipt_date,
       etd, actual_arrival_date, container_no, swb_no, port_of_loading,
       port_of_discharge, transshipment_ports, documents, history, alerts,
-      sea_deliveries, created_at, updated_at
+      sea_deliveries, internal_ref, container_type, shipping_line, created_at, updated_at
     ) VALUES (
       ${id}, ${mode}, ${supplier}, ${order_reference}, ${invoice_no}, ${bl_awb}, ${tracking_no},
       ${carrier}, ${carrier_status}, ${carrier_last_location}, ${eta}, ${actual_delivery},
@@ -221,7 +235,7 @@ export async function upsertShipmentInNeon(shipment: Shipment, skipEnsure = fals
       ${orly_shipment_status}, ${orly_scan_date}, ${ref_fa_digi_nxt}, ${mada_receipt_date},
       ${etd}, ${actual_arrival_date}, ${container_no}, ${swb_no}, ${port_of_loading},
       ${port_of_discharge}, ${transshipment_ports}::jsonb, ${documents}::jsonb, ${history}::jsonb, ${alerts}::jsonb,
-      ${sea_deliveries}::jsonb, ${created_at}, ${updated_at}
+      ${sea_deliveries}::jsonb, ${internal_ref}, ${container_type}, ${shipping_line}, ${created_at}, ${updated_at}
     )
     ON CONFLICT (id) DO UPDATE SET
       mode = EXCLUDED.mode,
@@ -264,12 +278,18 @@ export async function upsertShipmentInNeon(shipment: Shipment, skipEnsure = fals
       history = EXCLUDED.history,
       alerts = EXCLUDED.alerts,
       sea_deliveries = EXCLUDED.sea_deliveries,
+      internal_ref = EXCLUDED.internal_ref,
+      container_type = EXCLUDED.container_type,
+      shipping_line = EXCLUDED.shipping_line,
       updated_at = EXCLUDED.updated_at;
   `;
 
   return {
     ...shipment,
     id,
+    internal_ref,
+    container_type,
+    shipping_line,
     updated_at,
   };
 }
@@ -284,6 +304,31 @@ export async function findShipmentByRefFa(refFa: string, exceptId: string | null
     LIMIT 1
   `;
   return (rows[0]?.id as string) ?? null;
+}
+
+/** Shipment holding this internal ref (MAR/2026/014), other than `exceptId`. */
+export async function findShipmentByInternalRef(ref: string, exceptId: string | null): Promise<string | null> {
+  await ensureNeonSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT id FROM shipments
+    WHERE internal_ref <> '' AND UPPER(internal_ref) = UPPER(TRIM(${ref})) AND id IS DISTINCT FROM ${exceptId}
+    LIMIT 1
+  `;
+  return (rows[0]?.id as string) ?? null;
+}
+
+/** Next free internal ref of the year: MAR/2026/001 when none, else the highest number + 1. */
+export async function nextInternalRef(prefix: 'MAR', year = new Date().getFullYear()): Promise<string> {
+  await ensureNeonSchema();
+  const sql = getDb();
+  const start = `${prefix}/${year}/`;
+  const rows = await sql`
+    SELECT COALESCE(MAX(SUBSTRING(UPPER(internal_ref) FROM ${`^${prefix}/${year}/([0-9]+)$`}::text)::int), 0) AS max
+    FROM shipments WHERE UPPER(internal_ref) LIKE ${`${start}%`}
+  `;
+  const next = (Number(rows[0]?.max) || 0) + 1;
+  return `${start}${String(next).padStart(3, '0')}`;
 }
 
 /** Confirms (frozen contents, actorEmail) or unlocks (null) the shipment; false when it does not exist. */
@@ -305,16 +350,22 @@ export async function setShipmentConfirmation(id: string, actorEmail: string | n
 /** Confirmed shipment holding one of these invoices (their invoice lines and parcels cannot change). */
 export async function findConfirmedShipmentOfInvoices(
   invoiceIds: string[]
-): Promise<{ id: string; ref_fa_digi_nxt: string | null } | null> {
+): Promise<{ id: string; ref_fa_digi_nxt: string | null; internal_ref: string } | null> {
   if (invoiceIds.length === 0) return null;
   await ensureNeonSchema();
   const sql = getDb();
   const rows = await sql`
-    SELECT s.id, s.ref_fa_digi_nxt FROM digi_invoices i JOIN shipments s ON s.id = i.shipment_id
+    SELECT s.id, s.ref_fa_digi_nxt, s.internal_ref FROM digi_invoices i JOIN shipments s ON s.id = i.shipment_id
     WHERE i.id = ANY(${invoiceIds}::uuid[]) AND s.confirmed_at IS NOT NULL
     LIMIT 1
   `;
-  return rows[0] ? { id: rows[0].id as string, ref_fa_digi_nxt: (rows[0].ref_fa_digi_nxt as string) || null } : null;
+  return rows[0]
+    ? {
+        id: rows[0].id as string,
+        ref_fa_digi_nxt: (rows[0].ref_fa_digi_nxt as string) || null,
+        internal_ref: (rows[0].internal_ref as string) || '',
+      }
+    : null;
 }
 
 /** Clears the "to review" flag (shipment regrouped under the parcel model). */
@@ -352,6 +403,7 @@ export async function searchShipmentsInNeon(term: string): Promise<Shipment[]> {
       OR container_no ILIKE ${pattern}
       OR swb_no ILIKE ${pattern}
       OR ref_fa_digi_nxt ILIKE ${pattern}
+      OR internal_ref ILIKE ${pattern}
     ORDER BY created_at DESC;
   `;
 

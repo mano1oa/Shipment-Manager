@@ -22,7 +22,14 @@ import {
   Lock,
   LockOpen,
 } from 'lucide-react';
-import { Shipment, GlobalStatus, shipmentValue, shipmentLabel } from '../types';
+import {
+  CONTAINER_TYPES,
+  ContainerType,
+  Shipment,
+  GlobalStatus,
+  shipmentValue,
+  shipmentLabel,
+} from '../types';
 import { confirmShipment, unlockShipment, ConfirmationResult } from './shipmentApi';
 import { formatDateTime } from '../lib/dateFormat';
 import { SHIPMENT_STATUSES, applyAutomaticShipmentStatus } from '../lib/parcelTracking';
@@ -263,6 +270,8 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   // "0 fournisseurs": shipment without invoice yet
                   !/^0 fournisseur/.test(shipment.supplier || '') && shipment.supplier,
                   shipment.order_reference && `Réf. ordre ${shipment.order_reference}`,
+                  // Named by its internal ref: its sale invoice shown beside
+                  shipment.internal_ref && shipment.ref_fa_digi_nxt && `FA ${shipment.ref_fa_digi_nxt}`,
                 ]
                   .filter(Boolean)
                   .join(' · ')}
@@ -493,6 +502,72 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
                   <span className="font-mono">{view.order_reference || empty}</span>
                 )}
               </Field>
+
+              {isSea && (
+                <>
+                  <Field label="Réf interne" hint="MAR/2026/014">
+                    {isEditing && isSupplyChain ? (
+                      <input
+                        value={draft.internal_ref || ''}
+                        placeholder="MAR/2026/001"
+                        onChange={(e) => set('internal_ref', e.target.value.toUpperCase())}
+                        className={`${inputClass} font-mono`}
+                      />
+                    ) : (
+                      <span className="font-mono">{view.internal_ref || empty}</span>
+                    )}
+                  </Field>
+
+                  <Field label="Type d'envoi">
+                    {isEditing ? (
+                      <select
+                        value={draft.container_type || ''}
+                        onChange={(e) => set('container_type', e.target.value as ContainerType | '')}
+                        className={inputClass}
+                      >
+                        <option value="">—</option>
+                        {CONTAINER_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      view.container_type || empty
+                    )}
+                  </Field>
+
+                  <Field label="Compagnie maritime">
+                    {isEditing ? (
+                      <input
+                        value={draft.shipping_line || ''}
+                        placeholder="MSC, CMA CGM…"
+                        onChange={(e) => set('shipping_line', e.target.value)}
+                        className={inputClass}
+                      />
+                    ) : (
+                      view.shipping_line || empty
+                    )}
+                  </Field>
+
+                  <Field label="Poids total">
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.1"
+                        value={draft.weight_kg || ''}
+                        onChange={(e) => set('weight_kg', Number(e.target.value) || 0)}
+                        className={inputClass}
+                      />
+                    ) : view.weight_kg ? (
+                      `${amountFormat.format(view.weight_kg)} kg`
+                    ) : (
+                      empty
+                    )}
+                  </Field>
+                </>
+              )}
 
               <Field label={isSea ? 'BL et conteneur' : 'LTA'}>
                 {isEditing ? (

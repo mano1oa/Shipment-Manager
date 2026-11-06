@@ -54,7 +54,7 @@ import {
 } from './db/suppliers.js';
 
 import { writeAuditLog } from './db/audit.js';
-import { ANTOINE_STATUSES } from './types.js';
+import { ANTOINE_STATUSES, CONTAINER_TYPES } from './types.js';
 
 import {
   listDigiInvoices,
@@ -154,8 +154,9 @@ import {
   unlockShipment,
   confirmedMessage,
   ShipmentGroupingError,
+  checkInternalRef,
 } from './services/digiShipments.js';
-import { findConfirmedShipmentOfInvoices } from './db/shipments.js';
+import { findConfirmedShipmentOfInvoices, nextInternalRef } from './db/shipments.js';
 import { listReceivedArticles, setLineReceipt } from './db/lineReceipts.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 import { runInvoicesWithoutParcelDigest } from './services/invoicesWithoutParcelNotifier.js';
@@ -1005,6 +1006,30 @@ app.put(
         },
       })
     : null;
+  // Model changeable without a code change (Vercel variable GEMINI_MODEL)
+  const AI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.6-flash';
+
+  /** Message for the user from a Gemini failure: says why, not only that it failed. */
+  const aiErrorMessage = (err: any): string => {
+    const status = Number(err?.status ?? err?.code ?? err?.error?.code);
+    const text = String(err?.message || '');
+    if (status === 429 || /quota|RESOURCE_EXHAUSTED/i.test(text)) {
+      return 'Shipment AI : quota Gemini atteint (trop de demandes ou crédit épuisé). Réessayez plus tard ou vérifiez le compte Google AI.';
+    }
+    if (/API_KEY_INVALID|API key not valid|PERMISSION_DENIED/i.test(text) || status === 401 || status === 403) {
+      return 'Shipment AI : la clé GEMINI_API_KEY est refusée par Google (invalide, expirée ou sans accès). Vérifiez-la dans Vercel.';
+    }
+    if (status === 404 || /not found|is not supported/i.test(text)) {
+      return `Shipment AI : le modèle « ${AI_MODEL} » n'est pas disponible pour cette clé. Changez la variable GEMINI_MODEL dans Vercel.`;
+    }
+    if (status === 503 || /overloaded|UNAVAILABLE/i.test(text)) {
+      return 'Shipment AI : le service Gemini est momentanément surchargé. Réessayez dans quelques minutes.';
+    }
+    if (status === 400) {
+      return 'Shipment AI : la demande a été refusée par Gemini (contexte trop long ou contenu invalide).';
+    }
+    return 'Erreur lors de la communication avec l\'assistant IA Shipment AI (détail dans les logs du serveur).';
+  };
 
   // --- API ENDPOINTS ---
 
@@ -1189,7 +1214,7 @@ Contexte actuel des expéditions:
 ${shipmentContext ? JSON.stringify(shipmentContext, null, 2) : 'Aucun contexte fourni'}`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: AI_MODEL,
         contents: prompt,
         config: {
           systemInstruction,
@@ -1201,10 +1226,8 @@ ${shipmentContext ? JSON.stringify(shipmentContext, null, 2) : 'Aucun contexte f
         reply: response.text || 'Désolé, aucune réponse générée par l\'assistant.',
       });
     } catch (err: any) {
-      console.error('Error calling Gemini API:', err);
-      res.status(500).json({
-        error: 'Erreur lors de la communication avec l\'assistant IA Shipment AI.',
-      });
+      console.error(`Error calling Gemini API (model ${AI_MODEL}):`, err);
+      res.status(502).json({ error: aiErrorMessage(err) });
     }
   });
 
@@ -1227,7 +1250,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 4. ⚡ Plan d'Action Recommandé (3 priorités immédiates pour l'équipe Supply Chain).`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
+        model: AI_MODEL,
         contents: `Voici la liste actuelle des expéditions à analyser:\n${JSON.stringify(
           shipments,
           null,
@@ -1243,8 +1266,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         analysis: response.text,
       });
     } catch (err: any) {
-      console.error('Error analyzing shipments:', err);
-      res.status(500).json({ error: 'Erreur lors de l\'analyse automatique.' });
+      console.error(`Error analyzing shipments (model ${AI_MODEL}):`, err);
+      res.status(502).json({ error: aiErrorMessage(err) });
     }
   });
 
@@ -2039,6 +2062,16 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  /** Sea: next free internal ref of the year (MAR/2026/014), suggested in the creation form. */
+  app.get('/api/shipments/next-internal-ref', requireRole('SUPPLY_CHAIN'), async (_req, res) => {
+    try {
+      return res.json({ success: true, internal_ref: await nextInternalRef('MAR') });
+    } catch (err: any) {
+      console.error('[Shipments] Next internal ref:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de proposer la réf interne' });
+    }
+  });
+
   /**
    * New shipment from invoices received at the hub, with its Réf FA DIGI-NXT.
    * not_received in a 409 answer: invoices to confirm with force (exception).
@@ -2059,6 +2092,10 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           invoice_ids: body.invoice_ids,
           force: body.force === true,
           mixed_dates: body.mixed_dates === true,
+          internal_ref: text(body.internal_ref, 30),
+          container_type: CONTAINER_TYPES.includes(body.container_type) ? body.container_type : '',
+          shipping_line: text(body.shipping_line, 100),
+          weight_kg: body.weight_kg === undefined || body.weight_kg === '' ? 0 : Number(body.weight_kg),
         },
         req.user
       );
@@ -3643,7 +3680,30 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       ) {
         return res.status(403).json({ success: false, error: 'Seule la Supply Chain modifie la référence d\'ordre et la LTA.' });
       }
-      const data = applyAutomaticShipmentStatus({ ...req.body, id: req.params.id });
+      // Sea internal ref (name of the shipment): Supply Chain only, MAR/2026/014, unique
+      const body = { ...req.body };
+      const previousRef = (previous.internal_ref || '').trim().toUpperCase();
+      if (body.internal_ref === undefined) body.internal_ref = previousRef;
+      if (body.container_type === undefined) body.container_type = previous.container_type || '';
+      if (body.shipping_line === undefined) body.shipping_line = previous.shipping_line || '';
+      const nextRef = String(body.internal_ref || '').trim().toUpperCase();
+      if (nextRef !== previousRef) {
+        if (user?.role !== 'SUPPLY_CHAIN') {
+          return res.status(403).json({ success: false, error: 'Seule la Supply Chain modifie la réf interne.' });
+        }
+        if (previous.mode !== 'Sea') {
+          return res.status(400).json({ success: false, error: 'La réf interne concerne les expéditions maritimes.' });
+        }
+        try {
+          body.internal_ref = await checkInternalRef(nextRef, previous.id);
+        } catch (refErr) {
+          return sendGroupingError(res, refErr, 'Réf interne invalide');
+        }
+      }
+      if (body.container_type !== undefined && body.container_type !== '' && !CONTAINER_TYPES.includes(body.container_type)) {
+        return res.status(400).json({ success: false, error: 'Type d\'envoi invalide.' });
+      }
+      const data = applyAutomaticShipmentStatus({ ...body, id: req.params.id });
       const saved = await upsertShipmentInNeon(data);
 
       // Record which fields changed (names only: values may be large JSON)

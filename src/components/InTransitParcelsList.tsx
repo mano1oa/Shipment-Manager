@@ -8,7 +8,7 @@ import { BoxesBadge } from './BoxesBadge';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { ParcelFormModal } from './ParcelFormModal';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
-import { parcelMatches } from './ParcelsBoardView';
+import { AmazonOrdersCell, parcelMatches } from './ParcelsBoardView';
 import { useParcelStatusActions } from './useParcelStatusActions';
 
 /** Where a parcel stands between the supplier and Madagascar. */
@@ -104,6 +104,9 @@ export const InTransitParcelsList: React.FC<Props> = ({
   isSupplyChain,
 }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
+  // Air: the buyers find their order by its Amazon number
+  const air = destination === 'ORLY';
+  const columns = air ? 8 : 7;
   const [search, setSearch] = useState('');
   const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
   const [editing, setEditing] = useState<Parcel | null>(null);
@@ -196,6 +199,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                 <th className="px-3 py-3">N° de suivi</th>
                 <th className="px-3 py-3">Fournisseur</th>
                 <th className="px-3 py-3">Factures</th>
+                {air && <th className="px-3 py-3">Commande Amazon</th>}
                 <th className="px-3 py-3">Étape</th>
                 <th className="px-3 py-3">Livraison prévue</th>
                 <th className="px-3 py-3">Expédition</th>
@@ -205,13 +209,13 @@ export const InTransitParcelsList: React.FC<Props> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {parcels === null ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center">
+                  <td colSpan={columns} className="px-4 py-10 text-center">
                     {error ? '—' : <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" />}
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                  <td colSpan={columns} className="px-4 py-10 text-center text-slate-500">
                     {rows.length === 0 ? 'Aucun colis en cours d’acheminement.' : 'Aucun colis ne correspond à vos filtres.'}
                   </td>
                 </tr>
@@ -233,6 +237,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                     </td>
                     <td className="px-3 py-2.5 font-semibold">{p.supplier_name || '—'}</td>
                     <td className="px-3 py-2.5">{p.invoices.map((i) => i.ref || '—').join(', ') || '—'}</td>
+                    {air && <AmazonOrdersCell parcel={p} />}
                     <td className="px-3 py-2.5">
                       <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${STAGE_BADGES[stage]}`}>
                         {STAGE_LABELS[stage](hub)}
@@ -315,7 +320,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                   </tr>
                   {openId === p.id && (
                     <tr>
-                      <td colSpan={7} className="p-0">
+                      <td colSpan={columns} className="p-0">
                         <ParcelContentsPreview parcel={p} />
                       </td>
                     </tr>

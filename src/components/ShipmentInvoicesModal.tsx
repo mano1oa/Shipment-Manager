@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, AlertTriangle, Layers, Loader2, Search, X } from 'lucide-react';
-import { Shipment, shipmentLabel } from '../types';
+import { CONTAINER_TYPES, ContainerType, INTERNAL_REF_PATTERN, Shipment, shipmentLabel } from '../types';
 import { invoiceBoxesLabel } from '../lib/parcelBoxes';
 import {
   DigiInvoice,
@@ -9,6 +9,7 @@ import {
   addInvoicesToShipment,
   createShipmentFromInvoices,
   fetchDigiInvoices,
+  fetchNextInternalRef,
   formatAmount,
   formatDate,
   inputClass,
@@ -46,6 +47,12 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
   const [blAwb, setBlAwb] = useState('');
   const [carrier, setCarrier] = useState('');
   const [remarks, setRemarks] = useState('');
+  const isSea = mode === 'Sea';
+  // Sea: internal ref (suggested next number), shipment type, shipping line, weight
+  const [internalRef, setInternalRef] = useState('');
+  const [containerType, setContainerType] = useState<ContainerType | ''>('');
+  const [shippingLine, setShippingLine] = useState('');
+  const [weight, setWeight] = useState('');
   const [exception, setException] = useState<NotReceivedInvoice[] | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +62,14 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
       .then(setInvoices)
       .catch((err) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    if (!isSea || shipment) return;
+    // Only a suggestion: typed by hand when it cannot be fetched
+    fetchNextInternalRef()
+      .then((ref) => setInternalRef((current) => current || ref))
+      .catch(() => undefined);
+  }, [isSea, shipment]);
 
   const shipmentById = useMemo(() => new Map(shipments.map((s) => [s.id, s])), [shipments]);
 
@@ -112,8 +127,16 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
       setError('Cochez les factures de l\'expédition.');
       return;
     }
-    if (!shipment && !refFa.trim()) {
+    if (!shipment && isSea && !INTERNAL_REF_PATTERN.test(internalRef.trim())) {
+      setError('La réf interne est obligatoire, au format MAR/2026/014.');
+      return;
+    }
+    if (!shipment && !isSea && !refFa.trim()) {
       setError('La réf FA DIGI-NXT (facture de vente) est obligatoire.');
+      return;
+    }
+    if (weight !== '' && !(Number(weight) >= 0)) {
+      setError('Le poids total doit être un nombre positif.');
       return;
     }
     setSaving(true);
@@ -130,6 +153,14 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
             invoice_ids: ids,
             force,
             mixed_dates: mixedDates,
+            ...(isSea
+              ? {
+                  internal_ref: internalRef.trim(),
+                  container_type: containerType,
+                  shipping_line: shippingLine,
+                  weight_kg: weight === '' ? 0 : Number(weight),
+                }
+              : {}),
           });
       if ('needsException' in result) setException(result.needsException);
       else if ('mixedDates' in result) {
@@ -167,7 +198,9 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
                 {shipment ? `Ajouter des factures à ${shipmentLabel(shipment)}` : `Nouvelle expédition ${hub} → Madagascar`}
               </h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Regroupement des factures reçues à {hub} : une expédition = une facture de vente (Réf FA DIGI-NXT).
+                {isSea
+                  ? `Regroupement des factures reçues à ${hub} : l'expédition est nommée par sa réf interne (MAR/…), la Réf FA DIGI-NXT peut venir plus tard.`
+                  : `Regroupement des factures reçues à ${hub} : une expédition = une facture de vente (Réf FA DIGI-NXT).`}
               </p>
             </div>
           </div>
@@ -187,8 +220,19 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
 
         {!shipment && (
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
+            {isSea && (
+              <label>
+                <span className={label}>Réf interne *</span>
+                <input
+                  value={internalRef}
+                  onChange={(e) => setInternalRef(e.target.value.toUpperCase())}
+                  placeholder="MAR/2026/001"
+                  className={`${inputClass} font-mono`}
+                />
+              </label>
+            )}
             <label>
-              <span className={label}>Réf FA DIGI-NXT *</span>
+              <span className={label}>Réf FA DIGI-NXT{isSea ? ' (si connue)' : ' *'}</span>
               <input value={refFa} onChange={(e) => setRefFa(e.target.value)} className={`${inputClass} font-mono`} />
             </label>
             <label>
@@ -199,6 +243,45 @@ export const ShipmentInvoicesModal: React.FC<Props> = ({ mode, shipment, shipmen
               <span className={label}>Transitaire</span>
               <input value={carrier} onChange={(e) => setCarrier(e.target.value)} className={inputClass} />
             </label>
+            {isSea && (
+              <>
+                <label>
+                  <span className={label}>Type d'envoi</span>
+                  <select
+                    value={containerType}
+                    onChange={(e) => setContainerType(e.target.value as ContainerType | '')}
+                    className={inputClass}
+                  >
+                    <option value="">—</option>
+                    {CONTAINER_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span className={label}>Compagnie maritime</span>
+                  <input
+                    value={shippingLine}
+                    onChange={(e) => setShippingLine(e.target.value)}
+                    placeholder="MSC, CMA CGM…"
+                    className={inputClass}
+                  />
+                </label>
+                <label>
+                  <span className={label}>Poids total (kg)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    className={inputClass}
+                  />
+                </label>
+              </>
+            )}
             <label>
               <span className={label}>Remarque</span>
               <input value={remarks} onChange={(e) => setRemarks(e.target.value)} className={inputClass} />

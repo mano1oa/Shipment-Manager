@@ -27,7 +27,8 @@ const matchesState = (a: ReceivedArticle, state: StateFilter) => {
   return true;
 };
 
-const shipmentName = (a: ReceivedArticle) => (a.ref_fa_digi_nxt ? `FA ${a.ref_fa_digi_nxt}` : a.shipment_id);
+const shipmentName = (a: ReceivedArticle) =>
+  a.internal_ref || (a.ref_fa_digi_nxt ? `FA ${a.ref_fa_digi_nxt}` : a.shipment_id);
 
 /**
  * Arrival check in Madagascar, every confirmed shipment: the articles of
@@ -67,7 +68,7 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
           (shipmentFilter === 'all' || a.shipment_id === shipmentFilter) &&
           matchesState(a, state) &&
           (!q ||
-            [a.name, a.supplier, a.invoice_ref, a.ref_fa_digi_nxt].some((v) => v && v.toLowerCase().includes(q)))
+            [a.name, a.supplier, a.invoice_ref, a.ref_fa_digi_nxt, a.internal_ref].some((v) => v && v.toLowerCase().includes(q)))
       )
       .forEach((a) => byShipment.set(a.shipment_id, [...(byShipment.get(a.shipment_id) ?? []), a]));
     return Array.from(byShipment.values());

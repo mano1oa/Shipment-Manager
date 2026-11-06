@@ -2,6 +2,7 @@ import {
   getShipmentByIdFromNeon,
   upsertShipmentInNeon,
   findShipmentByRefFa,
+  findShipmentByInternalRef,
   setShipmentConfirmation,
 } from '../db/shipments.js';
 import { assignInvoiceToShipment, getDigiInvoice, listDigiInvoicesForShipment } from '../db/digiInvoices.js';
@@ -9,7 +10,7 @@ import type { DigiInvoiceRecord } from '../db/digiInvoices.js';
 import { writeAuditLog, AuditActor } from '../db/audit.js';
 import { listParcelsForShipment, receptionDates } from '../db/parcels.js';
 import { shipmentChatMessage } from '../lib/shipmentChatMessage.js';
-import { Shipment, TrackingHistoryStep, shipmentLabel } from '../types.js';
+import { ContainerType, INTERNAL_REF_PATTERN, Shipment, TrackingHistoryStep, shipmentLabel } from '../types.js';
 import { sendChatMessage } from './googleChat.js';
 
 /**
@@ -49,7 +50,7 @@ export interface NotReceivedInvoice {
 const label = (inv: DigiInvoiceRecord) => inv.ref || inv.odoo_move_name || inv.id.slice(0, 8);
 
 /** A confirmed shipment keeps its invoices and parcels until Supply Chain unlocks it. */
-export const confirmedMessage = (s: Pick<Shipment, 'id' | 'ref_fa_digi_nxt'>) =>
+export const confirmedMessage = (s: Pick<Shipment, 'id' | 'ref_fa_digi_nxt' | 'internal_ref'>) =>
   `L'expédition ${shipmentLabel(s)} est confirmée : ses factures et colis ne peuvent plus changer. Déverrouillez-la d'abord (Supply Chain).`;
 
 function assertNotConfirmed(shipment: Shipment) {
@@ -186,16 +187,41 @@ export interface NewGroupedShipment {
   force: boolean;
   /** Air: parcels received at Orly on several dates, confirmed. */
   mixed_dates: boolean;
+  /** Sea: MAR/2026/014 (required, name of the shipment). */
+  internal_ref: string;
+  container_type: ContainerType | '';
+  shipping_line: string;
+  weight_kg: number;
+}
+
+/** Sea internal ref: required, MAR/2026/014, not used by another shipment. Returns it in capitals. */
+export async function checkInternalRef(raw: string, exceptId: string | null): Promise<string> {
+  const ref = (raw || '').trim().toUpperCase();
+  if (!ref) throw new ShipmentGroupingError('La réf interne de l\'expédition (MAR/2026/0xx) est obligatoire.');
+  if (!INTERNAL_REF_PATTERN.test(ref)) {
+    throw new ShipmentGroupingError(`Réf interne « ${ref} » invalide : format attendu MAR/2026/014.`);
+  }
+  const existing = await findShipmentByInternalRef(ref, exceptId);
+  if (existing) throw new ShipmentGroupingError(`La réf interne ${ref} est déjà celle de l'expédition ${existing}.`, 409);
+  return ref;
 }
 
 export async function createShipmentFromInvoices(
   input: NewGroupedShipment,
   actor: AuditActor
 ): Promise<{ shipment: Shipment; emptied: string[] }> {
+  const sea = input.mode === 'Sea';
   const refFa = input.ref_fa_digi_nxt.trim();
-  if (!refFa) throw new ShipmentGroupingError('La Réf FA DIGI-NXT (facture de vente) est obligatoire.');
-  const existing = await findShipmentByRefFa(refFa, null);
-  if (existing) throw new ShipmentGroupingError(`La Réf FA ${refFa} est déjà celle de l'expédition ${existing}.`, 409);
+  // Sea: named by its internal ref (MAR/2026/014), the Réf FA can come later
+  const internalRef = sea ? await checkInternalRef(input.internal_ref, null) : '';
+  if (!refFa && !sea) throw new ShipmentGroupingError('La Réf FA DIGI-NXT (facture de vente) est obligatoire.');
+  if (refFa) {
+    const existing = await findShipmentByRefFa(refFa, null);
+    if (existing) throw new ShipmentGroupingError(`La Réf FA ${refFa} est déjà celle de l'expédition ${existing}.`, 409);
+  }
+  const weight = Number(input.weight_kg);
+  if (!Number.isFinite(weight) || weight < 0) throw new ShipmentGroupingError('Le poids total doit être un nombre positif.');
+  const containerType = sea ? input.container_type : '';
 
   const { invoices, notReceived } = await checkInvoices(input.invoice_ids, null, input.force);
   const id = await newShipmentId();
@@ -212,7 +238,7 @@ export async function createShipmentFromInvoices(
       date: now(),
       location: hub,
       status: 'Création',
-      details: `Expédition ${hub} → Madagascar, Réf FA ${refFa} : ${invoices.length} facture(s) regroupée(s) par ${actor.email}`,
+      details: `Expédition ${hub} → Madagascar, ${[internalRef, refFa && `Réf FA ${refFa}`].filter(Boolean).join(', ')} : ${invoices.length} facture(s) regroupée(s) par ${actor.email}`,
     },
   ];
   if (notReceived.length > 0) history.push(exceptionStep(notReceived, actor));
@@ -234,13 +260,16 @@ export async function createShipmentFromInvoices(
     antoine_status: 'Reçu et expédié vers Mada',
     remarks: input.remarks.trim(),
     priority: 'Moyenne',
-    weight_kg: 0,
+    weight_kg: weight,
     origin: hub,
     destination: 'Madagascar',
     vessel_flight: '',
     cost_eur: 0,
     customs_status: 'Non Requis',
     ref_fa_digi_nxt: refFa,
+    internal_ref: internalRef,
+    container_type: containerType,
+    shipping_line: sea ? input.shipping_line.trim() : '',
     created_at: today,
     updated_at: today,
     documents: [],
@@ -260,6 +289,7 @@ export async function createShipmentFromInvoices(
     actor,
     details: {
       ref_fa: refFa,
+      internal_ref: internalRef,
       mode: input.mode,
       invoice_ids: invoices.map((i) => i.id),
       exception_invoice_ids: notReceived.map((n) => n.id),

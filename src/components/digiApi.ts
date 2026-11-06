@@ -200,7 +200,16 @@ export const createShipmentFromInvoices = (input: {
   invoice_ids: string[];
   force: boolean;
   mixed_dates?: boolean;
+  /** Sea: MAR/2026/014 (required). */
+  internal_ref?: string;
+  container_type?: string;
+  shipping_line?: string;
+  weight_kg?: number | '';
 }) => groupingRequest('/api/shipments/from-invoices', 'POST', input);
+
+/** Sea: next free internal ref of the year, suggested in the creation form. */
+export const fetchNextInternalRef = () =>
+  apiJson<{ internal_ref: string }>('/api/shipments/next-internal-ref').then((d) => d.internal_ref);
 
 export const addInvoicesToShipment = (shipmentId: string, invoiceIds: string[], force: boolean, mixedDates = false) =>
   groupingRequest(`/api/shipments/${encodeURIComponent(shipmentId)}/invoices`, 'POST', {
@@ -282,6 +291,8 @@ export interface Parcel {
     id: string;
     ref: string | null;
     supplier_display: string | null;
+    /** Amazon order of the invoice (lets the buyer find their order). */
+    amazon_order_ref: string | null;
     invoice_date: string | null;
     /** DIGI: total of the lines (EUR); hors DIGI: amount in `currency`. */
     amount_total: number | null;
