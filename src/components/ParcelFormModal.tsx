@@ -11,7 +11,8 @@ import {
 } from '../lib/parcelTracking';
 import type { DeliveryType, ParcelDestination } from '../lib/parcelTracking';
 import { parseNumberValue } from '../lib/digiInvoices';
-import { DigiInvoice, Parcel, apiJson, createParcel, inputClass, updateParcel } from './digiApi';
+import { DigiInvoice, Parcel, apiJson, createParcel, inputClass, setParcelBoxesExpected, updateParcel } from './digiApi';
+import { ParcelBoxesSection } from './ParcelBoxesSection';
 import DateInput from './DateInput';
 
 const compact = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -63,6 +64,9 @@ export const ParcelFormModal: React.FC<Props> = ({
   const [packingInfo, setPackingInfo] = useState(parcel?.packing_info ?? '');
   const [volume, setVolume] = useState(parcel?.volume_m3 != null ? String(parcel.volume_m3).replace('.', ',') : '');
   const [description, setDescription] = useState(parcel?.description ?? '');
+  const [boxesExpected, setBoxesExpected] = useState(parcel?.boxes_expected ? String(parcel.boxes_expected) : '');
+  /** Existing parcel as it is now (other numbers are saved at once). */
+  const [live, setLive] = useState<Parcel | null>(parcel ?? null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,10 +148,17 @@ export const ParcelFormModal: React.FC<Props> = ({
       return;
     }
     const value = checked[0].value!;
+    const boxes = boxesExpected.trim() ? Number(boxesExpected) : null;
+    if (boxes !== null && (!Number.isInteger(boxes) || boxes < 1 || boxes > 999)) {
+      setError('Nombre de boîtes attendues : un nombre entier de 1 à 999.');
+      return;
+    }
     setSaving(true);
     try {
       if (parcel) {
-        onSaved(await updateParcel(parcel.id, value), false);
+        let saved = await updateParcel(parcel.id, value);
+        if (boxes !== (parcel.boxes_expected ?? null)) saved = await setParcelBoxesExpected(parcel.id, boxes);
+        onSaved(saved, false);
       } else {
         // One parcel per number; a number already known gets the invoice(s)
         let last: Awaited<ReturnType<typeof createParcel>> | null = null;
@@ -159,7 +170,9 @@ export const ParcelFormModal: React.FC<Props> = ({
           );
           existed = existed || last.existed;
         }
-        onSaved(last!.parcel, existed);
+        // Boxes announced: only for a single parcel (several numbers = several parcels)
+        const saved = boxes !== null && !several ? await setParcelBoxesExpected(last!.parcel.id, boxes) : last!.parcel;
+        onSaved(saved, existed);
       }
     } catch (err: any) {
       setError(err.message);
@@ -167,6 +180,9 @@ export const ParcelFormModal: React.FC<Props> = ({
       setSaving(false);
     }
   };
+
+  /** Other numbers already saved: the list is refreshed even without "Enregistrer". */
+  const close = () => (live && live !== parcel ? onSaved(live, false) : onClose());
 
   const label = 'font-semibold text-slate-700 dark:text-slate-300';
   const supplier = parcel?.supplier_name || invoices[0]?.supplier_display || '—';
@@ -194,7 +210,7 @@ export const ParcelFormModal: React.FC<Props> = ({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             <X className="h-5 w-5" />
@@ -319,11 +335,28 @@ export const ParcelFormModal: React.FC<Props> = ({
               </label>
             </>
           )}
+          {!several && (
+            <label>
+              <span className={label}>Nombre de boîtes attendues</span>
+              <input
+                inputMode="numeric"
+                value={boxesExpected}
+                onChange={(e) => setBoxesExpected(e.target.value.replace(/\D/g, ''))}
+                placeholder="Facultatif"
+                className={inputClass}
+              />
+              <span className="mt-1 block text-[10px] text-slate-500">
+                Annonce du fournisseur ou « x of N » de l’étiquette. Rempli : alerte « Reçu partiel » s’il en manque après le délai.
+              </span>
+            </label>
+          )}
           <label className="sm:col-span-2">
             <span className={label}>Remarque</span>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} className={inputClass} />
           </label>
         </div>
+
+        {live && <ParcelBoxesSection parcel={live} onChanged={setLive} />}
 
         <p className="mt-3 text-[11px] text-slate-500 dark:text-slate-400">
           Sans date de livraison prévue, l'alerte de perte part de la date de facture. Un n° de suivi déjà connu rattache
@@ -333,7 +366,7 @@ export const ParcelFormModal: React.FC<Props> = ({
         <div className="mt-5 flex justify-end gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             className="rounded-xl border border-slate-200 px-4 py-2 font-bold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             Annuler

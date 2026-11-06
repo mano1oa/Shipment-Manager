@@ -1,6 +1,8 @@
 import type { ShipmentAlert } from '../types';
 import { formatDate } from './dateFormat';
-import type { ParcelDestination, ParcelStatus } from './parcelTracking';
+import type { ParcelDestination, ParcelStatus, TrackingSettings } from './parcelTracking';
+import { isPartialOverdue, lossDeadline } from './parcelBoxes';
+import type { ParcelBox } from './parcelBoxes';
 
 /** What the alert rules need from a parcel (see Parcel in components/digiApi). */
 export interface ParcelForAlerts {
@@ -16,6 +18,8 @@ export interface ParcelForAlerts {
   photo_count: number;
   shipment_ids: string[];
   invoices: { ref: string | null; invoice_date: string | null }[];
+  boxes: Pick<ParcelBox, 'piece_number'>[];
+  boxes_expected: number | null;
 }
 
 const hubOf = (d: ParcelDestination) => (d === 'ORLY' ? 'Orly' : 'Rouen');
@@ -24,9 +28,10 @@ const hubOf = (d: ParcelDestination) => (d === 'ORLY' ? 'Orly' : 'Rouen');
  * Parcel alerts, shown in the Alerts center next to the shipment alerts:
  * - R6 lost before the hub (set automatically after the delay) → claim to the supplier;
  * - R7 "Avis de recherche": received at the hub, missing in Madagascar → claim to MIDEX / forwarder;
+ * - R9 "Reçu partiel": fewer boxes than announced after the loss delay → claim to the supplier.
  * Alert ids are stable so that "resolved" survives reloads.
  */
-export function evaluateParcelAlerts(parcels: ParcelForAlerts[]): ShipmentAlert[] {
+export function evaluateParcelAlerts(parcels: ParcelForAlerts[], settings: TrackingSettings): ShipmentAlert[] {
   const today = new Date().toISOString().split('T')[0];
   const alerts: ShipmentAlert[] = [];
 
@@ -34,6 +39,33 @@ export function evaluateParcelAlerts(parcels: ParcelForAlerts[]): ShipmentAlert[
     const hub = hubOf(p.destination);
     const refs = p.invoices.map((i) => i.ref || '—').join(', ') || 'N/A';
     const tracking = p.tracking_number || 'sans n° de suivi';
+
+    if (isPartialOverdue(p, settings, today)) {
+      const expected = p.boxes_expected!;
+      const missing = expected - p.boxes.length;
+      const pieces = p.boxes.map((b) => b.piece_number).filter(Boolean);
+      // A new count is a new alert (the previous one may have been resolved)
+      alerts.push({
+        id: `ALT-PARCEL-PARTIAL-${p.id}-${expected}`,
+        shipment_id: p.shipment_ids[0] || '',
+        tracking_no: p.tracking_number || '',
+        severity: 'warning',
+        rule_code: 'R9_PARCEL_PARTIAL',
+        title: `📦 REÇU PARTIEL ${p.boxes.length}/${expected} À ${hub.toUpperCase()}`,
+        reason: `Colis ${tracking} (${p.supplier_name || 'fournisseur inconnu'}) : ${p.boxes.length} boîte(s) reçue(s) sur ${expected}, ${missing} manquante(s)${
+          pieces.length > 0 ? ` — reçues : ${pieces.join(', ')}` : ''
+        }.`,
+        created_at: lossDeadline(p, settings) || today,
+        resolved: false,
+        suggested_action: `Vérifier les photos du Point (boîte en double ?), sinon réclamer les ${missing} boîte(s) manquante(s) au fournisseur.`,
+        relance_draft: `📦 COLIS INCOMPLET À ${hub.toUpperCase()}
+👉 Merci de vérifier l'envoi : ${missing} boîte(s) sur ${expected} ne sont pas arrivées.
+- Fournisseur : ${p.supplier_name || 'N/A'}
+- Facture(s) : ${refs}
+- Transporteur : ${p.carrier_name || 'N/A'} / N° de suivi : ${tracking}
+- Boîtes reçues : ${p.boxes.length}/${expected}${pieces.length > 0 ? ` (${pieces.join(', ')})` : ''}`,
+      });
+    }
 
     if (p.status === 'lost') {
       alerts.push({

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Combine,
   FileSpreadsheet,
   Layers,
   Loader2,
@@ -20,6 +21,9 @@ import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabe
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
+import { BoxesBadge } from './BoxesBadge';
+import { MergeParcelModal } from './MergeParcelModal';
+import { findMergeSuspects } from '../lib/parcelBoxes';
 import { AmazonReportImportModal } from './AmazonReportImportModal';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
@@ -65,8 +69,18 @@ export const parcelInvoiceDate = (p: Parcel) =>
 export const parcelMatches = (p: Parcel, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)]
-    .some((v) => v && v.toLowerCase().includes(q));
+  // Other numbers (supplier, carrier, box) find the parcel too, typed with or without spaces;
+  // the reception date as shown (03-11-2026)
+  const compactQ = q.replace(/[^a-z0-9]/g, '');
+  const numbers = (p.numbers || []).map((n) => n.number);
+  const receivedOn = p.received_at ? formatDate(p.received_at) : null;
+  return (
+    [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, receivedOn, ...numbers, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)].some(
+      (v) => v && v.toLowerCase().includes(q)
+    ) ||
+    (compactQ.length >= 4 &&
+      [p.tracking_number, ...numbers].some((v) => v && v.toLowerCase().replace(/[^a-z0-9]/g, '').includes(compactQ)))
+  );
 };
 
 /**
@@ -102,6 +116,20 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [amazonOpen, setAmazonOpen] = useState(false);
   /** Parcel whose contents are shown under its row. */
   const [openId, setOpenId] = useState<string | null>(null);
+  /** "Fusionner dans le colis principal…": the parcel to merge, and the main parcel proposed. */
+  const [mergeOf, setMergeOf] = useState<{ parcel: Parcel; principalId: string | null } | null>(null);
+  const [showSuspects, setShowSuspects] = useState(false);
+  /** Received: only the parcels received on this date ('' = every date). */
+  const [receivedOn, setReceivedOn] = useState('');
+  /** Date groups opened or closed by hand (by default only the latest one is open). */
+  const [toggledGroups, setToggledGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setToggledGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const { busy, actionError, actionMessage, setActionMessage, openSearch, declareLost, backToReceive, ...actions } =
     useParcelStatusActions(hub, onReload, () => setSelected(new Set()));
@@ -121,6 +149,9 @@ export const ParcelsBoardView: React.FC<Props> = ({
     [own, settings]
   );
 
+  // A lost parcel and parcels created at a point for the same invoice: probably boxes of one shipment
+  const suspects = useMemo(() => (isSupplyChain ? findMergeSuspects(own) : []), [own, isSupplyChain]);
+
   const suppliers = useMemo(
     () => Array.from(new Set<string>(own.map((p) => p.supplier_name || '—'))).sort((a, b) => a.localeCompare(b, 'fr')),
     [own]
@@ -132,6 +163,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
         if (statusFilter === 'open' && p.status !== 'to_receive') return false;
         if (['received', 'lost', 'search', 'to_receive'].includes(statusFilter) && p.status !== statusFilter) return false;
         if (statusFilter === 'no_invoice' && p.invoices.length > 0) return false;
+        if (statusFilter === 'received' && receivedOn && p.received_at !== receivedOn) return false;
         if (supplierFilter !== 'all' && (p.supplier_name || '—') !== supplierFilter) return false;
         return parcelMatches(p, search) && parcelMatches(p, globalSearch);
       })
@@ -141,7 +173,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
             (statusFilter === 'received' ? compareDateDesc(a.received_at, b.received_at) : 0) ||
             compareDateDesc(a.expected_delivery, b.expected_delivery)
         ),
-    [own, statusFilter, supplierFilter, search, globalSearch, settings]
+    [own, statusFilter, supplierFilter, search, globalSearch, settings, receivedOn]
   );
 
   // Received at the hub: one group per reception date, to ship them together
@@ -247,6 +279,42 @@ export const ParcelsBoardView: React.FC<Props> = ({
         ))}
       </div>
 
+      {suspects.length > 0 && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
+          <button onClick={() => setShowSuspects((v) => !v)} className="flex w-full items-center gap-2 text-left font-bold">
+            <Combine className="h-4 w-4 shrink-0" />
+            Colis à fusionner ? {suspects.length} facture(s) ont un colis perdu et des colis créés au point (même fournisseur,
+            même transporteur) : ce sont peut-être les boîtes d'un même envoi.
+            {showSuspects ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
+          </button>
+          {showSuspects && (
+            <ul className="mt-2 space-y-2">
+              {suspects.map((s) => (
+                <li key={`${s.invoice_id}-${s.principal.id}`} className="rounded-xl bg-white/70 p-2 dark:bg-slate-900/40">
+                  <div>
+                    Facture <strong>{s.invoice_ref || '—'}</strong> · {s.principal.supplier_name || '—'} · perdu :{' '}
+                    <span className="font-mono font-bold">{s.principal.tracking_number || 'sans n°'}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {s.boxes.map((b) => (
+                      <button
+                        key={b.id}
+                        onClick={() => setMergeOf({ parcel: b, principalId: s.principal.id })}
+                        className="flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-2 py-1 font-semibold hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900"
+                      >
+                        <Combine className="h-3.5 w-3.5" /> Fusionner{' '}
+                        <span className="font-mono">{b.tracking_number || 'sans n°'}</span>
+                        {b.received_at ? ` (reçu le ${formatDate(b.received_at)})` : ''}
+                      </button>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
         <button
           onClick={() => setStatusFilter('no_invoice')}
@@ -298,6 +366,27 @@ export const ParcelsBoardView: React.FC<Props> = ({
             </option>
           ))}
         </select>
+        {statusFilter === 'received' && (
+          <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Reçus le
+            <DateInput
+              value={receivedOn}
+              wrapperClassName="w-36"
+              max={today}
+              onChange={(v) => setReceivedOn(v || '')}
+              className={selectClass}
+            />
+            {receivedOn && (
+              <button
+                onClick={() => setReceivedOn('')}
+                title="Toutes les dates"
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </label>
+        )}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={selectClass}>
           <option value="open">À recevoir</option>
           <option value="received">Reçus à {hub}</option>
@@ -412,13 +501,21 @@ export const ParcelsBoardView: React.FC<Props> = ({
                   </td>
                 </tr>
               ) : (
-                rowGroups.map((g) => {
+                rowGroups.map((g, groupIndex) => {
                   const groupSelected = g.parcels.every((p) => selected.has(p.id));
                   const groupToShip = invoicesToShip(g.parcels);
+                  const groupKey = g.date ?? 'none';
+                  // Latest date open by default; a search or a date filter opens every group shown
+                  const filteredView = Boolean(receivedOn || search.trim() || globalSearch.trim());
+                  const groupOpen =
+                    !g.grouped || filteredView || (groupIndex === 0) !== toggledGroups.has(groupKey);
                   return (
-                  <React.Fragment key={g.date ?? 'none'}>
+                  <React.Fragment key={groupKey}>
                   {g.grouped && (
-                    <tr className="bg-slate-50 dark:bg-slate-900/50">
+                    <tr
+                      onClick={() => !filteredView && toggleGroup(groupKey)}
+                      className={`bg-slate-50 dark:bg-slate-900/50 ${filteredView ? '' : 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900'}`}
+                    >
                       {isSupplyChain && (
                         <td className="px-3 py-2">
                           <input
@@ -426,12 +523,19 @@ export const ParcelsBoardView: React.FC<Props> = ({
                             aria-label={`Sélectionner les colis reçus le ${formatDate(g.date)}`}
                             checked={groupSelected}
                             onChange={() => toggleMany(g.parcels, !groupSelected)}
+                            onClick={(e) => e.stopPropagation()}
                             className="h-4 w-4 cursor-pointer accent-emerald-600"
                           />
                         </td>
                       )}
                       <td colSpan={columns - (isSupplyChain ? 1 : 0)} className="px-3 py-2">
                         <div className="flex flex-wrap items-center gap-2">
+                          {!filteredView &&
+                            (groupOpen ? (
+                              <ChevronDown className="h-4 w-4 text-slate-400" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-slate-400" />
+                            ))}
                           <span className="text-[11px] font-extrabold text-slate-800 dark:text-slate-100">
                             {g.date ? `Reçus le ${formatDate(g.date)}` : 'Date de réception inconnue'}
                           </span>
@@ -440,7 +544,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           </span>
                           {onGroupInShipment && groupToShip.length > 0 && (
                             <button
-                              onClick={() => onGroupInShipment(groupToShip)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onGroupInShipment(groupToShip);
+                              }}
                               title="Nouvelle expédition vers Madagascar avec les factures de ces colis (pas encore expédiés)"
                               className="ml-auto flex items-center gap-1 rounded-lg border border-[#623387]/40 px-2 py-1 text-[11px] font-bold text-[#623387] hover:bg-[#F8EEFF] dark:text-[#C09BE3] dark:hover:bg-purple-950/40"
                             >
@@ -451,7 +558,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       </td>
                     </tr>
                   )}
-                  {g.parcels.map((p) => {
+                  {(groupOpen ? g.parcels : []).map((p) => {
                   const late = overdue(p);
                   return (
                     <React.Fragment key={p.id}>
@@ -505,7 +612,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}
                         >
                           {parcelStatusLabel(p.status, p.destination)}
-                        </span>
+                        </span>{' '}
+                        <BoxesBadge parcel={p} />
                         {p.status === 'received' && p.received_at && (
                           <span className="ml-1 text-[10px] text-slate-400">le {formatDate(p.received_at)}</span>
                         )}
@@ -591,6 +699,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
                               <Undo2 className="h-4 w-4" />
                             </button>
                           )}
+                          {isSupplyChain && p.status !== 'search' && (
+                            <button
+                              onClick={() => setMergeOf({ parcel: p, principalId: null })}
+                              disabled={busy !== null}
+                              title="Fusionner dans le colis principal… (boîte d'un envoi de plusieurs boîtes, créée à part)"
+                              className={`${iconButton} hover:text-[#623387]`}
+                            >
+                              <Combine className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -612,6 +730,24 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      {mergeOf && (
+        <MergeParcelModal
+          merged={mergeOf.parcel}
+          parcels={own}
+          initialPrincipalId={mergeOf.principalId}
+          onClose={() => setMergeOf(null)}
+          onMerged={(principal) => {
+            setActionMessage(
+              `Colis ${mergeOf.parcel.tracking_number || 'sans n°'} fusionné dans ${principal.tracking_number || 'le colis principal'} : ${
+                principal.boxes.length
+              } boîte(s) reçue(s)${principal.boxes_expected ? ` sur ${principal.boxes_expected}` : ''}.`
+            );
+            setMergeOf(null);
+            onReload();
+          }}
+        />
+      )}
 
       {photosOf && (
         <ParcelPhotosModal

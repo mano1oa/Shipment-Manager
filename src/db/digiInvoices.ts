@@ -91,6 +91,12 @@ export interface DigiInvoiceRecord {
   triaged_at: string | null;
   parcel_count: number;
   parcel_received_count: number;
+  /** Boxes received for its parcels (one per photo matched at a point). */
+  box_received_count: number;
+  /** Boxes announced in all, null when a parcel has no count. */
+  box_expected_total: number | null;
+  /** Received parcels with fewer boxes than announced (shipment exception). */
+  incomplete_parcels: { tracking_number: string | null; received: number; expected: number }[];
   created_by_email: string | null;
   updated_by_email: string | null;
   created_at: string;
@@ -319,6 +325,9 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     triaged_at: row.triaged_at ?? null,
     parcel_count: Number(row.parcel_count) || 0,
     parcel_received_count: Number(row.parcel_received_count) || 0,
+    box_received_count: Number(row.box_received_count) || 0,
+    box_expected_total: row.box_expected_total === null || row.box_expected_total === undefined ? null : Number(row.box_expected_total),
+    incomplete_parcels: row.incomplete_parcels || [],
     created_by_email: row.created_by_email,
     updated_by_email: row.updated_by_email,
     created_at: row.created_at,
@@ -341,6 +350,22 @@ const SELECT_WITH_LINES = `
       SELECT COUNT(*)::int FROM parcel_invoices pi JOIN parcels p ON p.id = pi.parcel_id
       WHERE pi.invoice_id = i.id AND p.status IN ('received', 'search')
     ) AS parcel_received_count,
+    (
+      SELECT COUNT(*)::int FROM parcel_invoices pi JOIN parcel_receptions r ON r.parcel_id = pi.parcel_id
+      WHERE pi.invoice_id = i.id
+    ) AS box_received_count,
+    (
+      SELECT CASE WHEN COUNT(*) > 0 AND bool_and(p.boxes_expected IS NOT NULL) THEN SUM(p.boxes_expected)::int END
+      FROM parcel_invoices pi JOIN parcels p ON p.id = pi.parcel_id
+      WHERE pi.invoice_id = i.id
+    ) AS box_expected_total,
+    (
+      SELECT json_agg(json_build_object('tracking_number', p.tracking_number, 'received', b.n, 'expected', p.boxes_expected))
+      FROM parcel_invoices pi JOIN parcels p ON p.id = pi.parcel_id
+      CROSS JOIN LATERAL (SELECT COUNT(*)::int AS n FROM parcel_receptions r WHERE r.parcel_id = p.id) b
+      WHERE pi.invoice_id = i.id AND p.status IN ('received', 'search') AND p.boxes_expected IS NOT NULL
+        AND b.n < p.boxes_expected
+    ) AS incomplete_parcels,
     (s.id IS NOT NULL) AS shipment_exists, s.mode AS shipment_mode, s.global_status AS shipment_global_status,
     i.created_by_email, i.updated_by_email, i.created_at, i.updated_at,
     COALESCE(

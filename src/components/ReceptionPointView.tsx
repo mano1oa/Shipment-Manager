@@ -24,6 +24,8 @@ import { ZoomableImage } from './ZoomableImage';
 import { compareDateDesc } from '../lib/dateFormat';
 import { parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
+import { PARCEL_NUMBER_KIND_LABELS, boxSummary, invoiceBoxesLabel } from '../lib/parcelBoxes';
+import type { ParcelNumberKind } from '../lib/parcelBoxes';
 import {
   DigiInvoice,
   Parcel,
@@ -48,6 +50,7 @@ import {
 } from './digiApi';
 import { compressPhoto } from './photoCompression';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
+import { BoxesBadge } from './BoxesBadge';
 import DateInput from './DateInput';
 
 interface Props {
@@ -65,6 +68,19 @@ const compact = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, '');
 /** Parcels still expected come first in the suggestions. */
 const STATUS_RANK: Record<Parcel['status'], number> = { to_receive: 0, lost: 1, search: 2, received: 3 };
 const supplierOf = (inv: DigiInvoice) => inv.supplier_display || '—';
+/** Positive integer typed in a box field, null when empty or invalid. */
+const boxNumber = (text: string) => {
+  const n = Number(text.trim());
+  return text.trim() && Number.isInteger(n) && n >= 1 && n <= 999 ? n : null;
+};
+
+interface Match {
+  parcel: Parcel;
+  score: number;
+  /** Number that matched: the main one or another number of the parcel. */
+  matched: 'primary' | ParcelNumberKind;
+  value: string;
+}
 const today = () => new Date().toISOString().slice(0, 10);
 
 /**
@@ -117,6 +133,10 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   /** Suggestion highlighted with the arrow keys. */
   const [highlight, setHighlight] = useState(0);
   const numberInput = useRef<HTMLInputElement>(null);
+  // Optional box fields: number of the box, "x of N" of the label
+  const [pieceNumber, setPieceNumber] = useState('');
+  const [boxIndex, setBoxIndex] = useState('');
+  const [boxCount, setBoxCount] = useState('');
 
   const loadPoints = useCallback(() => {
     fetchReceptionPoints(destination)
@@ -235,6 +255,9 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     setOtherSupplier('');
     setChosenInvoices(new Set());
     setPicked(null);
+    setPieceNumber('');
+    setBoxIndex('');
+    setBoxCount('');
     if (photo && !photo.parcel_id) setTimeout(() => numberInput.current?.focus(), 0);
   }, [photo?.id]);
 
@@ -253,23 +276,32 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
 
   // ---- Matching by the number read on the label ----
   const typed = number.trim() ? normalize(number) : '';
-  /** Parcels of the database matching the typed number, best first. */
+  /** Parcels of the database matching the typed number (main or other number), best first. */
   const matches = useMemo(() => {
     const keys = Array.from(new Set([compact(number), compact(typed)])).filter((k) => k.length >= 2);
     if (keys.length === 0) return [];
-    const scored: { parcel: Parcel; score: number }[] = [];
+    const scored: Match[] = [];
     for (const p of parcels) {
-      const saved = p.tracking_number ? compact(p.tracking_number) : '';
-      if (!saved) continue;
-      let score = 0;
-      for (const k of keys) {
-        if (saved === k) score = Math.max(score, 4);
-        else if (saved.startsWith(k) || saved.endsWith(k)) score = Math.max(score, 3);
-        // Label longer than the saved number (carrier prefix, check digit…)
-        else if (saved.length >= 8 && k.includes(saved)) score = Math.max(score, 3);
-        else if (saved.includes(k)) score = Math.max(score, 2);
+      const candidates: { value: string; matched: Match['matched'] }[] = [
+        ...(p.tracking_number ? [{ value: p.tracking_number, matched: 'primary' as const }] : []),
+        ...(p.numbers || []).map((n) => ({ value: n.number, matched: n.kind })),
+      ];
+      let best: Match | null = null;
+      for (const c of candidates) {
+        const saved = compact(c.value);
+        if (!saved) continue;
+        let score = 0;
+        for (const k of keys) {
+          if (saved === k) score = Math.max(score, 4);
+          else if (saved.startsWith(k) || saved.endsWith(k)) score = Math.max(score, 3);
+          // Label longer than the saved number (carrier prefix, check digit…)
+          else if (saved.length >= 8 && k.includes(saved)) score = Math.max(score, 3);
+          else if (saved.includes(k)) score = Math.max(score, 2);
+        }
+        // The main number wins a tie
+        if (score > 0 && (!best || score > best.score)) best = { parcel: p, score, matched: c.matched, value: c.value };
       }
-      if (score > 0) scored.push({ parcel: p, score });
+      if (best) scored.push(best);
     }
     return scored
       .sort(
@@ -280,9 +312,13 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       )
       .slice(0, 8);
   }, [number, typed, parcels, destination]);
-  const exact = matches[0]?.score === 4 ? matches[0].parcel : null;
+  /** Selected without a click only on the exact main number (never on another number). */
+  const exact = matches[0]?.score === 4 && matches[0].matched === 'primary' ? matches[0].parcel : null;
   /** Parcel picked in the list (or the exact match): the one to link. */
   const chosen = picked ? parcelById.get(picked) ?? null : exact;
+  const chosenMatch = chosen ? matches.find((m) => m.parcel.id === chosen.id) ?? null : null;
+  /** Enter links only on the exact main number; another number needs a click. */
+  const enterLinks = Boolean(chosen && chosenMatch?.matched === 'primary' && chosenMatch.score === 4);
   useEffect(() => {
     setPicked(null);
     setHighlight(0);
@@ -317,8 +353,8 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   /** Links the parcel; a parcel without number gets the one read on the label. */
   const linkChosen = (p: Parcel) =>
     !p.tracking_number && number.trim()
-      ? link({ parcel_id: p.id, tracking_number: number.trim() }, 'N° complété et rattaché')
-      : link({ parcel_id: p.id }, 'Rattachée');
+      ? link({ parcel_id: p.id, tracking_number: number.trim(), ...boxFields() }, 'N° complété et rattaché')
+      : link({ parcel_id: p.id, ...boxFields() }, p.boxes.length > 0 ? 'Boîte suivante rattachée' : 'Rattachée');
   const supplierInvoices = useMemo(() => (invoices || []).filter((i) => supplierOf(i) === supplier), [invoices, supplier]);
   const supplierName = supplier === OTHER_SUPPLIER ? otherSupplier.trim() : supplier;
 
@@ -331,19 +367,38 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     if (!onlyToMatch) go(1);
   };
 
+  /** Box fields typed next to the link button (all optional). */
+  const boxFields = () => ({
+    piece_number: pieceNumber.trim() || null,
+    box_index: boxNumber(boxIndex),
+    boxes_expected: boxNumber(boxCount),
+  });
+
   const link = async (body: Parameters<typeof linkPointPhoto>[2], label: string) => {
     if (!current || !photo) return;
     setSaving(true);
     setError(null);
     try {
-      const r = await linkPointPhoto(current.point.id, photo.id, body);
+      let r;
+      try {
+        r = await linkPointPhoto(current.point.id, photo.id, body);
+      } catch (err: any) {
+        // Another N already saved for the parcel: replaced only once confirmed
+        if (err.code !== 'BOXES_EXPECTED_CONFLICT' || !window.confirm(`${err.message}\n\nRemplacer ?`)) throw err;
+        r = await linkPointPhoto(current.point.id, photo.id, { ...body, confirm_boxes_expected: true } as typeof body);
+      }
       const p = r.parcel;
+      const boxes = p ? boxSummary(p) : null;
       await afterLink(
         p
           ? `${label} : colis ${p.tracking_number || 'sans n°'} (${p.supplier_name || '—'})${
               r.reception_confirmed ? ` reçu à ${hub} le ${formatDate(current.point.point_date)}` : ''
-            }.`
-          : 'Photo détachée : elle est de nouveau à rattacher.'
+            }${boxes?.label ? ` · ${boxes.label}` : ''}${
+              r.duplicate_box_index ? ' — attention : ce n° de boîte était déjà reçu (doublon probable)' : ''
+            }${boxes?.over ? ' — attention : plus de boîtes que prévu (doublon de photo ?)' : ''}.`
+          : r.back_to_receive
+            ? 'Photo détachée : c’était la seule boîte, le colis est de nouveau à recevoir.'
+            : 'Photo détachée : elle est de nouveau à rattacher (une boîte de moins sur le colis).'
       );
       // Invoices may now be fully received
       fetchDigiInvoices()
@@ -719,11 +774,22 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                   Par {photo.linked_by_email || '—'} le {formatDateTime(photo.linked_at)}
                 </p>
                 <button
-                  onClick={() => link({ parcel_id: null }, 'Détachée')}
+                  onClick={() => {
+                    // Its only box: the parcel goes back to "to receive" (lost automatically if late)
+                    const lastBox = linkedParcel?.status === 'received' && linkedParcel.boxes.length <= 1;
+                    if (
+                      lastBox &&
+                      !window.confirm(
+                        `C'était la seule boîte reçue de ce colis : il repasse « à recevoir » (et sera déclaré perdu automatiquement si le délai est dépassé). Détacher ?`
+                      )
+                    )
+                      return;
+                    link({ parcel_id: null }, 'Détachée');
+                  }}
                   disabled={saving}
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
                 >
-                  <Unlink className="h-4 w-4" /> Détacher (le colis reste reçu)
+                  <Unlink className="h-4 w-4" /> Détacher (une boîte de moins sur le colis)
                 </button>
               </div>
             ) : (
@@ -744,9 +810,10 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                         setPicked(null);
                         setHighlight((h) => Math.max(h - 1, 0));
                       } else if (e.key === 'Enter' && !saving) {
-                        // 1st Enter picks the highlighted parcel, the 2nd links it
-                        if (chosen) linkChosen(chosen);
-                        else if (matches[highlight]) setPicked(matches[highlight].parcel.id);
+                        // 1st Enter picks the highlighted parcel, the 2nd links it (exact main number only)
+                        if (chosen) {
+                          if (enterLinks) linkChosen(chosen);
+                        } else if (matches[highlight]) setPicked(matches[highlight].parcel.id);
                       } else if (e.key === 'Escape') setPicked(null);
                     }}
                     placeholder="Recopier le n° de l'étiquette"
@@ -767,19 +834,72 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                         Ce colis était attendu à {chosen.destination === 'ORLY' ? 'Orly' : 'Rouen'}.
                       </p>
                     )}
-                    {chosen.status === 'received' && (
-                      <p className="text-[11px] font-semibold text-amber-600">
-                        Ce colis est déjà reçu{chosen.received_at ? ` (le ${formatDate(chosen.received_at)})` : ''} : la
-                        photo sera ajoutée sans changer sa date de réception.
+                    {chosenMatch && chosenMatch.matched !== 'primary' && (
+                      <p className="text-[11px] font-semibold text-sky-700 dark:text-sky-300">
+                        Trouvé par son {PARCEL_NUMBER_KIND_LABELS[chosenMatch.matched].toLowerCase()} {chosenMatch.value} :
+                        vérifiez que c'est bien ce colis, puis cliquez sur Rattacher.
                       </p>
                     )}
+                    {(chosen.status === 'received' || chosen.status === 'search') && (
+                      <p className="text-[11px] font-semibold text-amber-600">
+                        Déjà {chosen.boxes.length || 1} boîte(s) reçue(s)
+                        {chosen.boxes_expected ? ` sur ${chosen.boxes_expected}` : ''} — rattacher comme boîte suivante, reçue
+                        le {formatDate(current.point.point_date)}.
+                      </p>
+                    )}
+                    <div className="grid grid-cols-[1fr_auto] gap-2">
+                      <label className="block">
+                        <span className={label}>N° de pièce (facultatif)</span>
+                        <input
+                          value={pieceNumber}
+                          onChange={(e) => setPieceNumber(e.target.value)}
+                          placeholder="N° de cette boîte"
+                          autoComplete="off"
+                          className={`${inputClass} font-mono`}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className={label}>Boîte x / N</span>
+                        <span className="flex items-center gap-1">
+                          <input
+                            value={boxIndex}
+                            onChange={(e) => setBoxIndex(e.target.value.replace(/\D/g, ''))}
+                            inputMode="numeric"
+                            placeholder="x"
+                            className={`${inputClass} w-12 text-center`}
+                          />
+                          /
+                          <input
+                            value={boxCount}
+                            onChange={(e) => setBoxCount(e.target.value.replace(/\D/g, ''))}
+                            inputMode="numeric"
+                            placeholder={chosen.boxes_expected ? String(chosen.boxes_expected) : 'N'}
+                            className={`${inputClass} w-12 text-center`}
+                          />
+                        </span>
+                      </label>
+                    </div>
+                    {boxNumber(boxIndex) !== null && chosen.boxes.some((b) => b.box_index === boxNumber(boxIndex)) && (
+                      <p className="text-[11px] font-semibold text-amber-600">
+                        La boîte {boxIndex} est déjà reçue sur ce colis : doublon de photo probable.
+                      </p>
+                    )}
+                    {(() => {
+                      const expected = boxNumber(boxCount) ?? chosen.boxes_expected;
+                      return expected !== null && chosen.boxes.length + 1 > expected ? (
+                        <p className="text-[11px] font-semibold text-amber-600">
+                          Ce sera la boîte {chosen.boxes.length + 1} alors que {expected} sont attendues : doublon de photo ?
+                        </p>
+                      ) : null;
+                    })()}
                     <button
                       onClick={() => linkChosen(chosen)}
                       disabled={saving}
                       className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2.5 font-bold text-white hover:bg-emerald-700 disabled:opacity-50"
                     >
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
-                      Rattacher — reçu le {formatDate(current.point.point_date)} (Entrée)
+                      Rattacher — reçu le {formatDate(current.point.point_date)}
+                      {enterLinks ? ' (Entrée)' : ''}
                     </button>
                     {(picked || matches.length > 1) && (
                       <button
@@ -796,7 +916,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                   <div>
                     <span className={label}>Colis en base ({matches.length}) — cliquez pour sélectionner</span>
                     <div className="mt-1 space-y-1" role="listbox">
-                      {matches.map(({ parcel: s }, i) => (
+                      {matches.map(({ parcel: s, matched, value }, i) => (
                         <button
                           key={s.id}
                           role="option"
@@ -816,7 +936,9 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                             </span>
                           </div>
                           <div className="mt-0.5 truncate text-[10px] text-slate-500">
+                            {matched === 'primary' ? 'N° principal' : `${PARCEL_NUMBER_KIND_LABELS[matched]} ${value}`} ·{' '}
                             {s.supplier_name || '—'} · Facture(s) {s.invoices.map((inv) => inv.ref || '—').join(', ') || '—'}
+                            {boxSummary(s).label && ` · ${boxSummary(s).label}`}
                             {s.destination !== destination && ` · attendu à ${s.destination === 'ORLY' ? 'Orly' : 'Rouen'}`}
                           </div>
                         </button>
@@ -917,6 +1039,8 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                               <span className="text-slate-500">
                                 {formatDate(inv.invoice_date)} ·{' '}
                                 {inv.parcel_count === 0 ? 'sans colis' : `${inv.parcel_received_count}/${inv.parcel_count} reçu(s)`}
+                                {invoiceBoxesLabel(inv.box_received_count, inv.box_expected_total) &&
+                                  ` · ${invoiceBoxesLabel(inv.box_received_count, inv.box_expected_total)}`}
                               </span>
                             </label>
                           ))}
@@ -925,7 +1049,10 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                       <button
                         onClick={() =>
                           link(
-                            { new_parcel: { tracking_number: number.trim() || null, invoice_ids: Array.from(chosenInvoices) } },
+                            {
+                              new_parcel: { tracking_number: number.trim() || null, invoice_ids: Array.from(chosenInvoices) },
+                              ...boxFields(),
+                            },
                             'Colis créé et rattaché'
                           )
                         }
@@ -940,7 +1067,10 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                           <button
                             onClick={() =>
                               link(
-                                { new_parcel: { tracking_number: number.trim(), supplier_name: supplierName, without_invoice: true } },
+                                {
+                                  new_parcel: { tracking_number: number.trim(), supplier_name: supplierName, without_invoice: true },
+                                  ...boxFields(),
+                                },
                                 'Reçu sans facture'
                               )
                             }
@@ -988,8 +1118,11 @@ const ParcelCard: React.FC<{ parcel: Parcel }> = ({ parcel }) => (
   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
     <div className="flex items-center justify-between gap-2">
       <span className="font-mono font-bold">{parcel.tracking_number || 'sans n° de suivi'}</span>
-      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[parcel.status]}`}>
-        {parcelStatusLabel(parcel.status, parcel.destination)}
+      <span className="flex items-center gap-1">
+        <BoxesBadge parcel={parcel} />
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[parcel.status]}`}>
+          {parcelStatusLabel(parcel.status, parcel.destination)}
+        </span>
       </span>
     </div>
     <div className="mt-1 font-semibold">{parcel.supplier_name || '—'}</div>
