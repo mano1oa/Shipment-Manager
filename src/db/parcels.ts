@@ -16,6 +16,8 @@ export interface ParcelInvoiceRef {
   id: string;
   ref: string | null;
   supplier_display: string | null;
+  /** Amazon order of the invoice (lets the buyer find their order). */
+  amazon_order_ref: string | null;
   invoice_date: string | null;
   /** DIGI: total of the lines (EUR); hors DIGI: amount in `currency`. */
   amount_total: number | null;
@@ -168,6 +170,7 @@ function mapParcelRow(row: any): ParcelRecord {
       id: i.id,
       ref: i.ref,
       supplier_display: trackingSupplierName(i.supplier_name, i.amazon_order_ref),
+      amazon_order_ref: i.amazon_order_ref ?? null,
       invoice_date: i.invoice_date,
       amount_total: i.amount_total === null || i.amount_total === undefined ? null : Number(i.amount_total),
       currency: i.currency || 'EUR',

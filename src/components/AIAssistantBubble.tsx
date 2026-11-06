@@ -11,6 +11,17 @@ import {
 } from 'lucide-react';
 import { Shipment, ShipmentAlert } from '../types';
 
+/** JSON answer of the AI routes; a page instead of JSON (time limit, session expired) gets a clear message. */
+async function readAiAnswer(response: Response): Promise<{ reply?: string; analysis?: string; error?: string }> {
+  const data = await response.json().catch(() => null);
+  if (data) return data;
+  if (response.status === 504 || response.status === 408) {
+    return { error: 'Shipment AI a mis trop de temps à répondre (délai du serveur dépassé). Réessayez avec une question plus courte.' };
+  }
+  if (response.status === 401) return { error: 'Session expirée : reconnectez-vous puis réessayez.' };
+  return { error: `Shipment AI : réponse inattendue du serveur (erreur ${response.status}).` };
+}
+
 interface Message {
   id: string;
   sender: 'user' | 'assistant';
@@ -88,7 +99,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
         }),
       });
 
-      const data = await response.json();
+      const data = await readAiAnswer(response);
 
       const aiMsg: Message = {
         id: `ai-${Date.now()}`,
@@ -135,7 +146,7 @@ Je peux analyser vos expéditions aériennes et maritimes, diagnostiquer les ret
         body: JSON.stringify({ shipments }),
       });
 
-      const data = await res.json();
+      const data = await readAiAnswer(res);
 
       setMessages((prev) => [
         ...prev,

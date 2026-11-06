@@ -37,6 +37,8 @@ function ensureLineReceiptsSchema(): Promise<void> {
 export interface ReceivedArticle {
   shipment_id: string;
   ref_fa_digi_nxt: string | null;
+  /** Sea: MAR/2026/014, name of the shipment when set. */
+  internal_ref: string | null;
   shipment_mode: 'Air' | 'Sea';
   shipment_global_status: string | null;
   confirmed_at: string | null;
@@ -59,7 +61,7 @@ export async function listReceivedArticles(shipmentId?: string): Promise<Receive
   await ensureLineReceiptsSchema();
   const sql = getDb();
   const rows = await sql.query(
-    `SELECT s.id AS shipment_id, s.ref_fa_digi_nxt, s.mode AS shipment_mode, s.global_status AS shipment_global_status,
+    `SELECT s.id AS shipment_id, s.ref_fa_digi_nxt, s.internal_ref, s.mode AS shipment_mode, s.global_status AS shipment_global_status,
        s.confirmed_at, s.orly_scan_date,
        i.id AS invoice_id, COALESCE(i.ref, i.odoo_move_name) AS invoice_ref, i.supplier_name, i.amazon_order_ref,
        l.position, l.name, l.quantity, r.quantity_received, r.updated_by_email, r.updated_at
@@ -74,6 +76,7 @@ export async function listReceivedArticles(shipmentId?: string): Promise<Receive
   return (rows as any[]).map((r) => ({
     shipment_id: r.shipment_id,
     ref_fa_digi_nxt: r.ref_fa_digi_nxt || null,
+    internal_ref: r.internal_ref || null,
     shipment_mode: r.shipment_mode,
     shipment_global_status: r.shipment_global_status ?? null,
     confirmed_at: r.confirmed_at ? new Date(r.confirmed_at).toISOString() : null,

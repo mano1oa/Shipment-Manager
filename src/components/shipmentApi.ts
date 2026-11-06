@@ -24,6 +24,8 @@ export const unlockShipment = (shipmentId: string) =>
 export interface ReceivedArticle {
   shipment_id: string;
   ref_fa_digi_nxt: string | null;
+  /** Sea: MAR/2026/014, name of the shipment when set. */
+  internal_ref: string | null;
   shipment_mode: 'Air' | 'Sea';
   shipment_global_status: string | null;
   confirmed_at: string | null;

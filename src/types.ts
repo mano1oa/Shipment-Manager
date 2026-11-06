@@ -151,6 +151,12 @@ export interface Shipment {
   port_of_loading?: string; // Port de départ (ex: Le Havre / Rouen)
   port_of_discharge?: string; // Port de destination (ex: Port de Toamasina)
   transshipment_ports?: string[]; // Escales / Transbordement
+  /** Sea: internal ref of the shipment (MAR/2026/014), its name. */
+  internal_ref?: string;
+  /** Sea: Full TC 20', Full TC 40' or Groupage. */
+  container_type?: ContainerType | '';
+  /** Sea: shipping line (compagnie maritime, ex. MSC, CMA CGM). */
+  shipping_line?: string;
   /** Status before the parcel model ('' for shipments created since). */
   legacy_global_status?: string | null;
   /** Saved before the parcel model and not departed: to regroup or delete. */
@@ -171,9 +177,22 @@ export function shipmentValue(s: Pick<Shipment, 'digi_invoice_total' | 'cost_eur
   return s.digi_invoice_total ?? (Number(s.cost_eur) || 0);
 }
 
-/** Name of a shipment: its Réf FA DIGI-NXT, the internal id for the former ones without. */
-export function shipmentLabel(s: Pick<Shipment, 'id' | 'ref_fa_digi_nxt'> | undefined, fallbackId = ''): string {
+export type ContainerType = "Full TC 20'" | "Full TC 40'" | 'Groupage';
+export const CONTAINER_TYPES: ContainerType[] = ["Full TC 20'", "Full TC 40'", 'Groupage'];
+
+/** Internal ref of a sea shipment: MAR/2026/014. */
+export const INTERNAL_REF_PATTERN = /^MAR\/\d{4}\/\d{3,}$/;
+
+/**
+ * Name of a shipment: its internal ref (sea, MAR/2026/014), else its Réf FA
+ * DIGI-NXT, else the internal id for the former ones without.
+ */
+export function shipmentLabel(
+  s: Pick<Shipment, 'id' | 'ref_fa_digi_nxt' | 'internal_ref'> | undefined,
+  fallbackId = ''
+): string {
   if (!s) return fallbackId;
+  if (s.internal_ref?.trim()) return s.internal_ref.trim();
   return s.ref_fa_digi_nxt?.trim() ? `FA ${s.ref_fa_digi_nxt.trim()}` : s.id;
 }
 

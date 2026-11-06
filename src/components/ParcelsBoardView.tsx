@@ -66,6 +66,20 @@ export const parcelInvoiceDate = (p: Parcel) =>
     .filter((d): d is string => Boolean(d))
     .sort()[0] ?? null;
 
+/** Amazon orders of the parcel's invoices, once each (lets the buyers find their order). */
+export const parcelAmazonOrders = (p: Parcel): string[] =>
+  Array.from(new Set(p.invoices.map((i) => i.amazon_order_ref?.trim()).filter((v): v is string => Boolean(v))));
+
+/** "Commande Amazon" cell of the parcel tables (Suivi aérien). */
+export const AmazonOrdersCell: React.FC<{ parcel: Parcel }> = ({ parcel }) => {
+  const orders = parcelAmazonOrders(parcel);
+  return (
+    <td className="px-3 py-2.5 font-mono text-[11px]">
+      {orders.length === 0 ? '—' : orders.map((o) => <div key={o}>{o}</div>)}
+    </td>
+  );
+};
+
 export const parcelMatches = (p: Parcel, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -75,7 +89,7 @@ export const parcelMatches = (p: Parcel, query: string) => {
   const numbers = (p.numbers || []).map((n) => n.number);
   const receivedOn = p.received_at ? formatDate(p.received_at) : null;
   return (
-    [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, receivedOn, ...numbers, ...p.shipment_ids, ...p.invoices.map((i) => i.ref)].some(
+    [p.tracking_number, p.carrier_name, p.supplier_name, p.notes, p.description, receivedOn, ...numbers, ...p.shipment_ids, ...p.invoices.map((i) => i.ref), ...parcelAmazonOrders(p)].some(
       (v) => v && v.toLowerCase().includes(q)
     ) ||
     (compactQ.length >= 4 &&
@@ -213,7 +227,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
       else next.add(id);
       return next;
     });
-  const columns = 7 + (destination === 'ROUEN' ? 1 : 0) + (isSupplyChain ? 1 : 0) + 1;
+  const columns = 7 + (destination === 'ROUEN' ? 1 : 0) + (destination === 'ORLY' ? 1 : 0) + (isSupplyChain ? 1 : 0) + 1;
   const iconButton =
     'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700';
 
@@ -480,6 +494,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 <th className="px-3 py-3">Transporteur</th>
                 <th className="px-3 py-3">Fournisseur</th>
                 <th className="px-3 py-3">Factures</th>
+                {destination === 'ORLY' && <th className="px-3 py-3">Commande Amazon</th>}
                 <th className="px-3 py-3">Livraison prévue</th>
                 <th className="px-3 py-3">État</th>
                 {destination === 'ROUEN' && <th className="px-3 py-3">Colisage / volume</th>}
@@ -605,6 +620,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           p.invoices.map((i) => i.ref || '—').join(', ')
                         )}
                       </td>
+                      {destination === 'ORLY' && <AmazonOrdersCell parcel={p} />}
                       <td className="px-3 py-2.5">{formatDate(p.expected_delivery)}</td>
                       <td className="px-3 py-2.5">
                         <span

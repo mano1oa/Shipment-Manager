@@ -97,6 +97,8 @@ export const matchesSearch = (shp: Shipment, query: string) => {
     shp.invoice_no,
     shp.bl_awb,
     shp.ref_fa_digi_nxt,
+    shp.internal_ref,
+    shp.shipping_line,
     shp.container_no,
     shp.id,
   ].some((v) => (v || '').toLowerCase().includes(q));
@@ -251,6 +253,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       'Statut métier global',
       'Date scan Orly manuelle',
       'Ref FA (DIGI-NXT)',
+      'Réf interne',
+      "Type d'envoi",
+      'Compagnie maritime',
+      'Poids total (kg)',
       'Départ Mada',
       'ETA MADA S du',
       'Date récep Mada',
@@ -270,6 +276,10 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
       s.global_status,
       formatDate(s.orly_scan_date, ''),
       s.ref_fa_digi_nxt,
+      s.internal_ref,
+      s.container_type,
+      s.shipping_line,
+      s.weight_kg || '',
       formatDate(calculateDepartureMadagascar(s.orly_scan_date)),
       formatDate(calculateEtaMadaSDu(s.orly_scan_date)),
       formatDate(s.mada_receipt_date, ''),
@@ -560,6 +570,16 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
 
                         {/* Réf Facture & Commande */}
                         <td className="px-3 py-3">
+                          {shp.internal_ref && (
+                            <div className="font-mono font-extrabold text-slate-900 dark:text-white">
+                              {shp.internal_ref}
+                            </div>
+                          )}
+                          {shp.internal_ref && (shp.container_type || shp.shipping_line) && (
+                            <div className="text-[10px] text-slate-500">
+                              {[shp.container_type, shp.shipping_line].filter(Boolean).join(' · ')}
+                            </div>
+                          )}
                           <div className="font-semibold text-slate-800 dark:text-slate-200">
                             Ref: {shp.order_reference}
                           </div>
