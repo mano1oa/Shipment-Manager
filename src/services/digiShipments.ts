@@ -10,6 +10,7 @@ import { writeAuditLog, AuditActor } from '../db/audit.js';
 import { listParcelsForShipment, receptionDates } from '../db/parcels.js';
 import { shipmentChatMessage } from '../lib/shipmentChatMessage.js';
 import { Shipment, TrackingHistoryStep, shipmentLabel } from '../types.js';
+import { sendChatMessage } from './googleChat.js';
 
 /**
  * Shipment Orly → Mada (or Rouen → Mada) = one sale invoice (Réf FA
@@ -338,23 +339,11 @@ export interface ConfirmationOutcome {
   chat_error: string | null;
 }
 
-/** Posts the memo on the Google Chat webhook of the server. */
+/** Posts the memo on the "Confirmation des expéditions" webhooks. Null when sent. */
 async function postToGoogleChat(text: string): Promise<string | null> {
-  const webhook = process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
-  if (!webhook) return 'Webhook Google Chat non configuré (GOOGLE_CHAT_WEBHOOK_URL).';
-  try {
-    const res = await fetch(webhook, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-      body: JSON.stringify({ text }),
-    });
-    if (res.ok) return null;
-    console.error('[Shipments] Google Chat memo rejected:', res.status, await res.text().catch(() => ''));
-    return `Google Chat a refusé le message (${res.status}).`;
-  } catch (err) {
-    console.error('[Shipments] Google Chat memo failed:', err);
-    return 'Google Chat injoignable.';
-  }
+  const { sent, error } = await sendChatMessage('shipment_confirmed', text);
+  if (error) console.error('[Shipments] Google Chat memo:', error);
+  return sent > 0 ? null : error;
 }
 
 /** Memo of the shipment's parcels, dated by the hand-over at Orly (today when unknown). */

@@ -10,11 +10,6 @@ type DelayKey = keyof typeof SETTING_LIMITS;
 
 const DELAYS: { key: DelayKey; label: string; hint: string }[] = [
   {
-    key: 'triage_alert_days',
-    label: 'Facture DIGI non triée',
-    hint: 'Jours après son arrivée avant le badge « Tri en retard ».',
-  },
-  {
     key: 'parcel_loss_days_after_eta',
     label: 'Colis non confirmé à Orly',
     hint: 'Jours après la livraison prévue par le transporteur avant l’alerte de perte.',
@@ -36,7 +31,6 @@ export const TrackingSettingsPanel: React.FC = () => {
   const [settings, setSettings] = useState<TrackingSettings | null>(null);
   const [rate, setRate] = useState('');
   const [delays, setDelays] = useState<Record<DelayKey, string>>({
-    triage_alert_days: '',
     parcel_loss_days_after_eta: '',
     parcel_loss_days_without_eta: '',
     carrier_sla_tolerance_days: '',
@@ -49,7 +43,6 @@ export const TrackingSettingsPanel: React.FC = () => {
     setSettings(s);
     setRate(s.usd_eur_rate === null ? '' : String(s.usd_eur_rate).replace('.', ','));
     setDelays({
-      triage_alert_days: String(s.triage_alert_days),
       parcel_loss_days_after_eta: String(s.parcel_loss_days_after_eta),
       parcel_loss_days_without_eta: String(s.parcel_loss_days_without_eta),
       carrier_sla_tolerance_days: String(s.carrier_sla_tolerance_days),

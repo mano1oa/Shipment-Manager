@@ -173,8 +173,12 @@ export async function initParcelSchema(): Promise<void> {
   });
 
   await runOnce('parcel_model_v1', runConversion);
-  // After the conversion (which fills the NULLs): new DIGI invoices start unsorted
-  await sql`ALTER TABLE digi_invoices ALTER COLUMN triage SET DEFAULT 'to_sort';`;
+  // After the conversion (which fills the NULLs): every new invoice starts as goods
+  // (no sort any more: the few services are changed by hand)
+  await sql`ALTER TABLE digi_invoices ALTER COLUMN triage SET DEFAULT 'goods';`;
+  await runOnce('triage_goods_v1', async () => {
+    await sql`UPDATE digi_invoices SET triage = 'goods', triaged_at = NOW() WHERE triage IS NULL OR triage = 'to_sort'`;
+  });
   await runOnce('parcel_rouen_v1', convertSeaDeliveries);
   // Losses known before the daily summary existed are not announced again
   await runOnce('parcel_loss_notified_v1', async () => {

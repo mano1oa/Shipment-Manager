@@ -221,12 +221,11 @@ export function validateParcelInput(raw: any): { value: ParcelInput | null; erro
 // Invoices
 // ---------------------------------------------------------------------------
 
-/** DIGI invoices are sorted by hand; "hors DIGI" invoices are goods. */
-export const INVOICE_TRIAGES = ['to_sort', 'goods', 'services'] as const;
+/** Every invoice starts as goods; the few services are changed by hand. */
+export const INVOICE_TRIAGES = ['goods', 'services'] as const;
 export type InvoiceTriage = (typeof INVOICE_TRIAGES)[number];
 
 export const INVOICE_TRIAGE_LABELS: Record<InvoiceTriage, string> = {
-  to_sort: 'À trier',
   goods: 'Marchandises',
   services: 'Services',
 };
@@ -251,8 +250,6 @@ export type Currency = (typeof CURRENCIES)[number];
 export interface TrackingSettings {
   /** EUR for 1 USD. Null until Supply Chain sets it: USD amounts are then left out of values. */
   usd_eur_rate: number | null;
-  /** An invoice not sorted after N days is flagged. */
-  triage_alert_days: number;
   /** A parcel not confirmed N days after its expected delivery is flagged as lost. */
   parcel_loss_days_after_eta: number;
   /** Without expected delivery: N days after the invoice date. */
@@ -263,14 +260,12 @@ export interface TrackingSettings {
 
 export const DEFAULT_TRACKING_SETTINGS: TrackingSettings = {
   usd_eur_rate: null,
-  triage_alert_days: 3,
   parcel_loss_days_after_eta: 7,
   parcel_loss_days_without_eta: 14,
   carrier_sla_tolerance_days: 2,
 };
 
 export const SETTING_LIMITS: Record<Exclude<keyof TrackingSettings, 'usd_eur_rate'>, [number, number]> = {
-  triage_alert_days: [1, 60],
   parcel_loss_days_after_eta: [1, 90],
   parcel_loss_days_without_eta: [1, 180],
   carrier_sla_tolerance_days: [0, 30],
@@ -319,9 +314,4 @@ export function isParcelOverdue(
   if (parcel.status !== 'to_receive') return false;
   const deadline = parcelLossDeadline(parcel.expected_delivery, invoiceDate, settings);
   return deadline !== null && today > deadline;
-}
-
-/** Date after which an unsorted invoice is flagged. */
-export function triageDeadline(createdAt: string, settings: TrackingSettings = DEFAULT_TRACKING_SETTINGS): string | null {
-  return addDays(createdAt.slice(0, 10), settings.triage_alert_days);
 }

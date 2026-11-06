@@ -310,17 +310,9 @@ export interface InvoiceWithoutParcel {
   validation_status: ValidationStatus;
 }
 
-export interface LateTriageInvoice {
-  id: string;
-  ref: string | null;
-  supplier_display: string | null;
-  created_at: string;
-}
-
 export interface ParcelsOverview {
   parcels: Parcel[];
   invoices_without_parcel: InvoiceWithoutParcel[];
-  late_triage_invoices: LateTriageInvoice[];
   photo_storage_configured: boolean;
 }
 

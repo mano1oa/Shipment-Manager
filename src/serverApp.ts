@@ -115,7 +115,6 @@ import {
   listParcels,
   listParcelsForShipment,
   listGoodsInvoicesWithoutParcel,
-  listLateTriageInvoices,
   markOverdueParcelsLost,
   setParcelStatus,
   listParcelPhotos,
@@ -159,6 +158,12 @@ import {
 import { findConfirmedShipmentOfInvoices } from './db/shipments.js';
 import { listReceivedArticles, setLineReceipt } from './db/lineReceipts.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
+import { runInvoicesWithoutParcelDigest } from './services/invoicesWithoutParcelNotifier.js';
+import { postToWebhook, sendChatMessage } from './services/googleChat.js';
+import { createChatWebhook, deleteChatWebhook, getChatWebhook, listChatWebhooks, updateChatWebhook } from './db/chatWebhooks.js';
+import type { ChatWebhookInput } from './db/chatWebhooks.js';
+import { chatWebhookPurposeLabel, isChatWebhookPurpose, isGoogleChatWebhookUrl } from './lib/chatWebhooks.js';
+import type { ChatWebhook } from './lib/chatWebhooks.js';
 import { runParcelLossCheck } from './services/parcelLossNotifier.js';
 
 // Odoo DIGI sync: on demand, within the serverless time limit (300 s).
@@ -580,6 +585,14 @@ export function createServerApp(): Express {
       parcelLosses = { error: 'Parcel loss check failed' };
     }
 
+    // Same run: list of the invoices still without parcel for the Supply Chain
+    // (webhooks "Factures sans colis"). Logged only, never blocks the sync.
+    try {
+      console.log('[Invoices Cron]', JSON.stringify(await runInvoicesWithoutParcelDigest()));
+    } catch (err: any) {
+      console.error('[Invoices Cron] Failed:', err);
+    }
+
     if (!isMirrorConfigured()) {
       console.log('[DIGI Cron] Mirror API is not configured: nothing to sync.');
       return res.json({ success: true, skipped: 'MIRROR_NOT_CONFIGURED', parcel_losses: parcelLosses });
@@ -995,79 +1008,149 @@ app.put(
 
   // --- API ENDPOINTS ---
 
-  // 3. Google Chat Webhook Endpoint
-  // The destination is ALWAYS the server-side GOOGLE_CHAT_WEBHOOK_URL.
-  // A client-supplied URL is never accepted (prevents SSRF).
-  app.post(
-    '/api/google-chat-webhook',
-    requireRole('SUPPLY_CHAIN', 'SOURCING'),
-    async (req, res) => {
-      const { message } = req.body || {};
-      const targetUrl = process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
-
-      if (!targetUrl) {
-        return res.status(500).json({
-          success: false,
-          error: 'GOOGLE_CHAT_WEBHOOK_URL is not configured',
-        });
-      }
-
-      if (typeof message !== 'string' || !message.trim()) {
-        return res.status(400).json({
-          success: false,
-          error: 'Message is required',
-        });
-      }
-
-      try {
-        const webhookRes = await fetch(targetUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json; charset=UTF-8',
-          },
-          body: JSON.stringify({
-            text: message,
-          }),
-        });
-
-        if (!webhookRes.ok) {
-          const errorText = await webhookRes.text();
-          console.error(
-            '[Google Chat Webhook] Rejected:',
-            webhookRes.status,
-            errorText
-          );
-
-          return res.status(502).json({
-            success: false,
-            error: 'Google Chat webhook rejected the request',
-          });
-        }
-
-        let webhookData: any = {};
-
-        try {
-          webhookData = await webhookRes.json();
-        } catch {
-          // Google Chat may return an empty/non-JSON response
-        }
-
-        return res.json({
-          success: true,
-          message_id: webhookData?.name || null,
-          status: 'DISPATCHED_TO_GOOGLE_CHAT',
-          delivered_at: new Date().toISOString(),
-        });
-      } catch (err: any) {
-        console.error('[Google Chat Webhook]', err);
-
-        return res.status(500).json({
-          success: false,
-          error: 'Failed to dispatch Google Chat webhook',
-        });
-      }
+  // 3. Google Chat — manual reminders (Alerts center, shipment detail).
+  // Sent to the webhooks of type "Relances manuelles" configured in Paramètres;
+  // a URL sent by the browser is never used (prevents SSRF).
+  app.post('/api/google-chat-webhook', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req, res) => {
+    const { message } = req.body || {};
+    if (typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ success: false, error: 'Message is required' });
     }
-  );
+    try {
+      const { sent, error } = await sendChatMessage('reminders', message.slice(0, 4000));
+      if (sent === 0) return res.status(502).json({ success: false, error });
+      return res.json({ success: true, sent, warning: error, delivered_at: new Date().toISOString() });
+    } catch (err: any) {
+      console.error('[Google Chat Webhook]', err);
+      return res.status(500).json({ success: false, error: 'Failed to dispatch Google Chat webhook' });
+    }
+  });
+
+  // Paramètres › Webhooks Google Chat (SUPPLY_CHAIN only)
+  const parseChatWebhook = (body: any, partial: boolean): { value: Partial<ChatWebhookInput>; error: string | null } => {
+    const value: Partial<ChatWebhookInput> = {};
+    if (!body || typeof body !== 'object') return { value, error: 'Données invalides.' };
+    if (!partial || 'name' in body) {
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!name || name.length > 100) return { value, error: 'Nom requis (100 caractères maximum).' };
+      value.name = name;
+    }
+    if (!partial || 'url' in body) {
+      const url = typeof body.url === 'string' ? body.url.trim() : '';
+      if (!isGoogleChatWebhookUrl(url) || url.length > 2000) {
+        return {
+          value,
+          error: 'Adresse invalide : collez l’URL du webhook Google Chat (https://chat.googleapis.com/v1/spaces/…/messages?key=…&token=…).',
+        };
+      }
+      value.url = url;
+    }
+    if (!partial || 'purpose' in body) {
+      if (!isChatWebhookPurpose(body.purpose)) return { value, error: 'Type de webhook inconnu.' };
+      value.purpose = body.purpose;
+    }
+    if (!partial || 'active' in body) {
+      if (body.active !== undefined && typeof body.active !== 'boolean') return { value, error: 'Statut invalide.' };
+      value.active = body.active !== false;
+    }
+    return { value, error: null };
+  };
+
+  const auditWebhook = (req: any, id: string, action: string, w: ChatWebhook | null) =>
+    // Never the URL: it holds the key and token of the space
+    writeAuditLog({
+      entityType: 'CHAT_WEBHOOK',
+      entityId: id,
+      action,
+      actor: req.user,
+      details: w ? { name: w.name, purpose: w.purpose, active: w.active } : {},
+    });
+
+  app.get('/api/settings/chat-webhooks', requireRole('SUPPLY_CHAIN'), async (_req, res) => {
+    try {
+      return res.json({
+        success: true,
+        webhooks: await listChatWebhooks(),
+        env_fallback: Boolean(process.env.GOOGLE_CHAT_WEBHOOK_URL),
+      });
+    } catch (err: any) {
+      console.error('[Chat webhooks] List error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les webhooks' });
+    }
+  });
+
+  app.post('/api/settings/chat-webhooks', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    const { value, error } = parseChatWebhook(req.body, false);
+    if (error) return res.status(400).json({ success: false, error });
+    try {
+      const webhook = await createChatWebhook(value as ChatWebhookInput, req.user.email);
+      await auditWebhook(req, webhook.id, 'CREATE_CHAT_WEBHOOK', webhook);
+      return res.json({ success: true, webhook });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Create error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de créer le webhook' });
+    }
+  });
+
+  // Sends the daily list "Factures sans colis" now (same as the 8 h run)
+  app.post('/api/settings/chat-webhooks/send-invoices-without-parcel', requireRole('SUPPLY_CHAIN'), async (_req, res) => {
+    try {
+      const result = await runInvoicesWithoutParcelDigest();
+      if (result.invoices > 0 && result.sent === 0) return res.status(502).json({ success: false, error: result.error });
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Digest error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d’envoyer la liste' });
+    }
+  });
+
+  app.put('/api/settings/chat-webhooks/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+    const { value, error } = parseChatWebhook(req.body, true);
+    if (error) return res.status(400).json({ success: false, error });
+    try {
+      const webhook = await updateChatWebhook(req.params.id, value, req.user.email);
+      if (!webhook) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+      await auditWebhook(req, webhook.id, 'UPDATE_CHAT_WEBHOOK', webhook);
+      return res.json({ success: true, webhook });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Update error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de modifier le webhook' });
+    }
+  });
+
+  app.delete('/api/settings/chat-webhooks/:id', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+    try {
+      const before = await getChatWebhook(req.params.id);
+      if (!before || !(await deleteChatWebhook(req.params.id))) {
+        return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+      }
+      await auditWebhook(req, req.params.id, 'DELETE_CHAT_WEBHOOK', before);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Delete error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de supprimer le webhook' });
+    }
+  });
+
+  // Test message on one webhook (even inactive)
+  app.post('/api/settings/chat-webhooks/:id/test', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+    try {
+      const webhook = await getChatWebhook(req.params.id);
+      if (!webhook) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+      const error = await postToWebhook(
+        webhook.url,
+        `🧪 Test Shipment Manager — webhook « ${webhook.name} » (${chatWebhookPurposeLabel(webhook.purpose)}), envoyé par ${req.user.email}.`
+      );
+      if (error) return res.status(502).json({ success: false, error });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Test error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d’envoyer le test' });
+    }
+  });
 
   // 4. Gemini AI Chat Assistant Endpoint (Shipment AI)
   app.post('/api/chat', async (req, res) => {
@@ -2166,7 +2249,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
-  // Sort of a DIGI invoice: to_sort / goods (tracked) / services
+  // Sort of an invoice: goods (tracked, the default) / services
   app.patch('/api/digi-invoices/:id/triage', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
     const triage = req.body?.triage;
@@ -2298,16 +2381,11 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
           details: { count: markedLost },
         });
       }
-      const [parcels, invoicesWithoutParcel, lateTriage] = await Promise.all([
-        listParcels(),
-        listGoodsInvoicesWithoutParcel(),
-        listLateTriageInvoices(settings),
-      ]);
+      const [parcels, invoicesWithoutParcel] = await Promise.all([listParcels(), listGoodsInvoicesWithoutParcel()]);
       return res.json({
         success: true,
         parcels,
         invoices_without_parcel: invoicesWithoutParcel,
-        late_triage_invoices: lateTriage,
         photo_storage_configured: isPhotoStorageConfigured(),
       });
     } catch (err: any) {

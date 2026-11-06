@@ -22,28 +22,16 @@ export interface ParcelForAlerts {
   boxes_expected: number | null;
 }
 
-export interface LateTriageForAlerts {
-  id: string;
-  ref: string | null;
-  supplier_display: string | null;
-  created_at: string;
-}
-
 const hubOf = (d: ParcelDestination) => (d === 'ORLY' ? 'Orly' : 'Rouen');
 
 /**
  * Parcel alerts, shown in the Alerts center next to the shipment alerts:
  * - R6 lost before the hub (set automatically after the delay) → claim to the supplier;
  * - R7 "Avis de recherche": received at the hub, missing in Madagascar → claim to MIDEX / forwarder;
- * - R8 DIGI invoice not sorted in time;
  * - R9 "Reçu partiel": fewer boxes than announced after the loss delay → claim to the supplier.
  * Alert ids are stable so that "resolved" survives reloads.
  */
-export function evaluateParcelAlerts(
-  parcels: ParcelForAlerts[],
-  lateTriage: LateTriageForAlerts[],
-  settings: TrackingSettings
-): ShipmentAlert[] {
+export function evaluateParcelAlerts(parcels: ParcelForAlerts[], settings: TrackingSettings): ShipmentAlert[] {
   const today = new Date().toISOString().split('T')[0];
   const alerts: ShipmentAlert[] = [];
 
@@ -125,21 +113,6 @@ export function evaluateParcelAlerts(
 - Photo de réception : ${p.photo_count > 0 ? `${p.photo_count} (dans l'application)` : 'aucune'}`,
       });
     }
-  }
-
-  for (const inv of lateTriage) {
-    alerts.push({
-      id: `ALT-TRIAGE-${inv.id}`,
-      shipment_id: '',
-      tracking_no: '',
-      severity: 'warning',
-      rule_code: 'R8_TRIAGE_LATE',
-      title: 'Facture DIGI à trier',
-      reason: `Facture ${inv.ref || '—'} (${inv.supplier_display || '—'}) arrivée le ${formatDate(inv.created_at)}, pas encore triée.`,
-      created_at: today,
-      resolved: false,
-      suggested_action: 'La classer en marchandises (suivi des colis) ou en services dans Factures fournisseurs.',
-    });
   }
 
   return alerts;

@@ -288,13 +288,9 @@ useEffect(() => {
   // Evaluate rules against current shipments (claim messages use the effective value)
   const { shipmentsWithAlerts, allAlerts } = useMemo(() => {
     const evaluated = evaluateShipmentRules(shipments, valueOfShipment);
-    // Parcel alerts: lost before the hub, incomplete, avis de recherche, DIGI invoices not sorted
+    // Parcel alerts: lost before the hub, incomplete, avis de recherche
     const parcelAlerts = parcelsOverview
-      ? evaluateParcelAlerts(
-          parcelsOverview.parcels,
-          parcelsOverview.late_triage_invoices,
-          trackingSettings ?? DEFAULT_TRACKING_SETTINGS
-        )
+      ? evaluateParcelAlerts(parcelsOverview.parcels, trackingSettings ?? DEFAULT_TRACKING_SETTINGS)
       : [];
     return { ...evaluated, allAlerts: [...evaluated.allAlerts, ...parcelAlerts] };
   }, [shipments, digiValueFor, parcelsOverview, trackingSettings]);

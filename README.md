@@ -43,7 +43,7 @@ API Express (src/serverApp.ts)
         │
         ├── Neon PostgreSQL ........ source de vérité de toutes les données métier
         ├── Gemini (@google/genai) .. assistant IA, appelé uniquement côté serveur
-        ├── Google Chat ............ relances par webhook (URL fixée côté serveur)
+        ├── Google Chat ............ messages par webhooks typés (Paramètres › Webhooks Google Chat)
         └── Vercel Cron ............ rafraîchissement quotidien du suivi transporteur
 ```
 
@@ -104,9 +104,9 @@ Protections sur les comptes :
 | Tableau de bord & KPI | tous | Onglet « Vue d'ensemble » : indicateurs, alertes critiques, dernières expéditions mises à jour, actions rapides. Onglet « Analyses & SLAs » (SC, Direction) : respect des SLAs par transporteur, top fournisseurs, délai moyen de transit |
 | Suivi Aérien | tous (Direction en lecture) | Onglet **Colis vers Orly** (colis fournisseur → Orly : à recevoir, reçus, perdus, avis de recherche ; point Antoine ; factures sans colis) puis onglet **Expéditions Orly → Mada** (liste, filtres, édition directe, export CSV, réclamation) |
 | Suivi Maritime | tous (Direction en lecture) | Onglet **Colis vers Rouen** puis onglet **Expéditions Rouen → Mada** |
-| Factures fournisseurs | SC, Sourcing | Factures DIGI LOGISTIC → NextHope et factures hors DIGI, en 4 onglets : À trier, Marchandises (suivi colis), Services, Hors DIGI à valider (voir §7 bis) |
+| Factures fournisseurs | SC, Sourcing | Factures DIGI LOGISTIC → NextHope et factures hors DIGI, en 3 onglets : Marchandises (suivi colis), Services, Hors DIGI à valider (voir §7 bis) |
 | Centre d'Alertes | SC, Sourcing | Alertes des expéditions et des colis, message de relance pré-rédigé, envoi Google Chat, résolution partagée |
-| Paramètres | SC | **Utilisateurs & accès** ; **Transporteurs** (créer, renommer, changer le mode, relier à un connecteur de suivi, désactiver) ; **Intégrations** (suivi des colis : taux USD → EUR et délais d'alerte ; N8N & webhook Google Chat ; liens Google Sheets ; seuils) ; **Base de données** |
+| Paramètres | SC | **Utilisateurs & accès** ; **Transporteurs** (créer, renommer, changer le mode, relier à un connecteur de suivi, désactiver) ; **Webhooks Google Chat** (créer, typer, activer, tester les espaces qui reçoivent les messages) ; **Intégrations** (suivi des colis : taux USD → EUR et délais d'alerte ; liens Google Sheets ; seuils) ; **Base de données** |
 
 La barre de recherche du haut cherche dans les deux onglets d'un suivi ; chaque
 onglet affiche son nombre de résultats.
@@ -170,8 +170,8 @@ flowchart TD
 
 | # | Étape | Qui | Où | Manuel / auto |
 |---|---|---|---|---|
-| 1 | Les factures DIGI arrivent (Odoo chaque jour vers 8 h et à la demande, import Excel, saisie) dans « À trier » | — | Factures fournisseurs | **Auto** (Odoo) ou manuel |
-| 2 | Trier chaque facture DIGI : **Marchandises** (suivi des colis) ou **Services** (pas de colis) ; badge « Tri en retard » et alerte après 3 jours | Sourcing / Supply Chain | Factures fournisseurs | **Manuel** (frais DEEE / RCP / FRDP seuls : services d'office) |
+| 1 | Les factures DIGI arrivent (Odoo chaque jour vers 8 h et à la demande, import Excel, saisie), toutes en **Marchandises** | — | Factures fournisseurs | **Auto** (Odoo) ou manuel |
+| 2 | Changer en **Services** (pas de colis) les rares factures de services ; chaque matin à 8 h, liste Google Chat des factures encore sans colis | Sourcing / Supply Chain | Factures fournisseurs, Google Chat | **Manuel** (frais DEEE / RCP / FRDP seuls : services d'office) ; liste **Auto** |
 | 3 | Saisir une facture **hors DIGI** (fournisseur, réf., date, montant + devise, acheteur) | Sourcing (à valider) ou Supply Chain | Factures fournisseurs › « Facture hors DIGI » | **Manuel** |
 | 4 | Valider ou refuser (avec motif) les factures hors DIGI | Supply Chain | Onglet « Hors DIGI à valider » | **Manuel** |
 | 5 | Ajouter les **colis** : n° de suivi, transporteur (liste de Paramètres, ou reconnu d'après le n°), livraison prévue, destination Orly / Rouen | Sourcing / Supply Chain | « + Colis » sur une facture ou une sélection d'un même fournisseur | **Manuel** ; un n° déjà connu rattache la facture au colis existant |
@@ -189,7 +189,7 @@ flowchart TD
 
 | Objet | Statuts | Quand | Manuel / auto |
 |---|---|---|---|
-| **Facture DIGI** (tri) | À trier · Marchandises · Services | À l'arrivée : À trier | **Manuel** ; services d'office si la facture ne contient que des frais |
+| **Facture DIGI** (tri) | Marchandises · Services | À l'arrivée : Marchandises | **Manuel** pour Services ; services d'office si la facture ne contient que des frais |
 | **Facture hors DIGI** (validation) | À valider · Validée · Refusée (motif) | Saisie par Sourcing : À valider ; par Supply Chain : Validée ; refusée puis corrigée : de nouveau À valider | **Manuel** (Supply Chain) |
 | **Facture** (réception) | Sans colis · x / n colis reçus · Reçue à Orly | Dès que tous ses colis sont reçus | **Auto** |
 | **Colis** | À recevoir · Reçu à Orly / Rouen · Perdu avant Orly / Rouen · Avis de recherche | Reçu : point Antoine ou confirmation. Perdu : délai dépassé (livraison prévue + 7 j, sinon date de facture + 14 j, réglables). Avis de recherche : reçu au hub mais absent à l'arrivée à Madagascar | Reçu, avis de recherche : **manuels** ; perdu : **auto** (ou déclaré à la main) |
@@ -224,7 +224,6 @@ est manuelle et **partagée**.
 | R4 — ETA dépassée | ETA passée, expédition pas livrée, sans statut transporteur « Delivered » | Avertissement |
 | R6 — Colis non reçu au hub | Colis « Perdu avant Orly / Rouen » → réclamation au fournisseur (message prêt) ; annoncé une fois sur Google Chat dans le récapitulatif de 8 h | Critique |
 | R7 — Avis de recherche | Colis reçu au hub mais absent à l'arrivée → réclamation MIDEX (aérien) ou transitaire (maritime), photo de réception mentionnée | Critique |
-| R8 — Facture DIGI à trier | Facture DIGI non triée 3 jours après son arrivée (délai réglable) | Avertissement |
 
 Chaque alerte propose un **message de relance** prêt à copier ou à envoyer sur
 Google Chat. Les résolutions et réactivations sont tracées dans le journal
@@ -326,14 +325,12 @@ fusionnées en une seule ligne « [SERVICES] … — services, non expédiés »
 (quantité 1, prix = somme des frais), quelle que soit la source. Le total de
 la facture reste égal au total Odoo.
 
-**Tri des factures DIGI.** Aucune expédition ni aucun colis n'est créé
-automatiquement, car les factures importées contiennent aussi des services.
-Chaque nouvelle facture arrive dans **« À trier »** ; on la classe en
-**Marchandises** (ses colis sont suivis, avec alertes de perte) ou en
-**Services** (pas de colis), à l'unité ou en sélection multiple. Une facture
-qui ne contient que des frais [DEEE], [RCP], [FRDP] est en services d'office.
-Une facture non triée après 3 jours (réglable) porte le badge « Tri en
-retard » et lève une alerte.
+**Marchandises ou services.** Toute facture importée (Odoo ou fichier) arrive
+en **Marchandises** (ses colis sont suivis, avec alertes de perte) : il n'y a
+plus d'étape de tri. Les rares factures de services se changent en
+**Services** (pas de colis), à l'unité ou en sélection multiple, et peuvent
+être remises en marchandises. Une facture qui ne contient que des frais
+[DEEE], [RCP], [FRDP] est en services d'office.
 
 **Factures hors DIGI.** Factures fournisseur qui ne passent pas par DIGI
 LOGISTIC mais doivent être suivies : fournisseur, référence, date, montant et
@@ -367,7 +364,7 @@ source et, dans « Marchandises », état des colis (sans colis, pas tous reçus
 reçue).
 
 **Sélection multiple.** Cases à cocher par facture, par fournisseur et pour la
-liste affichée : Marchandises, Services, Remettre à trier, Ajouter un colis,
+liste affichée : Services, Remettre en marchandises, Ajouter un colis,
 Valider / Refuser (hors DIGI, Supply Chain), Supprimer (Supply Chain ; pas les
 factures encore présentes dans Odoo). Les échecs sont listés avec la raison.
 
@@ -426,6 +423,7 @@ microsecondes) : l'application le compare tel quel pour savoir quoi relire.
 - Reconnaissance du transporteur d'un colis d'après le format du n° de suivi.
 - État de réception d'une facture à partir de ses colis.
 - Passage des colis en retard à « Perdu avant Orly / Rouen » (au chargement et chaque jour à 8 h), récapitulatif Google Chat des nouvelles pertes.
+- Liste Google Chat des factures en marchandises encore sans colis (chaque jour à 8 h, rien si la liste est vide ; aussi « Envoyer la liste maintenant » dans Paramètres).
 - Départ du samedi et ETA Mada à partir de la remise / scan Orly ; statuts « Expédiée vers Mada » et « Livrée entrepôt » à partir des dates.
 - Valeur d'une expédition à partir de ses factures (USD converti).
 - Alertes, indicateurs, journal d'audit.
@@ -498,6 +496,7 @@ EXISTS`) ; aucune migration manuelle n'est nécessaire.
 | `DELETE /api/shipments/:id`, `POST /api/shipments/clear-all` | SC |
 | `GET /api/digi-invoices`, `GET /api/digi-invoices/config`, `POST` / `PUT /api/digi-invoices[/:id]`, `POST /api/digi-invoices/import`, `POST /api/digi-invoices/sync-odoo`, `PATCH /api/digi-invoices/:id/triage`, `POST` / `PUT /api/digi-invoices[/:id]/direct` | SC, Sourcing |
 | `PATCH /api/digi-invoices/:id/validation`, `DELETE /api/digi-invoices/:id` | SC |
+| `GET` / `POST /api/settings/chat-webhooks`, `PUT` / `DELETE /api/settings/chat-webhooks/:id`, `POST /api/settings/chat-webhooks/:id/test`, `POST /api/settings/chat-webhooks/send-invoices-without-parcel` | SC |
 | `GET /api/parcels`, `GET /api/digi-invoices/:id/parcels`, `GET /api/parcels/:id/photos`, `GET /api/photos/:photoId` | connecté |
 | `POST /api/parcels`, `PUT /api/parcels/:id`, `DELETE /api/parcels/:id/invoices/:invoiceId` | SC, Sourcing |
 | `PATCH /api/parcels/:id/status`, `DELETE /api/parcels/:id/photos/:photoId` | SC |
@@ -521,7 +520,7 @@ EXISTS`) ; aucune migration manuelle n'est nécessaire.
   tranche de 15 minutes.
 - Les réponses d'erreur ne contiennent jamais de détail technique ; le détail
   reste dans les logs Vercel.
-- Le webhook Google Chat part uniquement vers l'URL configurée côté serveur.
+- Les messages Google Chat partent uniquement vers les webhooks enregistrés dans Paramètres (adresses `https://chat.googleapis.com/…` seulement, jamais une URL envoyée par le navigateur). Les adresses ne sont visibles que par la Supply Chain et ne sont jamais écrites dans le journal d'audit.
 - Les photos ne sont jamais publiques : fichiers privés du Drive partagé,
   servis par l'API aux seuls utilisateurs connectés ; la clé du compte de
   service reste côté serveur.
@@ -543,7 +542,7 @@ Node.js 20+ et une base Neon PostgreSQL.
 |---|---|
 | `DATABASE_URL` (ou `POSTGRES_URL`) | Connexion Neon |
 | `GEMINI_API_KEY` | Assistant IA |
-| `GOOGLE_CHAT_WEBHOOK_URL` | Relances Google Chat et récapitulatif quotidien des colis perdus |
+| `GOOGLE_CHAT_WEBHOOK_URL` | Facultatif, ancien réglage : utilisé seulement pour un type de message qui n'a encore aucun webhook dans Paramètres › Webhooks Google Chat |
 | `CRON_SECRET` | Obligatoire pour les crons quotidiens (suivi transporteur, factures DIGI et colis perdus) |
 | `MIRROR_API_URL`, `MIRROR_API_KEY` | API du miroir Odoo DIGI LOGISTIC (lecture seule) : URL de base et clé envoyée en `Authorization: Bearer` |
 | `ODOO_DEST_PARTNER_NAME` | Nom de l'entité de destination affiché et utilisé pour filtrer les imports Excel (« NextHope » par défaut) ; le filtre Odoo est fait par l'API |

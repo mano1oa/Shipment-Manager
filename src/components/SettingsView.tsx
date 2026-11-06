@@ -1,16 +1,18 @@
 import React, { useState } from 'react';
-import { Settings, Users, Truck, Workflow, Server } from 'lucide-react';
+import { Settings, Users, Truck, Workflow, Server, Webhook } from 'lucide-react';
 import { SettingsUsersView } from './SettingsUsersView';
 import { SettingsCarriersPanel } from './SettingsCarriersPanel';
 import { IntegrationsPanel, NeonDatabasePanel } from './SettingsSystemPanels';
 import { TrackingSettingsPanel } from './TrackingSettingsPanel';
+import { SettingsWebhooksPanel } from './SettingsWebhooksPanel';
 
-type SettingsSection = 'users' | 'carriers' | 'integrations' | 'database';
+type SettingsSection = 'users' | 'carriers' | 'webhooks' | 'integrations' | 'database';
 
 const SECTIONS: { id: SettingsSection; label: string; hint: string; icon: React.ElementType }[] = [
   { id: 'users', label: 'Utilisateurs et accès', hint: 'Comptes, rôles, activation', icon: Users },
   { id: 'carriers', label: 'Transporteurs', hint: 'Liste et suivi automatique', icon: Truck },
-  { id: 'integrations', label: 'Intégrations', hint: 'N8N, Google Chat, Sheets, seuils', icon: Workflow },
+  { id: 'webhooks', label: 'Webhooks Google Chat', hint: 'Espaces qui reçoivent les messages', icon: Webhook },
+  { id: 'integrations', label: 'Intégrations', hint: 'Suivi des colis, Sheets, seuils', icon: Workflow },
   { id: 'database', label: 'Base de données', hint: 'Neon PostgreSQL', icon: Server },
 ];
 
@@ -60,6 +62,7 @@ export const SettingsView: React.FC<{ currentUserId: string }> = ({ currentUserI
         <div className="min-w-0 flex-1 space-y-6">
           {section === 'users' && <SettingsUsersView currentUserId={currentUserId} />}
           {section === 'carriers' && <SettingsCarriersPanel />}
+          {section === 'webhooks' && <SettingsWebhooksPanel />}
           {section === 'integrations' && (
             <>
               <TrackingSettingsPanel />

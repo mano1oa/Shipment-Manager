@@ -9,6 +9,7 @@ import {
 import type { LostParcelToNotify, ParcelRecord } from '../db/parcels.js';
 import { formatDate } from '../lib/dateFormat.js';
 import { isPartialOverdue } from '../lib/parcelBoxes.js';
+import { sendChatMessage } from './googleChat.js';
 
 /**
  * Daily check (8 h, Madagascar): parcels not confirmed in time become "lost",
@@ -53,16 +54,15 @@ export async function runParcelLossCheck(): Promise<{
   marked_lost: number;
   announced: number;
   announced_partial: number;
-  webhook: boolean;
+  chat_error: string | null;
 }> {
   const settings = await getTrackingSettings();
   const markedLost = await markOverdueParcelsLost(settings);
   const toNotify = await listLostParcelsToNotify();
   const today = new Date().toISOString().slice(0, 10);
   const partial = (await listParcels()).filter((p) => !p.partial_notified_at && isPartialOverdue(p, settings, today));
-  const webhook = process.env.GOOGLE_CHAT_WEBHOOK_URL || '';
-  if ((toNotify.length === 0 && partial.length === 0) || !webhook) {
-    return { marked_lost: markedLost, announced: 0, announced_partial: 0, webhook: Boolean(webhook) };
+  if (toNotify.length === 0 && partial.length === 0) {
+    return { marked_lost: markedLost, announced: 0, announced_partial: 0, chat_error: null };
   }
 
   const sections = [
@@ -70,17 +70,13 @@ export async function runParcelLossCheck(): Promise<{
     ...(partial.length > 0 ? [partialParcelsMessage(partial)] : []),
   ];
   const text = `${sections.join('\n\n')}\n👉 Détail et messages de réclamation dans Shipment Manager › Alertes.`;
-  const res = await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-    body: JSON.stringify({ text }),
-  });
-  if (!res.ok) {
+  const { sent, error } = await sendChatMessage('parcel_lost', text);
+  if (sent === 0) {
     // Not marked: announced again at the next run
-    console.error('[Parcels] Google Chat summary rejected:', res.status, await res.text().catch(() => ''));
-    return { marked_lost: markedLost, announced: 0, announced_partial: 0, webhook: true };
+    console.error('[Parcels] Google Chat summary not sent:', error);
+    return { marked_lost: markedLost, announced: 0, announced_partial: 0, chat_error: error };
   }
   await markLossesNotified(toNotify.map((p) => p.id));
   await markPartialNotified(partial.map((p) => p.id));
-  return { marked_lost: markedLost, announced: toNotify.length, announced_partial: partial.length, webhook: true };
+  return { marked_lost: markedLost, announced: toNotify.length, announced_partial: partial.length, chat_error: error };
 }
