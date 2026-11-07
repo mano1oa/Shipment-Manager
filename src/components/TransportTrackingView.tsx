@@ -5,6 +5,7 @@ import { ParcelsOverview } from './digiApi';
 import { ParcelsBoardView, parcelMatches } from './ParcelsBoardView';
 import { InTransitParcelsList, inTransitRows } from './InTransitParcelsList';
 import { ShipmentsView, matchesSearch } from './ShipmentsView';
+import { ui } from '../lib/ui';
 
 type Tab = 'in_transit' | 'shipments' | 'parcels';
 
@@ -88,25 +89,36 @@ export const TransportTrackingView: React.FC<Props> = ({
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex w-fit max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-200/60 p-1 text-xs font-semibold dark:bg-slate-800">
-        {tabs.map(({ key, label, icon: Icon, count, hint }) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-              tab === key
-                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
-                : 'text-slate-500 hover:text-slate-800 dark:text-slate-400'
-            }`}
-          >
-            <Icon className="h-3.5 w-3.5" /> {label}
-            <span className={`ml-1 ${search && count > 0 && tab !== key ? 'font-bold text-[#623387]' : 'text-slate-400'}`}>
-              {key !== 'shipments' && parcels === null ? '…' : count}
-              {hint && <span className="ml-1 font-normal">{hint}</span>}
-            </span>
-          </button>
-        ))}
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className={`text-[13px] ${ui.muted}`}>Fournisseurs → {hub} → Madagascar</p>
+          <h1 className={`text-[30px] font-semibold leading-tight tracking-tight ${ui.title}`}>
+            {mode === 'Air' ? 'Suivi aérien' : 'Suivi maritime'}
+          </h1>
+        </div>
+        <div role="tablist" className={`${ui.segmented} max-w-full overflow-x-auto`}>
+          {tabs.map(({ key, label, icon: Icon, count, hint }) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              className={`${ui.segment(tab === key)} shrink-0`}
+            >
+              <Icon className="h-4 w-4" /> {label}
+              <span
+                className={`tabular-nums ${
+                  search && count > 0 && tab !== key ? 'font-bold text-[#623387] dark:text-[#B688FF]' : 'font-normal opacity-75'
+                }`}
+              >
+                {key !== 'shipments' && parcels === null ? '…' : count}
+                {hint && <span className="ml-1">{hint}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === 'in_transit' ? (

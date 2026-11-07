@@ -18,6 +18,8 @@ import { DEFAULT_TRACKING_SETTINGS } from './lib/parcelTracking';
 import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
 import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
+import { ImportExcelModal } from './components/ImportExcelModal';
+import { ui } from './lib/ui';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { DashboardTab, LOGIN_PATH, pathForRoute, routeFromPath, titleForRoute } from './lib/routes';
 import { Shipment, UserRole, MetricSummary, shipmentValue, shipmentLabel } from './types';
@@ -63,6 +65,10 @@ export default function App() {
   const [globalSearch, setGlobalSearch] = useState('');
   const [selectedShipment, setSelectedShipment] = useState<Shipment | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
+  /** « Importer Excel » (top bar): invoices or Amazon shipment report. */
+  const [showImport, setShowImport] = useState(false);
+  /** Bumped after an invoice import: the invoices list reloads. */
+  const [invoicesRefreshKey, setInvoicesRefreshKey] = useState(0);
   const [notification, setNotification] = useState<string | null>(null);
 
   // New shipment = grouping of received invoices (Supply Chain)
@@ -612,7 +618,24 @@ if (!authUser) {
 }
 
   return (
-    <div className="h-dvh w-full overflow-hidden bg-[#F7F7F7] font-sans text-slate-900 transition-colors dark:bg-slate-950 dark:text-slate-100 flex flex-col">
+    <div className="flex h-dvh w-full overflow-hidden bg-[#F5F4F7] font-sans text-[#17111F] transition-colors dark:bg-slate-950 dark:text-slate-100">
+      {/* Left Sidebar: full height, dark violet */}
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        criticalAlertsCount={metrics.criticalAlertsCount}
+        onNewShipment={() => openNewShipment()}
+        canEdit={canEdit}
+        currentRole={currentRole}
+        airCount={metrics.airCount}
+        seaCount={metrics.seaCount}
+        userName={authUser.display_name || authUser.email}
+        roleLabel={currentRole === 'supply_chain' ? 'Supply Chain' : currentRole === 'sourcing' ? 'Sourcing' : 'Direction'}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
       {/* Top Navigation Bar */}
       <Navbar
         onToggleMobileNav={() => setMobileNavOpen((open) => !open)}
@@ -629,27 +652,15 @@ if (!authUser) {
         alertsCount={allAlertsWithResolved.filter((a) => !a.resolved).length}
         onOpenAssistant={() => setAssistantOpen(true)}
         onOpenAlerts={() => navigateTab('alerts')}
+        onOpenImport={allowedTabs.includes('digi') ? () => setShowImport(true) : undefined}
         dbConnected={dbConnected}
         isLoadingDb={isLoadingDb}
         onRefreshDb={loadShipmentsFromNeon}
       />
 
-      {/* Main Container */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Sidebar */}
-        <Sidebar
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          criticalAlertsCount={metrics.criticalAlertsCount}
-          onNewShipment={() => openNewShipment()}
-          canEdit={canEdit}
-          currentRole={currentRole}
-          mobileOpen={mobileNavOpen}
-          onCloseMobile={() => setMobileNavOpen(false)}
-        />
-
         {/* Content Area */}
-        <main className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+        <main className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+          <div className="mx-auto w-full max-w-[1400px]">
           {shipmentsError && (
             <div className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
               <div className="flex items-center gap-3">
@@ -672,33 +683,37 @@ if (!authUser) {
 
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              {canViewAnalytics && (
-                <div role="tablist" className="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-xs dark:border-slate-800 dark:bg-slate-900">
-                  {([
-                    { id: 'overview', label: "Vue d'ensemble", icon: LayoutDashboard },
-                    { id: 'analytics', label: 'Analyses et SLAs', icon: BarChart3 },
-                  ] as const).map((t) => {
-                    const Icon = t.icon;
-                    const active = dashboardTab === t.id;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={active}
-                        onClick={() => setDashboardTab(t.id)}
-                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold transition ${
-                          active
-                            ? 'bg-[#623387] text-white shadow-sm'
-                            : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
-                        }`}
-                      >
-                        <Icon className="h-4 w-4" /> {t.label}
-                      </button>
-                    );
-                  })}
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <p className={`text-[13px] first-letter:uppercase ${ui.muted}`}>
+                    {new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                  </p>
+                  <h1 className={`text-[30px] font-semibold leading-tight tracking-tight ${ui.title}`}>Tableau de bord</h1>
                 </div>
-              )}
+                {canViewAnalytics && (
+                  <div role="tablist" className={ui.segmented}>
+                    {([
+                      { id: 'overview', label: "Vue d'ensemble", icon: LayoutDashboard },
+                      { id: 'analytics', label: 'Analyses et SLAs', icon: BarChart3 },
+                    ] as const).map((t) => {
+                      const Icon = t.icon;
+                      const active = dashboardTab === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          role="tab"
+                          aria-selected={active}
+                          onClick={() => setDashboardTab(t.id)}
+                          className={ui.segment(active)}
+                        >
+                          <Icon className="h-4 w-4" /> {t.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {dashboardTab === 'analytics' && canViewAnalytics ? (
                 <AnalyticsView
@@ -765,6 +780,7 @@ if (!authUser) {
               onShipmentsChanged={loadShipmentsFromNeon}
               shipments={shipmentsWithAlerts}
               onDeleteShipment={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
+              refreshKey={invoicesRefreshKey}
             />
           )}
 
@@ -782,8 +798,22 @@ if (!authUser) {
             />
           )}
           {activeTab === 'settings' && currentRole === 'supply_chain' && <SettingsView currentUserId={authUser.id} />}
+          </div>
         </main>
       </div>
+
+      {/* Excel imports, one entry point: invoices or Amazon shipment report */}
+      {showImport && (
+        <ImportExcelModal
+          canImportShipments={currentRole === 'supply_chain'}
+          onClose={() => setShowImport(false)}
+          onInvoicesImported={() => {
+            setInvoicesRefreshKey((k) => k + 1);
+            loadParcels();
+          }}
+          onShipmentsImported={loadParcels}
+        />
+      )}
 
       {/* Shipment AI: floating chat available on every screen */}
       <AIAssistantBubble

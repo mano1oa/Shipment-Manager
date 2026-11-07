@@ -4,13 +4,14 @@ import {
   Plane,
   Ship,
   AlertTriangle,
-  Settings,
-  PlusCircle,
-  Database,
+  SlidersHorizontal,
+  Plus,
   ReceiptText,
   ClipboardCheck,
+  X,
 } from 'lucide-react';
 import { UserRole } from '../types';
+import nexthopeLogotype from '../assets/nexthope-logotype.png';
 
 // The AI assistant is a floating bubble (not a tab); analytics live in the dashboard tabs.
 export type NavTab =
@@ -29,6 +30,12 @@ interface SidebarProps {
   onNewShipment: () => void;
   canEdit: boolean;
   currentRole: UserRole;
+  /** Number of air / sea shipments, shown next to their tab. */
+  airCount?: number;
+  seaCount?: number;
+  /** Signed-in user, shown at the bottom. */
+  userName: string;
+  roleLabel: string;
   /** Phone / tablet: the menu is open over the page. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -39,82 +46,73 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onTabChange,
   criticalAlertsCount,
   onNewShipment,
-  canEdit,
   currentRole,
+  airCount,
+  seaCount,
+  userName,
+  roleLabel,
   mobileOpen,
   onCloseMobile,
 }) => {
-  const navItems = [
+  const navItems: {
+    id: NavTab;
+    label: string;
+    icon: React.ElementType;
+    count?: number;
+    alert?: boolean;
+    allowedRoles: UserRole[];
+  }[] = [
+    { id: 'dashboard', label: 'Tableau de bord', icon: LayoutDashboard, allowedRoles: ['supply_chain', 'sourcing', 'direction'] },
+    { id: 'air', label: 'Suivi aérien', icon: Plane, count: airCount, allowedRoles: ['supply_chain', 'sourcing', 'direction'] },
+    { id: 'sea', label: 'Suivi maritime', icon: Ship, count: seaCount, allowedRoles: ['supply_chain', 'sourcing', 'direction'] },
+    { id: 'digi', label: 'Factures fournisseurs', icon: ReceiptText, allowedRoles: ['supply_chain', 'sourcing'] },
+    { id: 'received', label: 'Réception Madagascar', icon: ClipboardCheck, allowedRoles: ['supply_chain', 'sourcing', 'direction'] },
     {
-      id: 'dashboard' as NavTab,
-      label: 'Tableau de bord et KPI',
-      icon: LayoutDashboard,
-      badge: null,
-      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
-    },
-    {
-      id: 'air' as NavTab,
-      label: 'Suivi aérien',
-      icon: Plane,
-      badge: 'Air',
-      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
-    },
-    {
-      id: 'sea' as NavTab,
-      label: 'Suivi maritime',
-      icon: Ship,
-      badge: 'Sea',
-      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
-    },
-    {
-      id: 'digi' as NavTab,
-      label: 'Factures fournisseurs',
-      icon: ReceiptText,
-      badge: null,
-      allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
-    },
-    {
-      id: 'received' as NavTab,
-      label: 'Réception Madagascar',
-      icon: ClipboardCheck,
-      badge: null,
-      allowedRoles: ['supply_chain', 'sourcing', 'direction'] as UserRole[],
-    },
-    {
-      id: 'alerts' as NavTab,
+      id: 'alerts',
       label: 'Centre d’alertes',
       icon: AlertTriangle,
-      badge: criticalAlertsCount > 0 ? `${criticalAlertsCount}` : null,
-      badgeColor: 'bg-rose-500 text-white',
-      allowedRoles: ['supply_chain', 'sourcing'] as UserRole[],
+      count: criticalAlertsCount > 0 ? criticalAlertsCount : undefined,
+      alert: true,
+      allowedRoles: ['supply_chain', 'sourcing'],
     },
-    {
-      id: 'settings' as NavTab,
-      label: 'Paramètres',
-      icon: Settings,
-      badge: null,
-      allowedRoles: ['supply_chain'] as UserRole[],
-    },
+    { id: 'settings', label: 'Paramètres', icon: SlidersHorizontal, allowedRoles: ['supply_chain'] },
   ];
 
-  const visibleNavItems = navItems.filter((item) =>
-    item.allowedRoles.includes(currentRole)
-  );
+  const visibleNavItems = navItems.filter((item) => item.allowedRoles.includes(currentRole));
+  const initials =
+    userName
+      .split(/[\s@._-]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase())
+      .join('') || '?';
 
   return (
     <>
-    {/* Phone / tablet: the menu slides over the page, behind a dimmed backdrop */}
-    {mobileOpen && (
-      <div className="fixed inset-0 top-16 z-30 bg-slate-900/40 lg:hidden" onClick={onCloseMobile} aria-hidden="true" />
-    )}
-    <aside
-      id="main-sidebar"
-      className={`fixed left-0 top-16 z-40 h-[calc(100dvh-4rem)] w-64 shrink-0 flex flex-col justify-between border-r border-slate-200 bg-slate-50 p-4 transition-transform dark:border-slate-800 dark:bg-slate-900 overflow-y-auto lg:sticky lg:z-20 lg:translate-x-0 lg:bg-slate-50/50 lg:dark:bg-slate-900/50 ${
-        mobileOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full'
-      }`}
-    >
-      <div className="space-y-6">
-        {/* New Shipment Button */}
+      {/* Phone / tablet: the menu slides over the page, behind a dimmed backdrop */}
+      {mobileOpen && <div className="fixed inset-0 z-40 bg-[#17111F]/50 lg:hidden" onClick={onCloseMobile} aria-hidden="true" />}
+      <aside
+        id="main-sidebar"
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 shrink-0 flex-col gap-7 overflow-y-auto bg-[#1E1229] px-4 py-6 text-white transition-transform lg:static lg:z-auto lg:h-dvh lg:translate-x-0 ${
+          mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2 px-2">
+          <div className="flex flex-col gap-1.5">
+            {/* White monochrome logotype on the dark violet (charte 2026) */}
+            <img src={nexthopeLogotype} alt="NextHope" className="h-8 w-auto self-start brightness-0 invert" draggable={false} />
+            <span className="text-xs text-white/70">Shipment Manager</span>
+          </div>
+          <button
+            type="button"
+            onClick={onCloseMobile}
+            aria-label="Fermer le menu"
+            className="-mr-2 flex h-10 w-10 items-center justify-center rounded-lg text-white/70 hover:bg-white/10 hover:text-white lg:hidden"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
         {currentRole === 'supply_chain' && (
           <button
             id="sidebar-btn-new-shipment"
@@ -122,18 +120,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onNewShipment();
               onCloseMobile();
             }}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#623387] py-2.5 text-sm font-semibold text-white shadow-md shadow-[#623387]/25 transition hover:bg-[#522870] active:scale-95"
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#623387] text-sm font-semibold text-white transition hover:bg-[#7340a0] active:scale-[0.98]"
           >
-            <PlusCircle className="h-4 w-4" />
+            <Plus className="h-4 w-4" strokeWidth={2.4} />
             Nouvelle expédition
           </button>
         )}
 
-        {/* Navigation Menu */}
-        <nav className="space-y-1">
-          <p className="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
-            Navigation
-          </p>
+        <nav className="flex flex-col gap-0.5" aria-label="Navigation principale">
           {visibleNavItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -141,55 +135,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 id={`sidebar-tab-${item.id}`}
+                aria-current={isActive ? 'page' : undefined}
                 onClick={() => {
                   onTabChange(item.id);
                   onCloseMobile();
                 }}
-                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-sm font-medium transition ${
-                  isActive
-                    ? 'bg-[#623387] text-white shadow-sm font-semibold'
-                    : 'text-slate-600 hover:bg-slate-200/60 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60 dark:hover:text-white'
+                className={`flex h-11 w-full items-center gap-3 rounded-[10px] px-3 text-sm transition ${
+                  isActive ? 'bg-white/10 font-semibold text-white' : 'text-white/75 hover:bg-white/5 hover:text-white'
                 }`}
               >
-                <div className="flex items-center gap-3">
-                  <Icon
-                    className={`h-4 w-4 ${
-                      isActive
-                        ? 'text-white'
-                        : 'text-slate-500 group-hover:text-slate-700 dark:text-slate-400'
-                    }`}
-                  />
-                  <span>{item.label}</span>
-                </div>
-                {item.badge && (
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                      item.badgeColor ||
-                      (isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300')
-                    }`}
-                  >
-                    {item.badge}
-                  </span>
-                )}
+                <Icon className="h-[18px] w-[18px] shrink-0" />
+                <span className="truncate">{item.label}</span>
+                {item.count !== undefined &&
+                  (item.alert ? (
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-[#E5484D] px-1.5 text-[11px] font-bold text-white">
+                      {item.count}
+                    </span>
+                  ) : (
+                    <span className={`ml-auto text-xs tabular-nums ${isActive ? 'text-white/85' : 'text-white/60'}`}>{item.count}</span>
+                  ))}
+                {isActive && item.count === undefined && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#62D18F]" />}
               </button>
             );
           })}
         </nav>
-      </div>
 
-      {/* System Status / Architecture Info */}
-      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-xs dark:border-slate-800 dark:bg-slate-800/80">
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-800 dark:text-slate-200">
-          <Database className="h-4 w-4 text-[#623387]" />
-          Base de données et API
+        <div className="mt-auto flex items-center gap-3 rounded-xl bg-white/[0.06] p-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#A175E0] text-[13px] font-bold text-[#1E1229]">
+            {initials}
+          </span>
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-semibold">{userName}</p>
+            <p className="text-xs text-white/70">{roleLabel}</p>
+          </div>
         </div>
-        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
-          Neon PostgreSQL • Odoo DIGI LOGISTIC
-        </p>
-      </div>
-    </aside>
+      </aside>
     </>
   );
 };
