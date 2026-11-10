@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bell, Search, Sun, Moon, RefreshCw, Menu, X, Sparkles, FileSpreadsheet } from 'lucide-react';
+import { Bell, Search, Sun, Moon, RefreshCw, Menu, X, FileSpreadsheet } from 'lucide-react';
 import { UserRole } from '../types';
 import { UserProfileMenu } from './UserProfileMenu';
 import nexthopeLogotype from '../assets/nexthope-logotype.png';
@@ -123,11 +123,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             Importer Excel
           </button>
         )}
-
-        <button id="nav-btn-ai-assistant" type="button" onClick={onOpenAssistant} className={`${textButton} hidden sm:flex`}>
-          <Sparkles className="h-4 w-4 text-[#623387] dark:text-[#B688FF]" />
-          Assistant IA
-        </button>
 
         <button id="nav-btn-alerts" type="button" onClick={onOpenAlerts} className={iconButton} aria-label={`Centre d’alertes (${alertsCount})`}>
           <Bell className="h-[18px] w-[18px]" />

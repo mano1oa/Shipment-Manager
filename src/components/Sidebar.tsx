@@ -33,9 +33,6 @@ interface SidebarProps {
   /** Number of air / sea shipments, shown next to their tab. */
   airCount?: number;
   seaCount?: number;
-  /** Signed-in user, shown at the bottom. */
-  userName: string;
-  roleLabel: string;
   /** Phone / tablet: the menu is open over the page. */
   mobileOpen: boolean;
   onCloseMobile: () => void;
@@ -49,8 +46,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   currentRole,
   airCount,
   seaCount,
-  userName,
-  roleLabel,
   mobileOpen,
   onCloseMobile,
 }) => {
@@ -79,13 +74,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const visibleNavItems = navItems.filter((item) => item.allowedRoles.includes(currentRole));
-  const initials =
-    userName
-      .split(/[\s@._-]+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase())
-      .join('') || '?';
 
   return (
     <>
@@ -159,16 +147,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
             );
           })}
         </nav>
-
-        <div className="mt-auto flex items-center gap-3 rounded-xl bg-white/[0.06] p-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#A175E0] text-[13px] font-bold text-[#1E1229]">
-            {initials}
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold">{userName}</p>
-            <p className="text-xs text-white/70">{roleLabel}</p>
-          </div>
-        </div>
       </aside>
     </>
   );

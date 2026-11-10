@@ -629,8 +629,6 @@ if (!authUser) {
         currentRole={currentRole}
         airCount={metrics.airCount}
         seaCount={metrics.seaCount}
-        userName={authUser.display_name || authUser.email}
-        roleLabel={currentRole === 'supply_chain' ? 'Supply Chain' : currentRole === 'sourcing' ? 'Sourcing' : 'Direction'}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
       />

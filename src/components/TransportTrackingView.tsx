@@ -1,13 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Package, Plane, Route, Ship } from 'lucide-react';
+import { Package, Plane, Ship } from 'lucide-react';
 import type { TrackingSettings } from '../lib/parcelTracking';
 import { ParcelsOverview } from './digiApi';
 import { ParcelsBoardView, parcelMatches } from './ParcelsBoardView';
-import { InTransitParcelsList, inTransitRows } from './InTransitParcelsList';
 import { ShipmentsView, matchesSearch } from './ShipmentsView';
 import { ui } from '../lib/ui';
 
-type Tab = 'in_transit' | 'shipments' | 'parcels';
+type Tab = 'shipments' | 'parcels';
 
 interface Props extends Omit<React.ComponentProps<typeof ShipmentsView>, 'modeFilter'> {
   mode: 'Air' | 'Sea';
@@ -24,10 +23,9 @@ interface Props extends Omit<React.ComponentProps<typeof ShipmentsView>, 'modeFi
 }
 
 /**
- * Suivi Aérien / Maritime: first every parcel not yet in Madagascar, then the
- * parcels on their way from the suppliers (to Orly or Rouen) and the shipments
- * to Madagascar. The top bar search applies to all; each tab shows how many
- * results it holds.
+ * Suivi Aérien / Maritime: the parcels on their way from the suppliers (to Orly
+ * or Rouen), then the shipments to Madagascar. The top bar search applies to
+ * both; each tab shows how many results it holds.
  */
 export const TransportTrackingView: React.FC<Props> = ({
   mode,
@@ -43,7 +41,7 @@ export const TransportTrackingView: React.FC<Props> = ({
 }) => {
   const destination = mode === 'Air' ? 'ORLY' : 'ROUEN';
   const hub = mode === 'Air' ? 'Orly' : 'Rouen';
-  const [tab, setTab] = useState<Tab>('in_transit');
+  const [tab, setTab] = useState<Tab>('parcels');
   const parcels = parcelsOverview?.parcels ?? null;
 
   const search = shipmentsProps.globalSearch || '';
@@ -56,22 +54,8 @@ export const TransportTrackingView: React.FC<Props> = ({
     [parcels, destination, search]
   );
 
-  const inTransitCount = useMemo(
-    () =>
-      inTransitRows(parcels || [], destination, shipmentsProps.shipments).filter((r) => parcelMatches(r.parcel, search))
-        .length,
-    [parcels, destination, shipmentsProps.shipments, search]
-  );
-
-  // The whole journey first, then in its order: supplier → hub, then hub → Madagascar
+  // In the journey's order: supplier → hub, then hub → Madagascar
   const tabs: { key: Tab; label: string; icon: React.ElementType; count: number; hint: string }[] = [
-    {
-      key: 'in_transit',
-      label: "En cours d'acheminement",
-      icon: Route,
-      count: inTransitCount,
-      hint: search ? 'trouvé(s)' : 'colis',
-    },
     {
       key: 'parcels',
       label: `Colis vers ${hub}`,
@@ -121,20 +105,7 @@ export const TransportTrackingView: React.FC<Props> = ({
         </div>
       </div>
 
-      {tab === 'in_transit' ? (
-        <InTransitParcelsList
-          destination={destination}
-          parcels={parcels}
-          shipments={shipmentsProps.shipments}
-          loading={parcelsLoading}
-          error={parcelsError}
-          onReload={onReloadParcels}
-          globalSearch={search}
-          onOpenShipment={onOpenShipment}
-          canEdit={Boolean(shipmentsProps.canEdit)}
-          isSupplyChain={isSupplyChain}
-        />
-      ) : tab === 'shipments' ? (
+      {tab === 'shipments' ? (
         <ShipmentsView {...(shipmentsProps as any)} modeFilter={mode} />
       ) : (
         <ParcelsBoardView

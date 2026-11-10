@@ -39,16 +39,35 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, parcels
   const transitSea = useMemo(() => meanTransitDays(shipments, 'Sea'), [shipments]);
 
   // Supplier Breakdown
+  // A shipment grouping several suppliers is labelled "3 fournisseurs": count its real
+  // suppliers instead, from the invoices of its parcels (each shipment once per supplier).
   const topSuppliers = useMemo(() => {
-    const counts: Record<string, number> = {};
-    shipments.forEach((s) => {
-      counts[s.supplier] = (counts[s.supplier] || 0) + 1;
-    });
-    return Object.entries(counts)
+    const byShipment = new Map<string, Set<string>>();
+    for (const p of parcels || []) {
+      const names = p.invoices.map((i) => i.supplier_display?.trim()).filter((n): n is string => Boolean(n));
+      if (names.length === 0 && p.supplier_name?.trim()) names.push(p.supplier_name.trim());
+      for (const id of p.shipment_ids) {
+        const set = byShipment.get(id) ?? new Set<string>();
+        names.forEach((n) => set.add(n));
+        byShipment.set(id, set);
+      }
+    }
+    const counts = new Map<string, number>();
+    for (const s of shipments) {
+      const fromParcels = byShipment.get(s.id);
+      const names =
+        fromParcels && fromParcels.size > 0
+          ? Array.from(fromParcels)
+          : s.supplier && !/^\d+ fournisseurs?$/.test(s.supplier.trim()) && s.supplier.trim() !== '—'
+            ? [s.supplier.trim()]
+            : [];
+      names.forEach((n) => counts.set(n, (counts.get(n) ?? 0) + 1));
+    }
+    return Array.from(counts.entries())
       .map(([supplier, count]) => ({ supplier, count }))
-      .sort((a, b) => b.count - a.count)
+      .sort((a, b) => b.count - a.count || a.supplier.localeCompare(b.supplier, 'fr'))
       .slice(0, 5);
-  }, [shipments]);
+  }, [shipments, parcels]);
 
   return (
     <div className="space-y-6">
@@ -200,7 +219,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, parcels
                     </span>
                   </div>
                   <span className="font-mono font-bold text-[#623387] dark:text-[#ED5DB2]">
-                    {sup.count} expéditions
+                    {sup.count} expédition{sup.count > 1 ? 's' : ''}
                   </span>
                 </div>
               )))}
