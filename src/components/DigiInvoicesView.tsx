@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   FilePlus2,
-  FileSpreadsheet,
   Loader2,
   Pencil,
   ReceiptText,
@@ -46,7 +45,6 @@ import {
 import { Shipment, shipmentLabel } from '../types';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
-import { DigiImportModal } from './DigiImportModal';
 import { ParcelFormModal } from './ParcelFormModal';
 import { InvoiceParcelsPanel } from './InvoiceParcelsPanel';
 import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
@@ -66,6 +64,8 @@ interface Props {
   shipments: Shipment[];
   /** Deletes a shipment left without invoices (SUPPLY_CHAIN only). */
   onDeleteShipment?: (shipmentId: string) => Promise<void> | void;
+  /** Bumped by the app after an Excel import of invoices: the list reloads. */
+  refreshKey?: number;
 }
 
 /**
@@ -118,6 +118,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
   onShipmentsChanged,
   shipments,
   onDeleteShipment,
+  refreshKey = 0,
 }) => {
   const [config, setConfig] = useState<DigiConfig | null>(null);
   const [invoices, setInvoices] = useState<DigiInvoice[]>([]);
@@ -142,7 +143,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
   const [bulkProgress, setBulkProgress] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<DigiInvoice | 'new' | null>(null);
-  const [showImport, setShowImport] = useState(false);
 
   const destination = config?.dest_partner_name || DEFAULT_DEST_PARTNER_NAME;
 
@@ -168,6 +168,11 @@ export const DigiInvoicesView: React.FC<Props> = ({
 
   /** Reloads the list (parcel counters changed). */
   const reloadInvoices = () => fetchDigiInvoices().then(setInvoices).catch((err) => setError(err.message));
+
+  // Invoices imported from the top bar's « Importer Excel »
+  useEffect(() => {
+    if (refreshKey > 0) reloadInvoices();
+  }, [refreshKey]);
 
   const handleSync = async () => {
     setSyncing(true);
@@ -782,12 +787,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
             Synchroniser Odoo
           </button>
           <button
-            onClick={() => setShowImport(true)}
-            className={`${button} border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300`}
-          >
-            <FileSpreadsheet className="h-4 w-4" /> Importer Excel
-          </button>
-          <button
             onClick={() => setEditing('new')}
             className={`${button} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
           >
@@ -1163,16 +1162,6 @@ export const DigiInvoicesView: React.FC<Props> = ({
         />
       )}
 
-      {showImport && (
-        <DigiImportModal
-          destination={destination}
-          maxInvoices={config?.import_max_invoices ?? 2000}
-          onClose={() => setShowImport(false)}
-          onImported={() => {
-            fetchDigiInvoices().then(setInvoices).catch((err) => setError(err.message));
-          }}
-        />
-      )}
     </div>
   );
 };

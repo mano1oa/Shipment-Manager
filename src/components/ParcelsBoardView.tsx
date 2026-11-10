@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronRight,
   Combine,
-  FileSpreadsheet,
   Layers,
   Loader2,
   PackageCheck,
@@ -24,7 +23,6 @@ import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { BoxesBadge } from './BoxesBadge';
 import { MergeParcelModal } from './MergeParcelModal';
 import { findMergeSuspects } from '../lib/parcelBoxes';
-import { AmazonReportImportModal } from './AmazonReportImportModal';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
@@ -127,7 +125,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [photosOf, setPhotosOf] = useState<Parcel | null>(null);
   const [receiving, setReceiving] = useState(false);
   const [pointOpen, setPointOpen] = useState(false);
-  const [amazonOpen, setAmazonOpen] = useState(false);
   /** Parcel whose contents are shown under its row. */
   const [openId, setOpenId] = useState<string | null>(null);
   /** "Fusionner dans le colis principal…": the parcel to merge, and the main parcel proposed. */
@@ -203,11 +200,12 @@ export const ParcelsBoardView: React.FC<Props> = ({
   }, [filtered, statusFilter]);
 
   // Late parcels are turned "lost" by the server when the list is loaded
-  const tiles: { key: StatusFilter; label: string; value: number; tone: string }[] = [
-    { key: 'open', label: 'À recevoir', value: counts.to_receive, tone: 'text-slate-900 dark:text-white' },
-    { key: 'received', label: `Reçus à ${hub}`, value: counts.received, tone: 'text-emerald-600' },
-    { key: 'lost', label: `Perdus avant ${hub}`, value: counts.lost, tone: 'text-rose-600' },
-    { key: 'search', label: 'Avis de recherche', value: counts.search, tone: 'text-amber-600' },
+  const tiles: { key: StatusFilter; label: string; value: number; dot: string }[] = [
+    { key: 'open', label: 'À recevoir', value: counts.to_receive, dot: 'bg-[#9A93A5]' },
+    { key: 'received', label: `Reçus à ${hub}`, value: counts.received, dot: 'bg-[#2E9E5B]' },
+    { key: 'lost', label: `Perdus avant ${hub}`, value: counts.lost, dot: 'bg-[#D9534F]' },
+    { key: 'search', label: 'Avis de recherche', value: counts.search, dot: 'bg-[#E8A33D]' },
+    { key: 'all', label: 'Tous les colis', value: own.length, dot: 'bg-[#623387]' },
   ];
 
   const selectedParcels = filtered.filter((p) => selected.has(p.id));
@@ -258,13 +256,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
               <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
             </button>
             <button
-              onClick={() => setAmazonOpen(true)}
-              title="Créer les colis des factures Amazon depuis le rapport d'expédition (n° de commande → n° de suivi)"
-              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-            >
-              <FileSpreadsheet className="h-4 w-4" /> Import rapport Amazon
-            </button>
-            <button
               onClick={() => setReceiving(true)}
               title="Colis confirmé sans photo et sans n° de suivi saisi"
               className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300"
@@ -278,19 +269,28 @@ export const ParcelsBoardView: React.FC<Props> = ({
       {actionError && <p className="text-xs font-semibold text-rose-600">{actionError}</p>}
       {actionMessage && <p className="text-xs font-semibold text-emerald-600">{actionMessage}</p>}
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {tiles.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setStatusFilter(t.key)}
-            className={`rounded-2xl border bg-white p-3 text-left shadow-xs transition dark:bg-slate-800 ${
-              statusFilter === t.key ? 'border-[#623387] ring-1 ring-[#623387]' : 'border-slate-200 dark:border-slate-700'
-            }`}
-          >
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{t.label}</div>
-            <div className={`mt-1 text-2xl font-extrabold ${t.tone}`}>{t.value}</div>
-          </button>
-        ))}
+      {/* Status filters (same as the « Statut » list below) */}
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrer par statut">
+        {tiles.map((t) => {
+          const on = statusFilter === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              aria-pressed={on}
+              onClick={() => setStatusFilter(t.key)}
+              className={`flex h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-semibold transition ${
+                on
+                  ? 'border-[#1E1229] bg-[#1E1229] text-white dark:border-white dark:bg-white dark:text-[#1E1229]'
+                  : 'border-[#E1DDE7] bg-white text-[#3A3444] hover:border-[#C9B6DD] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+              }`}
+            >
+              <span className={`h-2 w-2 rounded-full ${on ? 'bg-current' : t.dot}`} />
+              {t.label}
+              <span className="tabular-nums font-medium opacity-80">{t.value}</span>
+            </button>
+          );
+        })}
       </div>
 
       {suspects.length > 0 && (
@@ -336,7 +336,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
         >
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {counts.no_invoice} colis reçu(s) sans facture : la facture leur sera rattachée quand elle sera saisie avec
-          leur n° (« + Colis ») ou par l’import du rapport Amazon. Voir la liste
+          leur n° (« + Colis ») ou par « Importer Excel » › Expéditions (rapport Amazon). Voir la liste
           <ChevronRight className="ml-auto h-4 w-4" />
         </button>
       )}
@@ -362,7 +362,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
         </div>
       )}
 
-      <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-800">
+      <div className="flex flex-col gap-3 rounded-2xl border border-[#E7E4EC] bg-white p-4 lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
@@ -421,11 +421,11 @@ export const ParcelsBoardView: React.FC<Props> = ({
       {error && <p className="text-xs font-semibold text-rose-600">{error}</p>}
 
       {isSupplyChain && (selectedParcels.length > 0 || busy) && (
-        <div className="sticky top-20 z-10 flex flex-col gap-3 rounded-2xl border border-emerald-300 bg-emerald-50 p-3 shadow-md lg:flex-row lg:items-center dark:border-emerald-900 dark:bg-slate-900">
-          <div className="flex flex-1 items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-100">
+        <div className="sticky top-2 z-10 flex flex-col gap-3 rounded-2xl bg-[#1E1229] p-3 pl-4 text-white shadow-lg lg:flex-row lg:items-center">
+          <div className="flex flex-1 items-center gap-2 text-sm font-semibold">
             {busy ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin text-emerald-600" /> {busy}
+                <Loader2 className="h-4 w-4 animate-spin text-[#62D18F]" /> {busy}
               </>
             ) : (
               <>
@@ -433,7 +433,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 <button
                   onClick={() => setSelected(new Set())}
                   title="Tout désélectionner"
-                  className="rounded-lg p-1 text-slate-400 hover:bg-white hover:text-slate-700 dark:hover:bg-slate-800"
+                  aria-label="Tout désélectionner"
+                  className="rounded-lg p-1.5 text-white/70 hover:bg-white/10 hover:text-white"
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -442,20 +443,20 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </div>
           {!busy && (
             <div className="flex flex-wrap items-center gap-2">
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-white/80">
                 Reçu(s) le
                 <DateInput
                   value={receptionDate}
                   wrapperClassName="w-36"
                   max={today}
                   onChange={(v) => setReceptionDate(v || today)}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs dark:border-slate-700 dark:bg-slate-800"
+                  className="rounded-lg border border-white/20 bg-white px-2 py-1.5 text-xs text-[#17111F]"
                 />
               </label>
               <button
                 onClick={() => confirmReception(toConfirm)}
                 disabled={toConfirm.length === 0}
-                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40"
+                className="flex items-center gap-1.5 rounded-lg bg-[#2E9E5B] px-3 py-2 text-xs font-semibold text-white hover:bg-[#268a4f] disabled:opacity-40"
               >
                 <CheckCircle2 className="h-3.5 w-3.5" /> Confirmer la réception à {hub} ({toConfirm.length})
               </button>
@@ -464,7 +465,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                   onClick={() => onGroupInShipment(toShip)}
                   disabled={toShip.length === 0}
                   title="Nouvelle expédition vers Madagascar avec les factures des colis reçus cochés (pas encore expédiés)"
-                  className="flex items-center gap-1.5 rounded-lg bg-[#623387] px-3 py-1.5 text-[11px] font-bold text-white shadow-sm hover:bg-[#522870] disabled:opacity-40"
+                  className="flex items-center gap-1.5 rounded-lg bg-[#623387] px-3 py-2 text-xs font-semibold text-white hover:bg-[#7340a0] disabled:opacity-40"
                 >
                   <Layers className="h-3.5 w-3.5" /> Regrouper en expédition ({toShip.length} facture(s))
                 </button>
@@ -474,10 +475,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-800">
+      <div className="overflow-hidden rounded-2xl border border-[#E7E4EC] bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 dark:bg-slate-900/60 dark:text-slate-400">
+            <thead className="bg-[#FAF9FB] text-[11px] font-medium text-[#5E5869] dark:bg-slate-800/60 dark:text-slate-400">
               <tr>
                 {isSupplyChain && (
                   <th className="w-8 px-3 py-3">
@@ -786,9 +787,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
         />
       )}
 
-      {amazonOpen && (
-        <AmazonReportImportModal destination={destination} onClose={() => setAmazonOpen(false)} onImported={onReload} />
-      )}
       {pointOpen && (
         <ReceptionPointView
           destination={destination}
