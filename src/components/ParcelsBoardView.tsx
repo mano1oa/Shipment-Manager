@@ -34,9 +34,12 @@ import { useParcelStatusActions } from './useParcelStatusActions';
 import { Shipment, shipmentLabel } from '../types';
 import DateInput from './DateInput';
 import { Pagination, usePagination } from './Pagination';
+import { SavedFilters } from './SavedFilters';
 import { downloadCsv } from '../lib/exportCsv';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
+/** Filters kept by « Mes filtres ». */
+type ParcelFilters = { status: StatusFilter; supplier: string; search: string; receivedOn: string };
 
 interface Props {
   destination: ParcelDestination;
@@ -390,6 +393,19 @@ export const ParcelsBoardView: React.FC<Props> = ({
       )}
 
       <AmazonPendingBanner destination={destination} refreshKey={parcels} canEdit={isSupplyChain} />
+
+      <SavedFilters<ParcelFilters>
+        storageKey={`parcels-${destination}`}
+        current={{ status: statusFilter, supplier: supplierFilter, search, receivedOn }}
+        isDefault={statusFilter === 'open' && supplierFilter === 'all' && !search.trim() && !receivedOn}
+        equals={(a, b) => a.status === b.status && a.supplier === b.supplier && a.search === b.search && a.receivedOn === b.receivedOn}
+        onApply={(f) => {
+          setStatusFilter(f.status);
+          setSupplierFilter(f.supplier);
+          setSearch(f.search);
+          setReceivedOn(f.receivedOn);
+        }}
+      />
 
       <div className="flex flex-col gap-3 rounded-2xl border border-[#E7E4EC] bg-white p-4 lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
