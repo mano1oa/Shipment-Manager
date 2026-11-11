@@ -2,6 +2,7 @@ import type { DigiInvoiceInput } from '../lib/digiInvoices';
 import type { DirectInvoiceInput } from '../lib/directInvoices';
 import type { CarrierCode } from '../lib/carrierDetection';
 import type { ParcelBox, ParcelNumberKind } from '../lib/parcelBoxes';
+import type { ParcelHistoryEvent } from '../lib/parcelHistory';
 import type { AmazonImportLine, AmazonImportOutcome, AmazonReportRow } from '../lib/amazonReport';
 import type {
   Currency,
@@ -142,6 +143,19 @@ export const importDigiInvoices = (invoices: DigiInvoiceInput[], fileName: strin
   apiJson<DigiImportResult>('/api/digi-invoices/import', {
     method: 'POST',
     body: JSON.stringify({ invoices, file_name: fileName }),
+  });
+
+export interface DigiImportPreview {
+  fresh: { supplier_name: string; ref: string }[];
+  duplicates: { supplier_name: string; ref: string }[];
+  rejected: { supplier_name: string | null; ref: string | null; errors: string[] }[];
+}
+
+/** What the import would do (nothing written). */
+export const previewDigiImport = (invoices: DigiInvoiceInput[]) =>
+  apiJson<DigiImportPreview>('/api/digi-invoices/import/preview', {
+    method: 'POST',
+    body: JSON.stringify({ invoices }),
   });
 
 export const setInvoiceServices = (id: string, noShipment: boolean) =>
@@ -550,6 +564,23 @@ export interface AmazonImportResult {
   lines: AmazonImportLine[];
 }
 
+/** Number of the Amazon report kept until its order has an invoice. */
+export interface AmazonPendingParcel {
+  tracking_number: string;
+  destination: ParcelDestination;
+  carrier_text: string | null;
+  expected_delivery: string | null;
+  sources: { order_ref: string; line: number }[];
+  created_at: string;
+  created_by_email: string | null;
+}
+
+export const fetchAmazonPending = (destination: ParcelDestination) =>
+  apiJson<{ pending: AmazonPendingParcel[] }>(`/api/parcels/amazon-pending?destination=${destination}`).then((d) => d.pending);
+
+export const deleteAmazonPending = (trackingNumber: string) =>
+  apiJson(`/api/parcels/amazon-pending/${encodeURIComponent(trackingNumber)}`, { method: 'DELETE' });
+
 /** Amazon shipment report: preview (apply = false), then creation of the parcels. */
 export const importAmazonReport = (destination: ParcelDestination, rows: AmazonReportRow[], apply: boolean) =>
   apiJson<AmazonImportResult>('/api/parcels/import-amazon', {
@@ -571,3 +602,7 @@ export interface ParcelContentsInvoice {
 /** Invoices of a parcel with their lines (aperçu du contenu). */
 export const fetchParcelContents = (parcelId: string) =>
   apiJson<{ invoices: ParcelContentsInvoice[] }>(`/api/parcels/${parcelId}/contents`).then((d) => d.invoices);
+
+/** History of a parcel, oldest first (aperçu depuis les suivis). */
+export const fetchParcelHistory = (parcelId: string) =>
+  apiJson<{ events: ParcelHistoryEvent[]; photo_storage_configured: boolean }>(`/api/parcels/${parcelId}/history`);

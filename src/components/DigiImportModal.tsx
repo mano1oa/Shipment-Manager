@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, FileSpreadsheet, Loader2, Upload, X } from 'lucide-react';
 import { readSheet } from 'read-excel-file/browser';
 import { parseDigiSheet, SheetParseResult } from '../lib/digiInvoices';
-import { DigiImportResult, formatAmount, formatDate, importDigiInvoices } from './digiApi';
+import { DigiImportPreview, DigiImportResult, formatAmount, formatDate, importDigiInvoices, previewDigiImport } from './digiApi';
 
 interface Props {
   destination: string;
@@ -13,6 +13,15 @@ interface Props {
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const PREVIEW_ROWS = 20;
+
+const OUTCOME = {
+  new: { label: 'Nouvelle', tone: 'bg-[#E2F5EA] text-[#1C7A45] dark:bg-emerald-950 dark:text-emerald-300' },
+  duplicate: { label: 'Déjà présente', tone: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' },
+  rejected: { label: 'Refusée', tone: 'bg-[#FDE8E7] text-[#B42318] dark:bg-rose-950 dark:text-rose-300' },
+  pending: { label: '…', tone: 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400' },
+} as const;
+/** New invoices first in the preview table. */
+const rank = (o: string | undefined) => (o === 'new' ? 0 : o === 'rejected' ? 1 : o === 'duplicate' ? 2 : 3);
 const SHOWN_ERRORS = 50;
 
 /** CSV exported by Excel (";" in French locale, "," otherwise), with quoted fields. */
@@ -71,11 +80,41 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<DigiImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Server check before importing: new invoices vs already known ones. */
+  const [preview, setPreview] = useState<DigiImportPreview | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  const runPreview = async (result: SheetParseResult) => {
+    setPreview(null);
+    setPreviewError(null);
+    if (result.invoices.length === 0 || result.invoices.length > maxInvoices) return;
+    setPreviewing(true);
+    try {
+      setPreview(await previewDigiImport(result.invoices));
+    } catch (err: any) {
+      setPreviewError(err.message);
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const keyOf = (i: { supplier_name: string | null; ref: string | null }) =>
+    `${(i.supplier_name || '').trim().toLowerCase()}|${(i.ref || '').trim().toLowerCase()}`;
+  const outcomeOf = useMemo(() => {
+    const map = new Map<string, 'new' | 'duplicate' | 'rejected'>();
+    preview?.fresh.forEach((i) => map.set(keyOf(i), 'new'));
+    preview?.duplicates.forEach((i) => map.set(keyOf(i), 'duplicate'));
+    preview?.rejected.forEach((i) => map.set(keyOf(i), 'rejected'));
+    return map;
+  }, [preview]);
 
   const handleFile = async (file: File | undefined) => {
     setParsed(null);
     setResult(null);
     setError(null);
+    setPreview(null);
+    setPreviewError(null);
     if (!file) return;
     if (!/\.(xlsx|csv)$/i.test(file.name)) {
       setError('Format non pris en charge : utilisez un fichier .xlsx ou .csv (les anciens .xls doivent être réenregistrés en .xlsx).');
@@ -89,7 +128,9 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
     setFileName(file.name);
     setParsing(true);
     try {
-      setParsed(parseDigiSheet(await readRows(file), destination));
+      const result = parseDigiSheet(await readRows(file), destination);
+      setParsed(result);
+      runPreview(result);
     } catch (err: any) {
       console.error('[DIGI Import] Could not read file:', err);
       setError('Impossible de lire ce fichier. Vérifiez qu\'il s\'agit bien d\'un export Excel valide.');
@@ -199,16 +240,17 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
 
           {parsed && !result && (
             <>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
                 {[
-                  { label: 'Factures à importer', value: parsed.invoices.length, tone: 'text-[#623387]' },
+                  { label: 'Nouvelles (seront créées)', value: preview ? preview.fresh.length : previewing ? '…' : parsed.invoices.length, tone: 'text-[#623387]' },
+                  { label: 'Déjà présentes (ignorées)', value: preview ? preview.duplicates.length : previewing ? '…' : '—', tone: 'text-slate-500' },
                   { label: 'Lignes de produits', value: totalLines, tone: 'text-slate-800 dark:text-slate-100' },
                   {
                     label: `Hors ${destination} (ignorées)`,
                     value: parsed.hasDestinationColumn ? parsed.skippedOtherDestination : '—',
                     tone: 'text-slate-500',
                   },
-                  { label: 'Factures en erreur', value: parsed.rejectedInvoices, tone: 'text-rose-600' },
+                  { label: 'Factures en erreur', value: parsed.rejectedInvoices + (preview?.rejected.length ?? 0), tone: 'text-rose-600' },
                 ].map((tile) => (
                   <div key={tile.label} className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{tile.label}</p>
@@ -216,6 +258,13 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
                   </div>
                 ))}
               </div>
+
+              {previewError && (
+                <p className="font-semibold text-amber-700 dark:text-amber-300">
+                  Vérification des doublons impossible ({previewError}) : l’import reste possible, les factures déjà
+                  connues seront ignorées.
+                </p>
+              )}
 
               {parsed.skippedCancelled > 0 && (
                 <p className="font-semibold text-slate-500">
@@ -249,6 +298,7 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
                   <table className="w-full text-left">
                     <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                       <tr>
+                        <th className="px-3 py-2">Résultat</th>
                         <th className="px-3 py-2">Fournisseur</th>
                         <th className="px-3 py-2">Référence</th>
                         <th className="px-3 py-2">Date</th>
@@ -259,10 +309,19 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {parsed.invoices.slice(0, PREVIEW_ROWS).map((inv) => {
+                      {[...parsed.invoices]
+                        .sort((a, b) => rank(outcomeOf.get(keyOf(a))) - rank(outcomeOf.get(keyOf(b))))
+                        .slice(0, PREVIEW_ROWS)
+                        .map((inv) => {
+                        const outcome = outcomeOf.get(keyOf(inv));
                         const hasTotals = inv.lines.some((l) => l.price_subtotal !== null);
                         return (
                           <tr key={`${inv.supplier_name}|${inv.ref}`}>
+                            <td className="px-3 py-2">
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${OUTCOME[outcome ?? 'pending'].tone}`}>
+                                {OUTCOME[outcome ?? 'pending'].label}
+                              </span>
+                            </td>
                             <td className="px-3 py-2 font-semibold">{inv.supplier_name}</td>
                             <td className="px-3 py-2">{inv.ref}</td>
                             <td className="px-3 py-2">{formatDate(inv.invoice_date)}</td>
@@ -307,11 +366,13 @@ export const DigiImportModal: React.FC<Props> = ({ destination, maxInvoices, onC
               <button
                 type="button"
                 onClick={handleImport}
-                disabled={!parsed || parsed.invoices.length === 0 || tooMany || importing}
+                disabled={!parsed || parsed.invoices.length === 0 || tooMany || importing || previewing || (preview !== null && preview.fresh.length === 0)}
                 className="flex items-center gap-2 rounded-xl bg-[#623387] px-4 py-2 font-bold text-white shadow-md hover:bg-[#522870] disabled:opacity-50"
               >
                 {importing && <Loader2 className="h-4 w-4 animate-spin" />}
-                Importer {parsed ? parsed.invoices.length : ''} facture(s)
+                {preview
+                  ? `Importer ${preview.fresh.length} nouvelle(s) facture(s)`
+                  : `Importer ${parsed ? parsed.invoices.length : ''} facture(s)`}
               </button>
             )}
           </div>

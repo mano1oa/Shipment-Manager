@@ -753,6 +753,20 @@ export async function importDigiInvoices(
 ): Promise<{ created: number; duplicates: string[] }> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
+  const { fresh, duplicates: duplicateInputs } = await planDigiImport(inputs);
+  const duplicates = duplicateInputs.map((d) => d.ref);
+  return insertImportedInvoices(sql, fresh, duplicates, actorEmail);
+}
+
+/**
+ * What an import would do, without writing: the new invoices and the ones
+ * already known (same supplier + ref, or same BL as an Odoo invoice).
+ */
+export async function planDigiImport(
+  inputs: DigiInvoiceInput[]
+): Promise<{ fresh: DigiInvoiceInput[]; duplicates: DigiInvoiceInput[] }> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
 
   const existingRows = await sql`
     SELECT supplier_name, ref, odoo_move_id FROM digi_invoices
@@ -765,18 +779,26 @@ export async function importDigiInvoices(
     existingRows.filter((r: any) => r.odoo_move_id !== null).map((r: any) => String(r.ref).trim().toLowerCase())
   );
 
-  const duplicates: string[] = [];
+  const duplicates: DigiInvoiceInput[] = [];
   const fresh: DigiInvoiceInput[] = [];
   for (const input of inputs) {
     const key = invoiceKey(input.supplier_name, input.ref);
     if (existing.has(key) || odooRefs.has(input.ref.trim().toLowerCase())) {
-      duplicates.push(input.ref);
+      duplicates.push(input);
     } else {
       existing.add(key);
       fresh.push(input);
     }
   }
+  return { fresh, duplicates };
+}
 
+async function insertImportedInvoices(
+  sql: ReturnType<typeof getDb>,
+  fresh: DigiInvoiceInput[],
+  duplicates: string[],
+  actorEmail: string
+): Promise<{ created: number; duplicates: string[] }> {
   let created = 0;
   for (let offset = 0; offset < fresh.length; offset += IMPORT_CHUNK) {
     const chunk = fresh.slice(offset, offset + IMPORT_CHUNK);

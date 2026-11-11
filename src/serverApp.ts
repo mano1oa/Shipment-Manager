@@ -54,6 +54,7 @@ import {
 } from './db/suppliers.js';
 
 import { writeAuditLog } from './db/audit.js';
+import { getParcelHistory } from './db/parcelHistory.js';
 import { ANTOINE_STATUSES, CONTAINER_TYPES } from './types.js';
 
 import {
@@ -63,6 +64,7 @@ import {
   updateDigiInvoice,
   deleteDigiInvoice,
   importDigiInvoices,
+  planDigiImport,
   getLastOdooSyncRun,
   getInvoiceTotalsByShipment,
   listDigiInvoicesForShipment,
@@ -142,7 +144,10 @@ import {
 } from './db/parcels.js';
 import { PARCEL_NUMBER_KIND_LABELS, isParcelNumberKind, normalizeParcelNumber, parcelNumberKindText } from './lib/parcelBoxes.js';
 import { AMAZON_IMPORT_MAX_ROWS, orderKey } from './lib/amazonReport.js';
-import type { AmazonImportLine, AmazonImportOutcome } from './lib/amazonReport.js';
+import type { AmazonImportLine } from './lib/amazonReport.js';
+import { processAmazonGroups, keepPendingAmazonParcels, resolvePendingAmazonParcels } from './services/amazonReportImport.js';
+import type { AmazonGroup } from './services/amazonReportImport.js';
+import { listPendingAmazonParcels, deletePendingAmazonParcels } from './db/amazonPending.js';
 import type { CarrierCode } from './lib/carrierDetection.js';
 import { validateDigiInvoiceInput, DIGI_IMPORT_MAX_INVOICES } from './lib/digiInvoices.js';
 import { isMirrorConfigured, MirrorError } from './services/odoo/mirrorClient.js';
@@ -160,6 +165,7 @@ import { findConfirmedShipmentOfInvoices, nextInternalRef } from './db/shipments
 import { listReceivedArticles, setLineReceipt } from './db/lineReceipts.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 import { runInvoicesWithoutParcelDigest } from './services/invoicesWithoutParcelNotifier.js';
+import { buildWeeklySummary, runWeeklySummary } from './services/weeklySummaryNotifier.js';
 import { postToWebhook, sendChatMessage } from './services/googleChat.js';
 import { createChatWebhook, deleteChatWebhook, getChatWebhook, listChatWebhooks, updateChatWebhook } from './db/chatWebhooks.js';
 import type { ChatWebhookInput } from './db/chatWebhooks.js';
@@ -606,11 +612,35 @@ export function createServerApp(): Express {
         actor: null,
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
+      await resolvePendingAmazonParcels('cron');
       console.log('[DIGI Cron]', JSON.stringify(result));
       return res.json({ success: true, duration_ms: Date.now() - startedAt, ...result, parcel_losses: parcelLosses });
     } catch (err: any) {
       console.error('[DIGI Cron] Failed:', err);
       return res.status(500).json({ success: false, error: 'DIGI invoices sync failed' });
+    }
+  });
+
+  // Weekly summary for the management, Monday morning (same CRON_SECRET rules as above).
+  app.get('/api/cron/weekly-summary', async (req, res) => {
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (!cronSecret) {
+      console.error('[Weekly Cron] CRON_SECRET is not configured: job not run.');
+      return res.status(500).json({ success: false, error: 'Cron configuration error' });
+    }
+
+    if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    try {
+      const result = await runWeeklySummary();
+      console.log('[Weekly Cron]', JSON.stringify(result));
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('[Weekly Cron] Failed:', err);
+      return res.status(500).json({ success: false, error: 'Weekly summary failed' });
     }
   });
 
@@ -1126,6 +1156,24 @@ app.put(
     } catch (err: any) {
       console.error('[Chat webhooks] Digest error:', err);
       return res.status(500).json({ success: false, error: 'Impossible d’envoyer la liste' });
+    }
+  });
+
+  // Preview of the Monday summary, sent now on one webhook only (even inactive)
+  app.post('/api/settings/chat-webhooks/:id/send-weekly-summary', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+    try {
+      const webhook = await getChatWebhook(req.params.id);
+      if (!webhook || webhook.purpose !== 'weekly_summary') {
+        return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+      }
+      const { text } = await buildWeeklySummary();
+      const error = await postToWebhook(webhook.url, text);
+      if (error) return res.status(502).json({ success: false, error });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Weekly summary error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d’envoyer l’aperçu' });
     }
   });
 
@@ -1890,6 +1938,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
     try {
       const id = await createDigiInvoice(value, 'manual', req.user.email);
+      await resolvePendingAmazonParcels(req.user.email);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: id,
@@ -1907,6 +1956,37 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       console.error('[DIGI] Create invoice error:', err);
       return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la facture' });
+    }
+  });
+
+  // Dry run of the import: which invoices would be created, which are already known
+  app.post('/api/digi-invoices/import/preview', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const items = req.body?.invoices;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'Aucune facture à vérifier.' });
+    }
+    if (items.length > DIGI_IMPORT_MAX_INVOICES) {
+      return res.status(400).json({ success: false, error: `${DIGI_IMPORT_MAX_INVOICES} factures maximum par import.` });
+    }
+    const valid = [];
+    const rejected: { supplier_name: string | null; ref: string | null; errors: string[] }[] = [];
+    for (const item of items) {
+      const { value, errors } = validateDigiInvoiceInput(item);
+      if (value) valid.push(value);
+      else
+        rejected.push({
+          supplier_name: typeof item?.supplier_name === 'string' ? item.supplier_name : null,
+          ref: typeof item?.ref === 'string' ? item.ref : null,
+          errors,
+        });
+    }
+    try {
+      const { fresh, duplicates } = await planDigiImport(valid);
+      const key = (i: { supplier_name: string; ref: string }) => ({ supplier_name: i.supplier_name, ref: i.ref });
+      return res.json({ success: true, fresh: fresh.map(key), duplicates: duplicates.map(key), rejected });
+    } catch (err: any) {
+      console.error('[DIGI] Import preview error:', err);
+      return res.status(500).json({ success: false, error: 'Vérification de l’import impossible' });
     }
   });
 
@@ -1932,6 +2012,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
 
     try {
       const { created, duplicates } = await importDigiInvoices(valid, req.user.email);
+      await resolvePendingAmazonParcels(req.user.email);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: '*',
@@ -2166,6 +2247,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (!found) {
         return res.status(404).json({ success: false, error: 'Facture introuvable' });
       }
+      await resolvePendingAmazonParcels(req.user.email);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: req.params.id,
@@ -2209,6 +2291,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     const validated = req.user.role === 'SUPPLY_CHAIN';
     try {
       const id = await createDirectInvoice(value, req.user.email, validated);
+      await resolvePendingAmazonParcels(req.user.email);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: id,
@@ -2239,6 +2322,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       if (await refuseIfConfirmed([req.params.id], res)) return;
       await updateDirectInvoice(req.params.id, value, req.user.email, req.user.role === 'SUPPLY_CHAIN');
+      await resolvePendingAmazonParcels(req.user.email);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: req.params.id,
@@ -2464,6 +2548,19 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  /** History of a parcel (creation, receptions, photos, status changes…), loaded with its details. */
+  app.get('/api/parcels/:id/history', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    try {
+      const events = await getParcelHistory(req.params.id);
+      if (!events) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      return res.json({ success: true, events, photo_storage_configured: isPhotoStorageConfigured() });
+    } catch (err: any) {
+      console.error('[Parcels] History error:', err);
+      return res.status(500).json({ success: false, error: "Impossible de charger l'historique du colis" });
+    }
+  });
+
   /**
    * Adds a parcel to invoices of one supplier. A tracking number already known
    * links the invoices to that parcel (one parcel can cover several invoices).
@@ -2552,6 +2649,39 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
    * number gets it first, a known number gets the invoice. Without `apply`,
    * only the preview of what would be done.
    */
+  /** Amazon report numbers waiting for their invoice (page Colis vers Orly / Rouen). */
+  app.get('/api/parcels/amazon-pending', async (req: any, res) => {
+    const destination = req.query?.destination;
+    if (!isParcelDestination(destination)) return res.status(400).json({ success: false, error: 'Destination invalide.' });
+    try {
+      const pending = (await listPendingAmazonParcels()).filter((p) => p.destination === destination);
+      return res.json({ success: true, pending });
+    } catch (err: any) {
+      console.error('[Parcels] Amazon pending list error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de charger les colis en attente de facture' });
+    }
+  });
+
+  /** Removed by hand (order cancelled, returned, never invoiced). */
+  app.delete('/api/parcels/amazon-pending/:number', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const number = String(req.params.number || '').trim().slice(0, 100);
+    if (!number) return res.status(404).json({ success: false, error: 'N° introuvable' });
+    try {
+      await deletePendingAmazonParcels([number]);
+      await writeAuditLog({
+        entityType: 'PARCEL',
+        entityId: '*',
+        action: 'DELETE_AMAZON_PENDING',
+        actor: req.user,
+        details: { tracking_number: number },
+      });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Parcels] Amazon pending delete error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible de retirer ce n°' });
+    }
+  });
+
   app.post('/api/parcels/import-amazon', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
     const destination = req.body?.destination;
     const rows = req.body?.rows;
@@ -2565,7 +2695,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       // One parcel per tracking number, possibly for several orders
       const groups = new Map<
         string,
-        { number: string; carrier: string; carrierText: string; expected: string | null; sources: { order: string; ref: string }[]; lines: { line: number; order_ref: string; raw: string }[] }
+        AmazonGroup
       >();
       const lines: AmazonImportLine[] = [];
       for (const r of rows) {
@@ -2587,80 +2717,17 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         };
         // Amazon invoice number of the row (several invoices per order: one per seller)
         g.sources.push({ order: orderKey(orderRef), ref: orderKey(text(r?.invoice_ref, 100)) });
-        g.lines.push({ line, order_ref: orderRef, raw });
+        g.lines.push({ line, order_ref: orderRef });
         groups.set(detected.number, g);
       }
 
-      const sources = Array.from(groups.values()).flatMap((g) => g.sources);
-      const invoices = await findAmazonOrderInvoices(
-        Array.from(new Set(sources.map((s) => s.order))),
-        Array.from(new Set(sources.map((s) => s.ref).filter((k) => k.length >= 6)))
-      );
-      const byOrder = new Map<string, typeof invoices>();
-      const byRef = new Map<string, typeof invoices>();
-      invoices.forEach((inv) => {
-        if (inv.order_key) byOrder.set(inv.order_key, [...(byOrder.get(inv.order_key) ?? []), inv]);
-        if (inv.ref_key) byRef.set(inv.ref_key, [...(byRef.get(inv.ref_key) ?? []), inv]);
-      });
-      /** The invoice of the row by its Amazon invoice number, else every invoice of the order. */
-      const invoicesOf = (s: { order: string; ref: string }) =>
-        (s.ref.length >= 6 ? byRef.get(s.ref) : undefined) ?? byOrder.get(s.order) ?? [];
-
-      /** Parcels without number given one in this run (not twice). */
-      const completedBlank = new Set<string>();
-      const counts: Record<string, number> = {};
-      for (const g of groups.values()) {
-        const all = Array.from(new Map(g.sources.flatMap(invoicesOf).map((inv) => [inv.id, inv])).values());
-        const notServices = all.filter((inv) => inv.triage !== 'services');
-        // Invoices of a confirmed shipment keep their parcels
-        const locked = new Set<string>();
-        for (const inv of notServices) if (await findConfirmedShipmentOfInvoices([inv.id])) locked.add(inv.id);
-        const goods = notServices.filter((inv) => !locked.has(inv.id));
-        const refs = (goods.length > 0 ? goods : notServices).map((inv) => inv.ref || '—');
-        let outcome: AmazonImportOutcome;
-        if (all.length === 0) outcome = 'unknown_order';
-        else if (notServices.length === 0) outcome = 'services';
-        else if (goods.length === 0) outcome = 'locked';
-        else {
-          const ids = goods.map((inv) => inv.id);
-          // Main number or another number of a parcel (supplier, carrier, box)
-          const existing = (await findByTrackingNumber(g.number))?.id ?? null;
-          const blank = goods.flatMap((inv) => inv.blank_parcel_ids).find((id) => !completedBlank.has(id));
-          if (existing) {
-            outcome = goods.every((inv) => inv.parcel_ids.includes(existing)) ? 'already' : 'linked';
-            if (apply && outcome === 'linked') await linkParcelInvoices(existing, ids);
-          } else if (blank) {
-            completedBlank.add(blank);
-            outcome = 'completed';
-            if (apply) {
-              // With the invoices of the other orders of the package
-              if (await assignParcelTrackingNumber(blank, g.number, g.carrier as CarrierCode, req.user.email)) {
-                await linkParcelInvoices(blank, ids);
-              }
-            }
-          } else {
-            outcome = 'created';
-            if (apply) {
-              const { value } = validateParcelInput({ tracking_number: g.number, destination, expected_delivery: g.expected });
-              if (value) {
-                // Carrier of the report when it is in the Settings list, else from the number
-                const carrier =
-                  (g.carrierText ? await resolveParcelCarrier(g.carrierText, value.carrier) : undefined) ??
-                  (await resolveParcelCarrier(null, value.carrier));
-                if (carrier) {
-                  value.carrier_name = carrier.name;
-                  if (carrier.trackingCode && isCarrierCode(carrier.trackingCode)) value.carrier = carrier.trackingCode;
-                }
-                const supplier = (await commonSupplierOf(ids)).supplier;
-                await createParcel(value, ids, supplier, req.user.email);
-              }
-            }
-          }
-        }
-        counts[outcome] = (counts[outcome] ?? 0) + 1;
-        g.lines.forEach((l) => lines.push({ line: l.line, order_ref: l.order_ref, tracking_number: g.number, outcome, invoice_refs: refs }));
-      }
+      const list = Array.from(groups.values());
+      const done = await processAmazonGroups(list, destination, apply, req.user.email);
+      lines.push(...done.lines);
       lines.sort((a, b) => a.line - b.line);
+      const counts = done.counts;
+      // Orders without invoice: kept, their parcels are made when the invoice arrives
+      if (apply) await keepPendingAmazonParcels(list, done.outcomes, destination, req.user.email);
 
       if (apply) {
         await writeAuditLog({
@@ -3447,6 +3514,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         actor: req.user,
         timeBudgetMs: ODOO_SYNC_TIME_BUDGET_MS,
       });
+      await resolvePendingAmazonParcels(req.user.email);
       await writeAuditLog({
         entityType: 'DIGI_INVOICE',
         entityId: '*',

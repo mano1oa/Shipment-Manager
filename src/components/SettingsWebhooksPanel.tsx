@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Copy, Eye, EyeOff, Loader2, Pencil, Plus, Send, Trash2, Webhook, X } from 'lucide-react';
 import { apiJson, inputClass } from './digiApi';
-import { CHAT_WEBHOOK_PURPOSES, chatWebhookPurposeLabel, isGoogleChatWebhookUrl, maskWebhookUrl } from '../lib/chatWebhooks';
+import {
+  CHAT_WEBHOOK_PURPOSES,
+  chatWebhookPurposeLabel,
+  isGoogleChatWebhookUrl,
+  maskWebhookUrl,
+  usesEnvFallback,
+} from '../lib/chatWebhooks';
 import type { ChatWebhook, ChatWebhookPurpose } from '../lib/chatWebhooks';
 
 type Draft = { id?: string; name: string; url: string; purpose: ChatWebhookPurpose; active: boolean };
@@ -95,6 +101,12 @@ export const SettingsWebhooksPanel: React.FC = () => {
       );
     });
 
+  const sendWeeklyPreview = (w: ChatWebhook) =>
+    run(w.id, async () => {
+      await apiJson(`/api/settings/chat-webhooks/${w.id}/send-weekly-summary`, { method: 'POST' });
+      setNotice(`Aperçu du point hebdo envoyé dans « ${w.name} ».`);
+    });
+
   const copy = async (w: ChatWebhook) => {
     try {
       await navigator.clipboard.writeText(w.url);
@@ -177,9 +189,19 @@ export const SettingsWebhooksPanel: React.FC = () => {
       {!loading && purposesWithout.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300">
           <span className="font-bold">Sans webhook :</span> {purposesWithout.map((p) => p.label).join(', ')}.{' '}
-          {envFallback
+          {envFallback && purposesWithout.some((p) => usesEnvFallback(p.id))
             ? 'Ces messages partent encore vers l’ancienne adresse fixée sur le serveur (Vercel) jusqu’à la création d’un webhook de ce type.'
             : 'Ces messages ne sont envoyés nulle part tant qu’un webhook de ce type n’est pas créé.'}
+          {envFallback && purposesWithout.some((p) => !usesEnvFallback(p.id)) && purposesWithout.some((p) => usesEnvFallback(p.id)) && (
+            <>
+              {' '}Sauf{' '}
+              {purposesWithout
+                .filter((p) => !usesEnvFallback(p.id))
+                .map((p) => `« ${p.label} »`)
+                .join(', ')}
+              , envoyé uniquement aux webhooks créés ici.
+            </>
+          )}
         </div>
       )}
 
@@ -277,6 +299,16 @@ export const SettingsWebhooksPanel: React.FC = () => {
                   {w.purpose === 'invoices_without_parcel' && (
                     <button onClick={() => sendDigest(w)} disabled={busy} className={outlineButton} title="Envoie maintenant la liste prévue chaque matin">
                       <Send className="h-3.5 w-3.5" /> Envoyer la liste maintenant
+                    </button>
+                  )}
+                  {w.purpose === 'weekly_summary' && (
+                    <button
+                      onClick={() => sendWeeklyPreview(w)}
+                      disabled={busy}
+                      className={outlineButton}
+                      title="Envoie maintenant dans cet espace le point prévu chaque lundi matin"
+                    >
+                      <Send className="h-3.5 w-3.5" /> Envoyer un aperçu maintenant
                     </button>
                   )}
                   <button onClick={() => test(w)} disabled={busy} className={outlineButton}>

@@ -1,24 +1,24 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 
 import LoginView from './components/LoginView';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { TransportTrackingView } from './components/TransportTrackingView';
-import { ShipmentDetailModal } from './components/ShipmentDetailModal';
-import { AlertsCenterView } from './components/AlertsCenterView';
-import { AnalyticsView } from './components/AnalyticsView';
+const ShipmentDetailModal = lazy(() => import('./components/ShipmentDetailModal').then((m) => ({ default: m.ShipmentDetailModal })));
+const AlertsCenterView = lazy(() => import('./components/AlertsCenterView').then((m) => ({ default: m.AlertsCenterView })));
+const AnalyticsView = lazy(() => import('./components/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 import { AIAssistantBubble } from './components/AIAssistantBubble';
-import { SettingsView } from './components/SettingsView';
-import { DigiInvoicesView } from './components/DigiInvoicesView';
-import { ReceivedArticlesView } from './components/ReceivedArticlesView';
+const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
+const DigiInvoicesView = lazy(() => import('./components/DigiInvoicesView').then((m) => ({ default: m.DigiInvoicesView })));
+const ReceivedArticlesView = lazy(() => import('./components/ReceivedArticlesView').then((m) => ({ default: m.ReceivedArticlesView })));
 import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
 import { evaluateParcelAlerts } from './lib/parcelAlerts';
 import { DEFAULT_TRACKING_SETTINGS } from './lib/parcelTracking';
 import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
-import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
-import { ImportExcelModal } from './components/ImportExcelModal';
+const ShipmentInvoicesModal = lazy(() => import('./components/ShipmentInvoicesModal').then((m) => ({ default: m.ShipmentInvoicesModal })));
+const ImportExcelModal = lazy(() => import('./components/ImportExcelModal').then((m) => ({ default: m.ImportExcelModal })));
 import { ui } from './lib/ui';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { DashboardTab, LOGIN_PATH, pathForRoute, routeFromPath, titleForRoute } from './lib/routes';
@@ -69,7 +69,7 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   /** Bumped after an invoice import: the invoices list reloads. */
   const [invoicesRefreshKey, setInvoicesRefreshKey] = useState(0);
-  const [notification, setNotification] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{ text: string; error: boolean } | null>(null);
 
   // New shipment = grouping of received invoices (Supply Chain)
   const [newMode, setNewMode] = useState<'Air' | 'Sea'>('Air');
@@ -134,19 +134,19 @@ useEffect(() => {
         const errorMsg =
           data?.message ||
           data?.error ||
-          'Impossible de charger les expéditions depuis la base Neon PostgreSQL.';
+          'Impossible de charger les expéditions.';
         setShipments([]);
         setDbConnected(false);
         setShipmentsError(errorMsg);
-        showToast(`❌ Erreur Neon: ${errorMsg}`);
+        showToast(`❌ Chargement des expéditions impossible : ${errorMsg}`);
       }
     } catch (err: any) {
       const networkMsg =
-        err?.message || 'Erreur réseau lors de la communication avec l\'API Neon.';
+        err?.message || 'Connexion au serveur impossible.';
       setShipments([]);
       setDbConnected(false);
       setShipmentsError(networkMsg);
-      showToast(`❌ Erreur de connexion Neon: ${networkMsg}`);
+      showToast(`❌ Connexion impossible : ${networkMsg}`);
     } finally {
       setIsLoadingDb(false);
     }
@@ -197,8 +197,8 @@ useEffect(() => {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errMsg = data?.error || 'Échec de la suppression dans Neon PostgreSQL.';
-        showToast(`❌ Erreur suppression Neon: ${errMsg}`);
+        const errMsg = data?.error || 'Suppression impossible.';
+        showToast(`❌ Suppression impossible : ${errMsg}`);
         return;
       }
 
@@ -207,9 +207,9 @@ useEffect(() => {
       if (selectedShipment?.id === shipmentId) {
         setSelectedShipment(null);
       }
-      showToast(`✅ Expédition ${shipmentLabel(shipments.find((s) => s.id === shipmentId), shipmentId)} supprimée de Neon PostgreSQL.`);
+      showToast(`✅ Expédition ${shipmentLabel(shipments.find((s) => s.id === shipmentId), shipmentId)} supprimée.`);
     } catch (err: any) {
-      showToast(`❌ Erreur réseau lors de la suppression de ${shipmentId}: ${err?.message || 'Erreur inconnue'}`);
+      showToast(`❌ Suppression impossible (connexion) : ${err?.message || 'erreur inconnue'}`);
     }
   };
 
@@ -404,8 +404,8 @@ useEffect(() => {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        const errMsg = data?.error || 'Échec de l\'enregistrement dans Neon PostgreSQL.';
-        showToast(`❌ Erreur mise à jour Neon: ${errMsg}`);
+        const errMsg = data?.error || 'Enregistrement impossible.';
+        showToast(`❌ Enregistrement impossible : ${errMsg}`);
         return;
       }
 
@@ -418,9 +418,9 @@ useEffect(() => {
       setShipments((prev) => prev.map((s) => (s.id === savedShipment.id ? savedShipment : s)));
       // Refresh the open detail view only: inline edits in the lists must not open it
       setSelectedShipment((prev) => (prev && prev.id === savedShipment.id ? savedShipment : prev));
-      showToast(`✅ Expédition ${shipmentLabel(savedShipment)} mise à jour dans Neon PostgreSQL.`);
+      showToast(`✅ Expédition ${shipmentLabel(savedShipment)} enregistrée.`);
     } catch (err: any) {
-      showToast(`❌ Erreur réseau lors de la mise à jour: ${err?.message || 'Erreur inconnue'}`);
+      showToast(`❌ Enregistrement impossible (connexion) : ${err?.message || 'erreur inconnue'}`);
     }
   };
 
@@ -480,7 +480,7 @@ useEffect(() => {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data?.success) {
-        showToast('Relance Google Chat transmise avec succès !');
+        showToast('Relance envoyée sur Google Chat.');
       } else {
         showToast(`❌ Échec de l'envoi Google Chat : ${data?.error || `erreur ${res.status}`}`);
       }
@@ -492,8 +492,10 @@ useEffect(() => {
 
   // Restart the timer on each message: an older timer must not hide a newer toast
   const toastTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A leading ✅ / ❌ only sets the tone (icon), it is not shown
   const showToast = (msg: string) => {
-    setNotification(msg);
+    const error = /^\s*❌/.test(msg);
+    setNotification({ text: msg.replace(/^\s*(✅|❌)\s*/, ''), error });
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setNotification(null), 3500);
   };
@@ -659,12 +661,20 @@ if (!authUser) {
         {/* Content Area */}
         <main className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div className="mx-auto w-full max-w-[1400px]">
+          {/* Secondary screens load on first opening (lighter start) */}
+          <Suspense
+            fallback={
+              <div className="flex justify-center py-16" aria-label="Chargement">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-[#ECE9F0] border-t-[#623387]" />
+              </div>
+            }
+          >
           {shipmentsError && (
             <div className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
               <div className="flex items-center gap-3">
                 <AlertCircle className="h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
                 <div>
-                  <p className="font-semibold">Erreur de chargement de la base Neon PostgreSQL</p>
+                  <p className="font-semibold">Impossible de charger les données</p>
                   <p className="text-xs text-red-600 dark:text-red-300">{shipmentsError}</p>
                 </div>
               </div>
@@ -796,10 +806,12 @@ if (!authUser) {
             />
           )}
           {activeTab === 'settings' && currentRole === 'supply_chain' && <SettingsView currentUserId={authUser.id} />}
+          </Suspense>
           </div>
         </main>
       </div>
 
+      <Suspense fallback={null}>
       {/* Excel imports, one entry point: invoices or Amazon shipment report */}
       {showImport && (
         <ImportExcelModal
@@ -860,12 +872,20 @@ if (!authUser) {
           }}
         />
       )}
+      </Suspense>
 
       {/* Floating Notification Toast */}
       {notification && (
-        <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-2xl bg-slate-900 px-4 py-3 text-xs font-bold text-white shadow-2xl dark:bg-white dark:text-slate-900 animate-bounce">
-          <CheckCircle2 className="h-4 w-4 text-emerald-400 dark:text-emerald-600" />
-          {notification}
+        <div
+          role={notification.error ? 'alert' : 'status'}
+          className="fixed bottom-5 left-1/2 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2.5 rounded-xl bg-[#1E1229] px-4 py-3 text-[13px] font-medium text-white shadow-2xl dark:bg-white dark:text-[#17111F]"
+        >
+          {notification.error ? (
+            <AlertCircle className="h-4 w-4 shrink-0 text-[#FF8A80] dark:text-[#B42318]" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 shrink-0 text-[#62D18F] dark:text-[#1C7A45]" />
+          )}
+          {notification.text}
         </div>
       )}
     </div>

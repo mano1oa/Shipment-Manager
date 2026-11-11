@@ -506,7 +506,7 @@ EXISTS`) ; aucune migration manuelle n'est nécessaire.
 | `GET` / `POST /api/reference/carriers`, `/api/reference/suppliers` | lecture : connecté ; création : SC (transporteurs), SC et Sourcing (fournisseurs) |
 | `GET /api/shipments/:id/tracking`, `POST /api/shipments/:id/tracking-numbers`, `PATCH` / `DELETE /api/tracking-numbers/:id`, `POST /api/tracking-numbers/:id/events`, `POST /api/tracking/sync/:shipmentId` | SC, Sourcing |
 | `POST /api/tracking/sync-all` | SC |
-| `GET /api/cron/update-tracking`, `GET /api/cron/sync-digi-invoices` (factures Odoo + colis perdus) | Vercel Cron (`Authorization: Bearer CRON_SECRET`) |
+| `GET /api/cron/update-tracking`, `GET /api/cron/sync-digi-invoices` (factures Odoo + colis perdus), `GET /api/cron/weekly-summary` (point hebdo direction) | Vercel Cron (`Authorization: Bearer CRON_SECRET`) |
 | `GET /api/alerts/resolved`, `POST` / `DELETE /api/alerts/:alertId/resolve` | lecture : connecté ; action : SC, Sourcing |
 | `POST /api/google-chat-webhook` | SC, Sourcing |
 | `POST /api/chat`, `POST /api/analyze-shipments` | connecté (40 requêtes par heure) |
@@ -569,12 +569,20 @@ Premier compte administrateur (SUPPLY_CHAIN), une fois la base créée :
 ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-admin.ts
 ```
 
+Noms des fournisseurs des expéditions existantes (une seule fois, « Fournisseur A, Fournisseur B » au lieu de « 3 fournisseurs ») :
+
+```bash
+npx tsx scripts/backfill-shipment-suppliers.ts          # aperçu, n'écrit rien
+npx tsx scripts/backfill-shipment-suppliers.ts --apply  # enregistre
+```
+
 ### Déploiement
 
 - GitHub → Vercel. Les routes `/api/*` sont servies par `api/index.ts`.
 - Crons déclarés dans `vercel.json`, une fois par jour chacun (plan Hobby :
   l'heure exacte peut varier de ±59 minutes) : `/api/cron/sync-digi-invoices`
-  (5 h UTC) et `/api/cron/update-tracking` (7 h UTC).
+  (5 h UTC), `/api/cron/update-tracking` (7 h UTC) et, le lundi seulement,
+  `/api/cron/weekly-summary` (5 h 30 UTC : point hebdo direction sur Google Chat).
 
 ### Façon de travailler sur le code
 

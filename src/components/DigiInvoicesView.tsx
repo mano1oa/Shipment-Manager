@@ -8,7 +8,6 @@ import {
   FilePlus2,
   Loader2,
   Pencil,
-  ReceiptText,
   RefreshCw,
   Search,
   Trash2,
@@ -19,6 +18,7 @@ import {
   Package,
   ShieldCheck,
   ShieldX,
+  Download,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -43,6 +43,8 @@ import {
   fetchTrackingSettings,
 } from './digiApi';
 import { Shipment, shipmentLabel } from '../types';
+import { downloadCsv } from '../lib/exportCsv';
+import { HelpTip } from './HelpTip';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
 import { ParcelFormModal } from './ParcelFormModal';
@@ -745,15 +747,18 @@ export const DigiInvoicesView: React.FC<Props> = ({
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900 dark:text-white">
-            <ReceiptText className="h-6 w-6 text-[#623387]" /> Factures fournisseurs
+          <h1 className="flex items-center gap-2 text-[30px] font-semibold leading-tight tracking-tight text-[#17111F] dark:text-white">
+            Factures fournisseurs
+            <HelpTip label="Comment ça marche ?">
+              Factures DIGI LOGISTIC à destination de <strong>{destination}</strong> (Odoo, import Excel, saisie) et
+              factures hors DIGI. Triez chaque facture DIGI : <strong>marchandises</strong> (ses colis sont suivis
+              jusqu'à Orly) ou <strong>services</strong> (pas de colis). Ajoutez ensuite les colis (n° de suivi) : une
+              facture est reçue à Orly quand tous ses colis sont confirmés par Antoine. Les factures hors DIGI saisies
+              par le Sourcing sont validées par la Supply Chain.
+            </HelpTip>
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Factures DIGI LOGISTIC à destination de <strong>{destination}</strong> (Odoo, import Excel, saisie) et
-            factures hors DIGI. Triez chaque facture DIGI : <strong>marchandises</strong> (ses colis sont suivis jusqu'à
-            Orly) ou <strong>services</strong> (pas de colis). Ajoutez ensuite les colis (n° de suivi) : une facture est
-            reçue à Orly quand tous ses colis sont confirmés par Antoine. Les factures hors DIGI saisies par le Sourcing
-            sont validées par la Supply Chain.
+          <p className="mt-1 text-sm text-[#5E5869] dark:text-slate-400">
+            Factures à destination de <strong>{destination}</strong> : triez-les, puis ajoutez leurs colis.
           </p>
           {config?.odoo_configured && (
             <p className="mt-0.5 text-[11px] text-slate-400">
@@ -797,6 +802,33 @@ export const DigiInvoicesView: React.FC<Props> = ({
             className={`${button} border border-[#623387] bg-white text-[#623387] hover:bg-[#F8EEFF] dark:bg-slate-800 dark:text-[#B688FF]`}
           >
             <FileText className="h-4 w-4" /> Facture hors DIGI
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              downloadCsv(
+                'factures-fournisseurs',
+                ['Facture', 'Fournisseur', 'Date', 'Commande Amazon', 'Montant', 'Devise', 'Origine', 'Tri', 'Colis reçus', 'Colis', 'Expédition'],
+                filtered.map((inv) => [
+                  inv.ref,
+                  inv.supplier_display,
+                  formatDate(inv.invoice_date),
+                  inv.amazon_order_ref,
+                  inv.amount_total,
+                  inv.currency,
+                  inv.is_digi ? (inv.source === 'odoo' ? 'Odoo DIGI' : 'DIGI (import / saisie)') : 'Hors DIGI',
+                  inv.triage === 'goods' ? 'Marchandises' : inv.triage === 'services' ? 'Services' : 'À trier',
+                  inv.parcel_received_count,
+                  inv.parcel_count,
+                  inv.shipment_id ? shipmentLabel(shipments.find((s) => s.id === inv.shipment_id), inv.shipment_id) : '',
+                ])
+              )
+            }
+            disabled={filtered.length === 0}
+            title="Toutes les factures du filtre en cours, en fichier Excel"
+            className={`${button} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
+          >
+            <Download className="h-4 w-4" /> Exporter ({filtered.length})
           </button>
         </div>
       </div>

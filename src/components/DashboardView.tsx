@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ui } from '../lib/ui';
-import { Shipment, ShipmentAlert, MetricSummary } from '../types';
+import { Shipment, ShipmentAlert, MetricSummary, shipmentLabel } from '../types';
 import { formatDate } from '../lib/dateFormat';
 import type { ParcelsOverview } from './digiApi';
 import { journeyStage } from './InTransitParcelsList';
@@ -307,40 +307,44 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       <section className="space-y-3">
         <h2 className={ui.sectionTitle}>À traiter aujourd’hui</h2>
         {todo.length === 0 ? (
-          <div className={`${ui.card} flex items-center gap-3 p-4 text-sm ${ui.muted}`}>
-            <CheckCircle2 className="h-5 w-5 text-[#2E9E5B]" /> Rien d’urgent : aucune alerte critique, aucun colis bloqué au hub.
+          <div className={`${ui.card} flex items-center gap-2.5 px-3 py-2.5 text-[13px] ${ui.muted}`}>
+            <CheckCircle2 className="h-4 w-4 text-[#2E9E5B]" /> Rien d’urgent : aucune alerte critique, aucun colis bloqué au hub.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
             {todo.map((t) => {
               const Icon = t.icon;
               const tone = toneClasses[t.tone];
+              // Alert titles may start with an emoji (🚨): not shown here
+              const detail = t.detail.replace(/^[\p{Extended_Pictographic}️\s]+/u, '');
               return (
-                <div key={t.key} className={`flex flex-col gap-3 rounded-2xl border p-4 ${tone.box}`}>
+                <div key={t.key} className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${tone.box}`}>
                   <button
                     type="button"
                     disabled={!t.onClick}
                     onClick={t.onClick}
-                    className="flex items-center gap-3.5 text-left disabled:cursor-default"
+                    title={detail}
+                    className="flex min-w-0 flex-1 items-center gap-2.5 text-left disabled:cursor-default"
                   >
-                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>
-                      <Icon className="h-[18px] w-[18px]" />
+                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${tone.icon}`}>
+                      <Icon className="h-3.5 w-3.5" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className={`block text-[15px] font-semibold ${ui.title}`}>{t.title}</span>
-                      <span className={`line-clamp-2 block text-[13px] ${ui.muted}`}>{t.detail}</span>
+                      <span className={`block truncate text-[13px] font-semibold ${ui.title}`}>{t.title}</span>
+                      <span className={`block truncate text-xs ${ui.muted}`}>{detail}</span>
                     </span>
-                    {t.onClick && <ChevronRight className={`h-4 w-4 shrink-0 ${tone.chevron}`} />}
                   </button>
                   {t.action && (
                     <button
                       type="button"
                       onClick={t.action.onClick}
-                      className="inline-flex items-center gap-1.5 self-start rounded-lg bg-[#B42318] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#931c13]"
+                      title={t.action.label}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[#B42318] px-2 py-1 text-[11px] font-semibold text-white hover:bg-[#931c13]"
                     >
-                      <Send className="h-3.5 w-3.5" /> {t.action.label}
+                      <Send className="h-3 w-3" /> Relance
                     </button>
                   )}
+                  {t.onClick && <ChevronRight className={`h-4 w-4 shrink-0 ${tone.chevron}`} aria-hidden="true" />}
                 </div>
               );
             })}
@@ -547,14 +551,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               }}
                               className={`font-semibold hover:underline ${ui.title}`}
                             >
-                              {shp.order_reference}
+                              {shp.order_reference?.trim() || shipmentLabel(shp)}
                             </button>
                             {shp.tracking_no && <div className={`text-[11px] ${ui.muted}`}>{shp.tracking_no}</div>}
                           </div>
                         </div>
                       </td>
-                      <td className={`px-3 py-3.5 ${ui.text}`}>{shp.supplier}</td>
-                      <td className={`px-3 py-3.5 ${ui.muted}`}>{shp.carrier}</td>
+                      <td className={`px-3 py-3.5 ${ui.text}`}>{!shp.supplier || /^0 fournisseurs?$/.test(shp.supplier) ? '—' : shp.supplier}</td>
+                      <td className={`px-3 py-3.5 ${ui.muted}`}>{shp.carrier || '—'}</td>
                       <td className="px-3 py-3.5">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill(shp.global_status)}`}>
                           {shp.global_status}

@@ -12,6 +12,7 @@ import { listParcelsForShipment, receptionDates } from '../db/parcels.js';
 import { shipmentChatMessage } from '../lib/shipmentChatMessage.js';
 import { ContainerType, INTERNAL_REF_PATTERN, Shipment, TrackingHistoryStep, shipmentLabel } from '../types.js';
 import { sendChatMessage } from './googleChat.js';
+import { shipmentSupplierLabel } from '../lib/shipmentSuppliers.js';
 
 /**
  * Shipment Orly → Mada (or Rouen → Mada) = one sale invoice (Réf FA
@@ -125,9 +126,8 @@ async function attachInvoices(shipmentId: string, invoices: DigiInvoiceRecord[])
 /** Supplier label and invoice refs of the shipment, from its invoices. */
 async function summarize(shipmentId: string): Promise<{ supplier: string; invoice_no: string }> {
   const invoices = await listDigiInvoicesForShipment(shipmentId);
-  const suppliers = Array.from(new Set(invoices.map((i) => i.supplier_display || '—')));
   return {
-    supplier: suppliers.length === 1 ? suppliers[0] : `${suppliers.length} fournisseurs`,
+    supplier: shipmentSupplierLabel(invoices.map((i) => i.supplier_display)),
     invoice_no: invoices.map(label).join(', ').slice(0, 100),
   };
 }

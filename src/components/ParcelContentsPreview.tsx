@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertCircle, Loader2 } from 'lucide-react';
 import { Parcel, ParcelContentsInvoice, fetchParcelContents, formatAmount, formatDate, formatQuantity } from './digiApi';
 import { PARCEL_NUMBER_KIND_LABELS } from '../lib/parcelBoxes';
+import { ParcelHistory } from './ParcelHistory';
 
 /** Contents already loaded, per parcel (rows opened again stay instant). */
 const cache = new Map<string, ParcelContentsInvoice[]>();
@@ -146,6 +147,7 @@ export const ParcelContentsPreview: React.FC<{ parcel: Parcel }> = ({ parcel }) 
           Ce colis couvre plusieurs factures : le contenu affiché est celui des factures, pas forcément tout dans ce colis.
         </p>
       )}
+      <ParcelHistory parcelId={parcel.id} />
     </div>
   );
 };

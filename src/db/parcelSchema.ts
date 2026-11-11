@@ -79,6 +79,22 @@ export async function initParcelSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_parcel_invoices_invoice ON parcel_invoices (invoice_id);`;
 
+  // Amazon report numbers whose order has no invoice yet: kept until the
+  // invoice arrives, then the parcel is made automatically
+  await sql`
+    CREATE TABLE IF NOT EXISTS amazon_pending_parcels (
+      tracking_number VARCHAR(100) PRIMARY KEY,
+      destination VARCHAR(10) NOT NULL,
+      carrier VARCHAR(30) NOT NULL DEFAULT 'UNKNOWN',
+      carrier_text VARCHAR(100),
+      expected_delivery DATE,
+      sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_by_email VARCHAR(255),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+
   await sql`
     CREATE TABLE IF NOT EXISTS parcel_photos (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

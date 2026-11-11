@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Clock,
   Camera,
   CheckCircle2,
   ChevronDown,
@@ -15,24 +16,34 @@ import {
   SearchX,
   Undo2,
   X,
+  Download,
+  Package,
 } from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { BoxesBadge } from './BoxesBadge';
+import { AmazonPendingTable, useAmazonPending } from './AmazonPendingBanner';
 import { MergeParcelModal } from './MergeParcelModal';
 import { findMergeSuspects } from '../lib/parcelBoxes';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
-import { ReceptionPointView } from './ReceptionPointView';
+const ReceptionPointView = React.lazy(() => import('./ReceptionPointView').then((m) => ({ default: m.ReceptionPointView })));
 import { useParcelStatusActions } from './useParcelStatusActions';
 import { Shipment, shipmentLabel } from '../types';
 import DateInput from './DateInput';
+import { Pagination, usePagination } from './Pagination';
+import { SavedFilters } from './SavedFilters';
+import { HelpTip } from './HelpTip';
+import { EmptyState, SkeletonRows } from './EmptyState';
+import { downloadCsv } from '../lib/exportCsv';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
+/** Filters kept by « Mes filtres ». */
+type ParcelFilters = { status: StatusFilter; supplier: string; search: string; receivedOn: string };
 
 interface Props {
   destination: ParcelDestination;
@@ -78,6 +89,46 @@ export const AmazonOrdersCell: React.FC<{ parcel: Parcel }> = ({ parcel }) => {
   );
 };
 
+/** Chip of the « À traiter » row: the count stands out in a filled circle. */
+const AlertChip: React.FC<{
+  tone: 'amber' | 'sky';
+  count: number;
+  label: string;
+  open: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  title?: string;
+}> = ({ tone, count, label, open, onClick, icon, title }) => {
+  const tones = {
+    amber: {
+      chip: 'border-amber-300 bg-white text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200',
+      on: 'ring-2 ring-amber-400',
+      count: 'bg-amber-500 text-white',
+    },
+    sky: {
+      chip: 'border-sky-300 bg-white text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900 dark:text-sky-200',
+      on: 'ring-2 ring-sky-400',
+      count: 'bg-sky-600 text-white',
+    },
+  }[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-expanded={open}
+      className={`flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 font-semibold transition ${tones.chip} ${open ? tones.on : ''}`}
+    >
+      <span className={`flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 text-[11px] font-bold tabular-nums ${tones.count}`}>
+        {count}
+      </span>
+      {icon}
+      {label}
+      {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+    </button>
+  );
+};
+
 export const parcelMatches = (p: Parcel, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -118,7 +169,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [supplierFilter, setSupplierFilter] = useState('all');
-  const [showWithout, setShowWithout] = useState(false);
+  /** Alert of the « À traiter » row whose detail is shown. */
+  const [openAlert, setOpenAlert] = useState<'suspects' | 'without' | 'pending' | null>(null);
+  const toggleAlert = (key: 'suspects' | 'without' | 'pending') => setOpenAlert((cur) => (cur === key ? null : key));
+  const amazonPending = useAmazonPending(destination, parcels);
   const today = new Date().toISOString().slice(0, 10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [receptionDate, setReceptionDate] = useState(today);
@@ -129,7 +183,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [openId, setOpenId] = useState<string | null>(null);
   /** "Fusionner dans le colis principal…": the parcel to merge, and the main parcel proposed. */
   const [mergeOf, setMergeOf] = useState<{ parcel: Parcel; principalId: string | null } | null>(null);
-  const [showSuspects, setShowSuspects] = useState(false);
   /** Received: only the parcels received on this date ('' = every date). */
   const [receivedOn, setReceivedOn] = useState('');
   /** Date groups opened or closed by hand (by default only the latest one is open). */
@@ -187,17 +240,21 @@ export const ParcelsBoardView: React.FC<Props> = ({
     [own, statusFilter, supplierFilter, search, globalSearch, settings, receivedOn]
   );
 
+  // Pages of 100 / 200 rows, or everything (remembered per hub)
+  const pager = usePagination(filtered, `parcels-${destination}`, `${statusFilter}|${supplierFilter}|${search}|${globalSearch}|${receivedOn}`);
+  const shown = pager.pageItems;
+
   // Received at the hub: one group per reception date, to ship them together
   const rowGroups = useMemo(() => {
-    if (statusFilter !== 'received') return [{ date: null as string | null, grouped: false, parcels: filtered }];
+    if (statusFilter !== 'received') return [{ date: null as string | null, grouped: false, parcels: shown }];
     const groups: { date: string | null; grouped: boolean; parcels: Parcel[] }[] = [];
-    for (const p of filtered) {
+    for (const p of shown) {
       const last = groups[groups.length - 1];
       if (last && last.date === (p.received_at ?? null)) last.parcels.push(p);
       else groups.push({ date: p.received_at ?? null, grouped: true, parcels: [p] });
     }
     return groups;
-  }, [filtered, statusFilter]);
+  }, [shown, statusFilter]);
 
   // Late parcels are turned "lost" by the server when the list is loaded
   const tiles: { key: StatusFilter; label: string; value: number; dot: string }[] = [
@@ -208,9 +265,28 @@ export const ParcelsBoardView: React.FC<Props> = ({
     { key: 'all', label: 'Tous les colis', value: own.length, dot: 'bg-[#623387]' },
   ];
 
+  /** « Exporter »: every parcel of the current filter, all pages. */
+  const exportParcels = () =>
+    downloadCsv(
+      `colis-${hub.toLowerCase()}`,
+      ['N° de suivi', 'Transporteur', 'Fournisseur', 'Factures', 'Commande Amazon', 'Statut', 'Livraison prévue', 'Reçu le', 'Reçu par', 'Expédition(s)'],
+      filtered.map((p) => [
+        p.tracking_number,
+        p.carrier_name || (p.carrier !== 'UNKNOWN' ? p.carrier : ''),
+        p.supplier_name,
+        p.invoices.map((i) => i.ref || '—').join(', '),
+        p.invoices.map((i) => i.amazon_order_ref).filter(Boolean).join(', '),
+        parcelStatusLabel(p.status, destination),
+        formatDate(p.expected_delivery),
+        formatDate(p.received_at),
+        p.received_by_email,
+        p.shipment_ids.map((id) => shipmentLabel(shipmentById.get(id), id)).join(', '),
+      ])
+    );
+
   const selectedParcels = filtered.filter((p) => selected.has(p.id));
   const toConfirm = selectedParcels.filter((p) => p.status === 'to_receive' || p.status === 'lost');
-  const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
+  const allSelected = shown.length > 0 && shown.every((p) => selected.has(p.id));
   const toShip = invoicesToShip(selectedParcels.filter((p) => p.status === 'received'));
   const toggleMany = (list: Parcel[], on: boolean) =>
     setSelected((prev) => {
@@ -235,16 +311,18 @@ export const ParcelsBoardView: React.FC<Props> = ({
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <p className="text-xs text-slate-500 dark:text-slate-400">
+        <p className="flex items-center gap-1 text-[13px] text-[#5E5869] dark:text-slate-400">
           Colis livrés par les fournisseurs {destination === 'ORLY' ? 'chez Antoine à Orly' : 'au quai de Rouen'}, avant
-          leur expédition vers Madagascar. Ils se créent depuis Factures fournisseurs (« + Colis »). Un colis non confirmé
-          à temps passe automatiquement « Perdu avant {hub} » (livraison prévue +{' '}
-          {settings?.parcel_loss_days_after_eta ?? 7} j, sinon date de facture +{' '}
-          {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
-          {isSupplyChain &&
-            (destination === 'ORLY'
-              ? ' Au point avec Antoine : « Point Antoine » pour déposer toutes ses photos puis les rattacher (la réception est confirmée) ; les colis confirmés sans photo se cochent ici.'
-              : ' Cochez les colis reçus au quai et confirmez leur réception.')}
+          leur départ vers Madagascar.
+          <HelpTip label="Comment ça marche ?">
+            Les colis se créent depuis Factures fournisseurs (« + Colis »). Un colis non confirmé à temps passe
+            automatiquement « Perdu avant {hub} » (livraison prévue + {settings?.parcel_loss_days_after_eta ?? 7} j,
+            sinon date de facture + {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
+            {isSupplyChain &&
+              (destination === 'ORLY'
+                ? ' Au point avec Antoine : « Point Antoine » pour déposer toutes ses photos puis les rattacher (la réception est confirmée) ; les colis confirmés sans photo se cochent ici.'
+                : ' Cochez les colis reçus au quai et confirmez leur réception.')}
+          </HelpTip>
         </p>
         {isSupplyChain && (
           <div className="flex shrink-0 flex-wrap gap-2">
@@ -293,74 +371,134 @@ export const ParcelsBoardView: React.FC<Props> = ({
         })}
       </div>
 
-      {suspects.length > 0 && (
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
-          <button onClick={() => setShowSuspects((v) => !v)} className="flex w-full items-center gap-2 text-left font-bold">
-            <Combine className="h-4 w-4 shrink-0" />
-            Colis à fusionner ? {suspects.length} facture(s) ont un colis perdu et des colis créés au point (même fournisseur,
-            même transporteur) : ce sont peut-être les boîtes d'un même envoi.
-            {showSuspects ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
-          </button>
-          {showSuspects && (
-            <ul className="mt-2 space-y-2">
-              {suspects.map((s) => (
-                <li key={`${s.invoice_id}-${s.principal.id}`} className="rounded-xl bg-white/70 p-2 dark:bg-slate-900/40">
-                  <div>
-                    Facture <strong>{s.invoice_ref || '—'}</strong> · {s.principal.supplier_name || '—'} · perdu :{' '}
-                    <span className="font-mono font-bold">{s.principal.tracking_number || 'sans n°'}</span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {s.boxes.map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => setMergeOf({ parcel: b, principalId: s.principal.id })}
-                        className="flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-2 py-1 font-semibold hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900"
-                      >
-                        <Combine className="h-3.5 w-3.5" /> Fusionner{' '}
-                        <span className="font-mono">{b.tracking_number || 'sans n°'}</span>
-                        {b.received_at ? ` (reçu le ${formatDate(b.received_at)})` : ''}
-                      </button>
-                    ))}
-                  </div>
-                </li>
-              ))}
-            </ul>
+      {/* « À traiter »: one compact row, a colored chip per alert, its detail under the row */}
+      {(suspects.length > 0 ||
+        counts.no_invoice > 0 ||
+        invoicesWithoutParcel.length > 0 ||
+        amazonPending.pending.length > 0) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs dark:border-amber-900/60 dark:bg-amber-950/20">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="h-4 w-4" /> À traiter
+            </span>
+            {suspects.length > 0 && (
+              <AlertChip
+                tone="sky"
+                count={suspects.length}
+                label="colis à fusionner ?"
+                icon={<Combine className="h-3.5 w-3.5" />}
+                open={openAlert === 'suspects'}
+                onClick={() => toggleAlert('suspects')}
+              />
+            )}
+            {counts.no_invoice > 0 && (
+              <AlertChip
+                tone="amber"
+                count={counts.no_invoice}
+                label="colis reçu(s) sans facture"
+                title={
+                  statusFilter === 'no_invoice'
+                    ? 'Revenir aux colis à recevoir'
+                    : 'Afficher ces colis dans la liste'
+                }
+                open={statusFilter === 'no_invoice'}
+                onClick={() => setStatusFilter(statusFilter === 'no_invoice' ? 'open' : 'no_invoice')}
+              />
+            )}
+            {invoicesWithoutParcel.length > 0 && (
+              <AlertChip
+                tone="amber"
+                count={invoicesWithoutParcel.length}
+                label="facture(s) sans colis"
+                open={openAlert === 'without'}
+                onClick={() => toggleAlert('without')}
+              />
+            )}
+            {amazonPending.pending.length > 0 && (
+              <AlertChip
+                tone="sky"
+                count={amazonPending.pending.length}
+                label="en attente de facture (Amazon)"
+                icon={<Clock className="h-3.5 w-3.5" />}
+                open={openAlert === 'pending'}
+                onClick={() => toggleAlert('pending')}
+              />
+            )}
+          </div>
+
+          {openAlert === 'suspects' && suspects.length > 0 && (
+            <div className="mt-2 text-sky-900 dark:text-sky-200">
+              <p className="mb-2">
+                Ces factures ont un colis perdu et des colis créés au point (même fournisseur, même transporteur) : ce sont
+                peut-être les boîtes d'un même envoi.
+              </p>
+              <ul className="space-y-2">
+                {suspects.map((s) => (
+                  <li key={`${s.invoice_id}-${s.principal.id}`} className="rounded-xl bg-white/70 p-2 dark:bg-slate-900/40">
+                    <div>
+                      Facture <strong>{s.invoice_ref || '—'}</strong> · {s.principal.supplier_name || '—'} · perdu :{' '}
+                      <span className="font-mono font-bold">{s.principal.tracking_number || 'sans n°'}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {s.boxes.map((b) => (
+                        <button
+                          key={b.id}
+                          onClick={() => setMergeOf({ parcel: b, principalId: s.principal.id })}
+                          className="flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-2 py-1 font-semibold hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900"
+                        >
+                          <Combine className="h-3.5 w-3.5" /> Fusionner{' '}
+                          <span className="font-mono">{b.tracking_number || 'sans n°'}</span>
+                          {b.received_at ? ` (reçu le ${formatDate(b.received_at)})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {openAlert === 'without' && invoicesWithoutParcel.length > 0 && (
+            <div className="mt-2 text-amber-900 dark:text-amber-200">
+              <p className="mb-2">
+                Factures en marchandises sans colis : n° de suivi à saisir dans Factures fournisseurs (destination encore
+                inconnue).
+              </p>
+              <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                {invoicesWithoutParcel.map((i) => (
+                  <li key={i.id}>
+                    <strong>{i.supplier_display || '—'}</strong> · {i.ref || '—'} · {formatDate(i.invoice_date)}
+                    {!i.is_digi && ' · hors DIGI'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {openAlert === 'pending' && amazonPending.pending.length > 0 && (
+            <div className="mt-2 text-sky-900 dark:text-sky-200">
+              <p className="mb-2">
+                N° de suivi du rapport Amazon dont la commande n'a pas encore de facture : le colis sera créé automatiquement
+                dès que la facture sera saisie, importée ou synchronisée depuis Odoo.
+              </p>
+              <AmazonPendingTable data={amazonPending} canEdit={isSupplyChain} />
+            </div>
           )}
         </div>
       )}
 
-      {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
-        <button
-          onClick={() => setStatusFilter('no_invoice')}
-          className="flex w-full items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left text-xs font-bold text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {counts.no_invoice} colis reçu(s) sans facture : la facture leur sera rattachée quand elle sera saisie avec
-          leur n° (« + Colis ») ou par « Importer Excel » › Expéditions (rapport Amazon). Voir la liste
-          <ChevronRight className="ml-auto h-4 w-4" />
-        </button>
-      )}
-
-      {invoicesWithoutParcel.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-          <button onClick={() => setShowWithout((v) => !v)} className="flex w-full items-center gap-2 font-bold">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            {invoicesWithoutParcel.length} facture(s) en marchandises sans colis : n° de suivi à saisir dans Factures
-            fournisseurs (destination encore inconnue).
-            {showWithout ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
-          </button>
-          {showWithout && (
-            <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
-              {invoicesWithoutParcel.map((i) => (
-                <li key={i.id}>
-                  <strong>{i.supplier_display || '—'}</strong> · {i.ref || '—'} · {formatDate(i.invoice_date)}
-                  {!i.is_digi && ' · hors DIGI'}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
+      <SavedFilters<ParcelFilters>
+        storageKey={`parcels-${destination}`}
+        current={{ status: statusFilter, supplier: supplierFilter, search, receivedOn }}
+        isDefault={statusFilter === 'open' && supplierFilter === 'all' && !search.trim() && !receivedOn}
+        equals={(a, b) => a.status === b.status && a.supplier === b.supplier && a.search === b.search && a.receivedOn === b.receivedOn}
+        onApply={(f) => {
+          setStatusFilter(f.status);
+          setSupplierFilter(f.supplier);
+          setSearch(f.search);
+          setReceivedOn(f.receivedOn);
+        }}
+      />
 
       <div className="flex flex-col gap-3 rounded-2xl border border-[#E7E4EC] bg-white p-4 lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
@@ -415,6 +553,15 @@ export const ParcelsBoardView: React.FC<Props> = ({
           className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualiser
+        </button>
+        <button
+          type="button"
+          onClick={exportParcels}
+          disabled={filtered.length === 0}
+          title="Tous les colis du filtre en cours (toutes les pages), en fichier Excel"
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
+        >
+          <Download className="h-3.5 w-3.5" /> Exporter ({filtered.length})
         </button>
       </div>
 
@@ -475,6 +622,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
         </div>
       )}
 
+      <Pagination
+        page={pager.page}
+        pageCount={pager.pageCount}
+        size={pager.size}
+        total={pager.total}
+        onPage={pager.setPage}
+        onSize={pager.setSize}
+        unit="colis"
+      />
+
       <div className="overflow-hidden rounded-2xl border border-[#E7E4EC] bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -486,7 +643,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       type="checkbox"
                       aria-label="Sélectionner les colis affichés"
                       checked={allSelected}
-                      onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map((p) => p.id)))}
+                      onChange={() => toggleMany(shown, !allSelected)}
                       className="h-4 w-4 cursor-pointer accent-emerald-600"
                     />
                   </th>
@@ -505,15 +662,40 @@ export const ParcelsBoardView: React.FC<Props> = ({
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {parcels === null || (loading && own.length === 0) ? (
-                <tr>
-                  <td colSpan={columns} className="px-4 py-10 text-center">
-                    <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" />
-                  </td>
-                </tr>
+                <SkeletonRows columns={columns} />
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={columns} className="px-4 py-10 text-center text-slate-500">
-                    {own.length === 0 ? `Aucun colis vers ${hub}.` : 'Aucun colis ne correspond à vos filtres.'}
+                  <td colSpan={columns}>
+                    {own.length === 0 ? (
+                      <EmptyState
+                        icon={Package}
+                        title={`Aucun colis vers ${hub} pour le moment`}
+                        detail="Les colis se créent depuis Factures fournisseurs, avec « + Colis »."
+                      />
+                    ) : search.trim() || globalSearch.trim() || supplierFilter !== 'all' || receivedOn ? (
+                      <EmptyState
+                        icon={Search}
+                        title="Aucun colis ne correspond à votre recherche"
+                        detail="Vérifiez le n° de suivi ou retirez un filtre."
+                        action={{
+                          label: 'Effacer les filtres',
+                          onClick: () => {
+                            setSearch('');
+                            setSupplierFilter('all');
+                            setReceivedOn('');
+                          },
+                        }}
+                      />
+                    ) : statusFilter === 'open' ? (
+                      <EmptyState icon={CheckCircle2} title="Aucun colis à recevoir" detail={`Tous les colis attendus à ${hub} sont arrivés.`} />
+                    ) : statusFilter === 'lost' || statusFilter === 'search' ? (
+                      <EmptyState
+                        icon={CheckCircle2}
+                        title={statusFilter === 'lost' ? `Aucun colis perdu avant ${hub}` : 'Aucun avis de recherche en cours'}
+                      />
+                    ) : (
+                      <EmptyState icon={Package} title="Aucun colis dans cette vue" />
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -788,6 +970,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
       )}
 
       {pointOpen && (
+        <React.Suspense fallback={null}>
         <ReceptionPointView
           destination={destination}
           parcels={parcels || []}
@@ -797,6 +980,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
           }}
           onChanged={onReload}
         />
+        </React.Suspense>
       )}
     </div>
   );

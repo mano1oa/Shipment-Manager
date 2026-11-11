@@ -24,6 +24,11 @@ export const CHAT_WEBHOOK_PURPOSES = [
     label: 'Relances manuelles',
     hint: 'Relances envoyées depuis le centre d’alertes et la fiche expédition.',
   },
+  {
+    id: 'weekly_summary',
+    label: 'Point hebdo direction',
+    hint: 'Résumé envoyé chaque lundi matin : colis en route, en retard, perdus, valeur en transit et blocages en douane.',
+  },
 ] as const;
 
 export type ChatWebhookPurpose = (typeof CHAT_WEBHOOK_PURPOSES)[number]['id'];
@@ -32,6 +37,14 @@ export const CHAT_WEBHOOK_PURPOSE_IDS = CHAT_WEBHOOK_PURPOSES.map((p) => p.id) a
 
 export const isChatWebhookPurpose = (value: unknown): value is ChatWebhookPurpose =>
   typeof value === 'string' && (CHAT_WEBHOOK_PURPOSE_IDS as string[]).includes(value);
+
+/**
+ * Types added after the webhooks screen: never sent to the old server variable
+ * GOOGLE_CHAT_WEBHOOK_URL, only to the webhooks created for them.
+ */
+const WITHOUT_ENV_FALLBACK: string[] = ['weekly_summary'];
+
+export const usesEnvFallback = (id: string) => !WITHOUT_ENV_FALLBACK.includes(id);
 
 export const chatWebhookPurposeLabel = (id: string) =>
   CHAT_WEBHOOK_PURPOSES.find((p) => p.id === id)?.label ?? id;
