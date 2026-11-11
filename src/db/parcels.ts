@@ -6,6 +6,7 @@ import type { DeliveryType, ParcelDestination, ParcelInput, ParcelStatus, Tracki
 import { normalizeParcelNumber } from '../lib/parcelBoxes.js';
 import type { ParcelBox, ParcelNumberKind } from '../lib/parcelBoxes.js';
 import { NUMBER_TAKEN_SQLSTATE, backfillBoxesQueries } from './parcelSchema.js';
+import { writeAuditLog } from './audit.js';
 
 /**
  * Parcels (supplier → Orly): one per tracking number, linked to 1..n invoices
@@ -878,8 +879,18 @@ export async function markOverdueParcelsLost(settings: TrackingSettings): Promis
           WHERE pi.parcel_id = p.id
         ) + ${settings.parcel_loss_days_without_eta}::int
       )
-    RETURNING id
+    RETURNING id, tracking_number
   `;
+  // One entry per parcel: shown in its history (the global count stays logged by the caller)
+  for (const row of rows) {
+    await writeAuditLog({
+      entityType: 'PARCEL',
+      entityId: row.id as string,
+      action: 'AUTO_MARK_PARCEL_LOST',
+      actor: { id: 'system', email: 'alerte-automatique', role: 'SYSTEM' },
+      details: { from: 'to_receive', to: 'lost', tracking_number: row.tracking_number ?? null },
+    });
+  }
   return rows.length;
 }
 
