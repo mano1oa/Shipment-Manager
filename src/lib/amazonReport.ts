@@ -61,7 +61,7 @@ export const AMAZON_OUTCOME_LABELS: Record<AmazonImportOutcome, string> = {
   completed: 'N° ajouté au colis annoncé',
   linked: 'Facture ajoutée au colis existant',
   already: 'Déjà rattaché',
-  unknown_order: 'Commande sans facture',
+  unknown_order: 'En attente de facture',
   services: 'Facture en services',
   locked: 'Expédition confirmée',
   invalid_tracking: 'N° de suivi invalide',

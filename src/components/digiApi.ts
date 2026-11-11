@@ -550,6 +550,23 @@ export interface AmazonImportResult {
   lines: AmazonImportLine[];
 }
 
+/** Number of the Amazon report kept until its order has an invoice. */
+export interface AmazonPendingParcel {
+  tracking_number: string;
+  destination: ParcelDestination;
+  carrier_text: string | null;
+  expected_delivery: string | null;
+  sources: { order_ref: string; line: number }[];
+  created_at: string;
+  created_by_email: string | null;
+}
+
+export const fetchAmazonPending = (destination: ParcelDestination) =>
+  apiJson<{ pending: AmazonPendingParcel[] }>(`/api/parcels/amazon-pending?destination=${destination}`).then((d) => d.pending);
+
+export const deleteAmazonPending = (trackingNumber: string) =>
+  apiJson(`/api/parcels/amazon-pending/${encodeURIComponent(trackingNumber)}`, { method: 'DELETE' });
+
 /** Amazon shipment report: preview (apply = false), then creation of the parcels. */
 export const importAmazonReport = (destination: ParcelDestination, rows: AmazonReportRow[], apply: boolean) =>
   apiJson<AmazonImportResult>('/api/parcels/import-amazon', {

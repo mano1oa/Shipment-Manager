@@ -94,6 +94,7 @@ export const AmazonReportImportModal: React.FC<Props> = ({ destination, onClose,
 
   const shown = result ?? preview;
   const toDo = preview ? (preview.counts.created ?? 0) + (preview.counts.completed ?? 0) + (preview.counts.linked ?? 0) : 0;
+  const waiting = preview?.counts.unknown_order ?? 0;
   const selectClass =
     'w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100';
 
@@ -134,7 +135,8 @@ export const AmazonReportImportModal: React.FC<Props> = ({ destination, onClose,
           <p className="text-slate-600 dark:text-slate-300">
             Chaque n° de suivi du rapport devient un colis de sa facture : retrouvée par son <b>n° de facture Amazon</b> (Référence), sinon par sa <b>Commande Amazon</b>. Une
             commande livrée en plusieurs paquets donne plusieurs colis pour la même facture ; un colis annoncé sans n° de
-            suivi reçoit d'abord le n° du rapport ; un n° déjà en base est simplement rattaché. Un aperçu est affiché avant
+            suivi reçoit d'abord le n° du rapport ; un n° déjà en base est simplement rattaché. Une commande encore sans facture
+            est gardée en attente : son colis est créé automatiquement dès que la facture arrive. Un aperçu est affiché avant
             toute création.
           </p>
 
@@ -230,9 +232,9 @@ export const AmazonReportImportModal: React.FC<Props> = ({ destination, onClose,
               </div>
               {(shown.counts.unknown_order ?? 0) > 0 && (
                 <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                  « Commande sans facture » : aucune facture ne porte ce n° de commande Amazon. Renseignez la Commande Amazon
-                  de la facture (Factures fournisseurs) puis réimportez le rapport : les lignes déjà traitées seront «
-                  Déjà rattaché ».
+                  « En attente de facture » : aucune facture ne porte encore ce n° de commande Amazon. Le n° de suivi est
+                  {result ? ' gardé' : ' sera gardé'} : dès qu'une facture avec cette Commande Amazon est saisie, importée ou
+                  synchronisée depuis Odoo, son colis est créé automatiquement.
                 </p>
               )}
             </div>
@@ -250,10 +252,10 @@ export const AmazonReportImportModal: React.FC<Props> = ({ destination, onClose,
             (preview ? (
               <button
                 onClick={() => send(true)}
-                disabled={Boolean(busy) || toDo === 0}
+                disabled={Boolean(busy) || toDo + waiting === 0}
                 className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-40"
               >
-                Importer ({toDo} colis à créer / compléter / rattacher)
+                Importer ({toDo} colis à créer / compléter / rattacher{waiting > 0 ? `, ${waiting} en attente de facture` : ''})
               </button>
             ) : (
               <button
