@@ -8,11 +8,13 @@ import {
   ChevronLeft,
   ChevronRight,
   ImageOff,
+  LayoutGrid,
   Link2,
   Loader2,
   PackagePlus,
   Pencil,
   Plus,
+  RectangleHorizontal,
   ShieldCheck,
   Trash2,
   Unlink,
@@ -54,6 +56,7 @@ import { compressPhoto } from './photoCompression';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { BoxesBadge } from './BoxesBadge';
 import DateInput from './DateInput';
+import { ui } from '../lib/ui';
 
 interface Props {
   destination: ParcelDestination;
@@ -104,6 +107,8 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   const [current, setCurrent] = useState<{ point: ReceptionPoint; photos: PointPhoto[] } | null>(null);
   const [index, setIndex] = useState(0);
   const [onlyToMatch, setOnlyToMatch] = useState(true);
+  /** Gallery of every photo of the point (attached or not), instead of one at a time. */
+  const [gallery, setGallery] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -167,7 +172,11 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       const d = await fetchReceptionPoint(id);
       setCurrent({ point: d.point, photos: d.photos });
       setConfigured(d.storage_configured);
-      if (!keepIndex) setIndex(0);
+      if (!keepIndex) {
+        setIndex(0);
+        // Nothing left to attach: the gallery rather than an empty viewer
+        setGallery(d.photos.length > 0 && d.photos.every((p) => p.parcel_id));
+      }
     } catch (err: any) {
       setError(err.message);
     }
@@ -271,13 +280,46 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target?.tagName)) return;
+      if (gallery || ['INPUT', 'SELECT', 'TEXTAREA'].includes(target?.tagName)) return;
       if (e.key === 'ArrowRight') go(1);
       if (e.key === 'ArrowLeft') go(-1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [visible.length]);
+  }, [visible.length, gallery]);
+
+  // Last photo attached (or "to attach only" with nothing left): the gallery instead of an empty viewer
+  const allAttached = Boolean(current && current.photos.length > 0 && current.photos.every((p) => p.parcel_id));
+  useEffect(() => {
+    if (allAttached && onlyToMatch && !gallery) setGallery(true);
+  }, [allAttached, onlyToMatch, gallery]);
+
+  /** Opens a photo of the gallery in the single-photo view (with its attach form). */
+  const openInViewer = (target: PointPhoto) => {
+    if (!current) return;
+    // Keeps "to attach only" when the photo is still to attach
+    const keepFilter = onlyToMatch && !target.parcel_id;
+    const list = keepFilter ? current.photos.filter((p) => !p.parcel_id) : current.photos;
+    setOnlyToMatch(keepFilter);
+    setIndex(Math.max(list.findIndex((p) => p.id === target.id), 0));
+    setGallery(false);
+  };
+
+  const showSingle = () => {
+    // Nothing to attach: every photo, else the viewer would be empty
+    if (allAttached) setOnlyToMatch(false);
+    setIndex(0);
+    setGallery(false);
+  };
+
+  /** Badge of a photo in the gallery: number of its parcel, or "À rattacher". */
+  const photoBadge = (p: PointPhoto) => {
+    if (!p.parcel_id) return null;
+    const parcel = parcelById.get(p.parcel_id);
+    if (!parcel) return 'Rattachée';
+    const bl = parcel.numbers.find((n) => n.kind === 'supplier')?.number;
+    return parcel.tracking_number || (bl ? `BL ${bl}` : 'Colis sans n°');
+  };
 
   // ---- Matching by the number read on the label ----
   const typed = number.trim() ? normalize(number) : '';
@@ -713,27 +755,111 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
               >
                 <ShieldCheck className="h-3.5 w-3.5" /> Vérifier Google Drive
               </button>
-              <label className="ml-auto flex cursor-pointer items-center gap-1.5 font-semibold text-slate-600 dark:text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={onlyToMatch}
-                  onChange={(e) => {
-                    setOnlyToMatch(e.target.checked);
-                    setIndex(0);
-                  }}
-                  className="h-4 w-4 accent-[#623387]"
-                />
-                À rattacher seulement
-              </label>
+              <div className="ml-auto flex flex-wrap items-center gap-3">
+                {!gallery && (
+                  <label className="flex cursor-pointer items-center gap-1.5 font-semibold text-slate-600 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={onlyToMatch}
+                      onChange={(e) => {
+                        setOnlyToMatch(e.target.checked);
+                        setIndex(0);
+                      }}
+                      className="h-4 w-4 accent-[#623387]"
+                    />
+                    À rattacher seulement
+                  </label>
+                )}
+                <div className={ui.segmented} role="group" aria-label="Affichage des photos">
+                  <button
+                    onClick={() => setGallery(true)}
+                    aria-pressed={gallery}
+                    title="Toutes les photos du point, rattachées ou non"
+                    className={ui.segment(gallery)}
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" /> Galerie
+                  </button>
+                  <button
+                    onClick={showSingle}
+                    aria-pressed={!gallery}
+                    title="Une photo à la fois, avec le rattachement"
+                    className={ui.segment(!gallery)}
+                  >
+                    <RectangleHorizontal className="h-3.5 w-3.5" /> Une par une
+                  </button>
+                </div>
+              </div>
             </div>
 
+            {gallery ? (
+              /* ---- Gallery: every photo of the point ---- */
+              <div className="min-h-[18rem] flex-1 overflow-y-auto p-3">
+                {current.photos.length === 0 ? (
+                  <p className={`p-6 text-center ${ui.muted}`}>Déposez toutes les photos du point.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
+                    {current.photos.map((p, i) => {
+                      const badge = photoBadge(p);
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => openInViewer(p)}
+                          title={badge ? `Rattachée : ${badge} — ouvrir en grand` : 'À rattacher — ouvrir pour la rattacher'}
+                          className="group relative aspect-square overflow-hidden rounded-xl border border-[#E7E4EC] bg-[#F8F7FA] transition hover:border-[#623387] dark:border-slate-700 dark:bg-slate-800 dark:hover:border-purple-400"
+                        >
+                          {p.url && !brokenPhotos.has(p.id) ? (
+                            <img
+                              src={p.url}
+                              alt={`Photo ${i + 1} du point`}
+                              onError={() => markBroken(p.id)}
+                              className="h-full w-full object-cover transition group-hover:scale-[1.02]"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <span className={`flex h-full w-full flex-col items-center justify-center gap-1 ${ui.muted}`}>
+                              <ImageOff className="h-6 w-6" />
+                              <span className="text-[10px]">Photo introuvable</span>
+                            </span>
+                          )}
+                          <span className="absolute left-1.5 top-1.5 rounded-full bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                            {i + 1}
+                          </span>
+                          <span
+                            className={`absolute inset-x-1.5 bottom-1.5 flex items-center gap-1 truncate rounded-full px-2 py-0.5 text-[10px] font-bold shadow-sm ${
+                              badge
+                                ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                            }`}
+                          >
+                            {badge ? (
+                              <>
+                                <CheckCircle2 className="h-3 w-3 shrink-0" />
+                                <span className="truncate font-mono">{badge}</span>
+                              </>
+                            ) : (
+                              'À rattacher'
+                            )}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+            <>
             <div className="relative flex min-h-[18rem] flex-1 items-center justify-center bg-slate-900/95">
               {!photo ? (
-                <p className="p-6 text-center text-slate-300">
-                  {current.photos.length === 0
-                    ? 'Déposez toutes les photos du point.'
-                    : 'Toutes les photos sont rattachées. Décochez « À rattacher seulement » pour les revoir.'}
-                </p>
+                current.photos.length === 0 ? (
+                  <p className="p-6 text-center text-slate-300">Déposez toutes les photos du point.</p>
+                ) : (
+                  <div className="flex flex-col items-center gap-2 p-6 text-center text-slate-300">
+                    <span>Toutes les photos sont rattachées.</span>
+                    <button onClick={() => setGallery(true)} className="font-semibold text-white underline">
+                      Voir la galerie
+                    </button>
+                  </div>
+                )
               ) : photo.url && !brokenPhotos.has(photo.id) ? (
                 <ZoomableImage
                   key={photo.id}
@@ -803,11 +929,33 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                 ))}
               </div>
             )}
+            </>
+            )}
           </div>
 
           {/* Matching panel */}
           <div className="w-full shrink-0 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 lg:w-96 dark:border-slate-800 dark:bg-slate-900">
-            {!photo ? (
+            {gallery ? (
+              <div className="space-y-3">
+                <h3 className={ui.sectionTitle}>Galerie du point</h3>
+                <p className={ui.muted}>
+                  {linkedCount} / {current.photos.length} photo(s) rattachée(s). Cliquez sur une photo pour l'ouvrir en
+                  grand{linkedCount < current.photos.length ? ' ou la rattacher' : ''}.
+                </p>
+                {linkedCount < current.photos.length && (
+                  <button
+                    onClick={() => {
+                      setOnlyToMatch(true);
+                      setIndex(0);
+                      setGallery(false);
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2.5 font-bold text-white hover:bg-[#522870]"
+                  >
+                    <Link2 className="h-4 w-4" /> Rattacher les {current.photos.length - linkedCount} photo(s) restante(s)
+                  </button>
+                )}
+              </div>
+            ) : !photo ? (
               <p className="text-slate-500">Aucune photo sélectionnée.</p>
             ) : photo.parcel_id ? (
               <div className="space-y-3">

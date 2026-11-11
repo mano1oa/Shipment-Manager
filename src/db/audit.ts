@@ -33,6 +33,8 @@ function ensureAuditSchema(): Promise<void> {
           created_at TIMESTAMPTZ DEFAULT NOW()
         );
       `;
+      // History of one entity (timeline of a parcel)
+      await sql`CREATE INDEX IF NOT EXISTS idx_system_audit_logs_entity ON system_audit_logs (entity_type, entity_id);`;
     })().catch((err) => {
       auditSchemaPromise = null;
       throw err;
@@ -71,4 +73,23 @@ export async function writeAuditLog(params: {
   } catch (err: any) {
     console.error('[Audit] Failed to write audit log:', params.action, err?.message || err);
   }
+}
+
+export interface AuditLogEntry {
+  action: string;
+  details: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/** Latest audit rows of one entity (at most `limit`), oldest first. */
+export async function listAuditLogs(entityType: string, entityId: string, limit = 300): Promise<AuditLogEntry[]> {
+  await ensureAuditSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT action, details, created_at FROM system_audit_logs
+    WHERE entity_type = ${entityType} AND entity_id = ${String(entityId).slice(0, 50)}
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${limit}
+  `;
+  return (rows as unknown as AuditLogEntry[]).reverse();
 }

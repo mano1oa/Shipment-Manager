@@ -54,6 +54,7 @@ import {
 } from './db/suppliers.js';
 
 import { writeAuditLog } from './db/audit.js';
+import { getParcelHistory } from './db/parcelHistory.js';
 import { ANTOINE_STATUSES, CONTAINER_TYPES } from './types.js';
 
 import {
@@ -2461,6 +2462,19 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     } catch (err: any) {
       console.error('[Parcels] Contents error:', err);
       return res.status(500).json({ success: false, error: 'Impossible de charger le contenu du colis' });
+    }
+  });
+
+  /** History of a parcel (creation, receptions, photos, status changes…), loaded with its details. */
+  app.get('/api/parcels/:id/history', requireRole('SUPPLY_CHAIN', 'SOURCING', 'DIRECTION'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+    try {
+      const events = await getParcelHistory(req.params.id);
+      if (!events) return res.status(404).json({ success: false, error: 'Colis introuvable' });
+      return res.json({ success: true, events, photo_storage_configured: isPhotoStorageConfigured() });
+    } catch (err: any) {
+      console.error('[Parcels] History error:', err);
+      return res.status(500).json({ success: false, error: "Impossible de charger l'historique du colis" });
     }
   });
 

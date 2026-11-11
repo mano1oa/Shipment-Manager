@@ -2,6 +2,7 @@ import type { DigiInvoiceInput } from '../lib/digiInvoices';
 import type { DirectInvoiceInput } from '../lib/directInvoices';
 import type { CarrierCode } from '../lib/carrierDetection';
 import type { ParcelBox, ParcelNumberKind } from '../lib/parcelBoxes';
+import type { ParcelHistoryEvent } from '../lib/parcelHistory';
 import type { AmazonImportLine, AmazonImportOutcome, AmazonReportRow } from '../lib/amazonReport';
 import type {
   Currency,
@@ -571,3 +572,7 @@ export interface ParcelContentsInvoice {
 /** Invoices of a parcel with their lines (aperçu du contenu). */
 export const fetchParcelContents = (parcelId: string) =>
   apiJson<{ invoices: ParcelContentsInvoice[] }>(`/api/parcels/${parcelId}/contents`).then((d) => d.invoices);
+
+/** History of a parcel, oldest first (aperçu depuis les suivis). */
+export const fetchParcelHistory = (parcelId: string) =>
+  apiJson<{ events: ParcelHistoryEvent[]; photo_storage_configured: boolean }>(`/api/parcels/${parcelId}/history`);
