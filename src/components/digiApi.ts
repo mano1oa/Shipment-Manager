@@ -144,6 +144,19 @@ export const importDigiInvoices = (invoices: DigiInvoiceInput[], fileName: strin
     body: JSON.stringify({ invoices, file_name: fileName }),
   });
 
+export interface DigiImportPreview {
+  fresh: { supplier_name: string; ref: string }[];
+  duplicates: { supplier_name: string; ref: string }[];
+  rejected: { supplier_name: string | null; ref: string | null; errors: string[] }[];
+}
+
+/** What the import would do (nothing written). */
+export const previewDigiImport = (invoices: DigiInvoiceInput[]) =>
+  apiJson<DigiImportPreview>('/api/digi-invoices/import/preview', {
+    method: 'POST',
+    body: JSON.stringify({ invoices }),
+  });
+
 export const setInvoiceServices = (id: string, noShipment: boolean) =>
   apiJson<{ invoice: DigiInvoice; detached_shipment_id: string | null }>(`/api/digi-invoices/${id}/services`, {
     method: 'PATCH',

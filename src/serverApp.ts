@@ -63,6 +63,7 @@ import {
   updateDigiInvoice,
   deleteDigiInvoice,
   importDigiInvoices,
+  planDigiImport,
   getLastOdooSyncRun,
   getInvoiceTotalsByShipment,
   listDigiInvoicesForShipment,
@@ -1954,6 +1955,37 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       console.error('[DIGI] Create invoice error:', err);
       return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer la facture' });
+    }
+  });
+
+  // Dry run of the import: which invoices would be created, which are already known
+  app.post('/api/digi-invoices/import/preview', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
+    const items = req.body?.invoices;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, error: 'Aucune facture à vérifier.' });
+    }
+    if (items.length > DIGI_IMPORT_MAX_INVOICES) {
+      return res.status(400).json({ success: false, error: `${DIGI_IMPORT_MAX_INVOICES} factures maximum par import.` });
+    }
+    const valid = [];
+    const rejected: { supplier_name: string | null; ref: string | null; errors: string[] }[] = [];
+    for (const item of items) {
+      const { value, errors } = validateDigiInvoiceInput(item);
+      if (value) valid.push(value);
+      else
+        rejected.push({
+          supplier_name: typeof item?.supplier_name === 'string' ? item.supplier_name : null,
+          ref: typeof item?.ref === 'string' ? item.ref : null,
+          errors,
+        });
+    }
+    try {
+      const { fresh, duplicates } = await planDigiImport(valid);
+      const key = (i: { supplier_name: string; ref: string }) => ({ supplier_name: i.supplier_name, ref: i.ref });
+      return res.json({ success: true, fresh: fresh.map(key), duplicates: duplicates.map(key), rejected });
+    } catch (err: any) {
+      console.error('[DIGI] Import preview error:', err);
+      return res.status(500).json({ success: false, error: 'Vérification de l’import impossible' });
     }
   });
 
