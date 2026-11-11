@@ -15,12 +15,14 @@ import {
   SearchX,
   Undo2,
   X,
+  Download,
 } from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { BoxesBadge } from './BoxesBadge';
+import { AmazonPendingBanner } from './AmazonPendingBanner';
 import { MergeParcelModal } from './MergeParcelModal';
 import { findMergeSuspects } from '../lib/parcelBoxes';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
@@ -31,6 +33,8 @@ import { ReceptionPointView } from './ReceptionPointView';
 import { useParcelStatusActions } from './useParcelStatusActions';
 import { Shipment, shipmentLabel } from '../types';
 import DateInput from './DateInput';
+import { Pagination, usePagination } from './Pagination';
+import { downloadCsv } from '../lib/exportCsv';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
 
@@ -187,17 +191,21 @@ export const ParcelsBoardView: React.FC<Props> = ({
     [own, statusFilter, supplierFilter, search, globalSearch, settings, receivedOn]
   );
 
+  // Pages of 80 / 100 / 200 rows, or everything (remembered per hub)
+  const pager = usePagination(filtered, `parcels-${destination}`, `${statusFilter}|${supplierFilter}|${search}|${globalSearch}|${receivedOn}`);
+  const shown = pager.pageItems;
+
   // Received at the hub: one group per reception date, to ship them together
   const rowGroups = useMemo(() => {
-    if (statusFilter !== 'received') return [{ date: null as string | null, grouped: false, parcels: filtered }];
+    if (statusFilter !== 'received') return [{ date: null as string | null, grouped: false, parcels: shown }];
     const groups: { date: string | null; grouped: boolean; parcels: Parcel[] }[] = [];
-    for (const p of filtered) {
+    for (const p of shown) {
       const last = groups[groups.length - 1];
       if (last && last.date === (p.received_at ?? null)) last.parcels.push(p);
       else groups.push({ date: p.received_at ?? null, grouped: true, parcels: [p] });
     }
     return groups;
-  }, [filtered, statusFilter]);
+  }, [shown, statusFilter]);
 
   // Late parcels are turned "lost" by the server when the list is loaded
   const tiles: { key: StatusFilter; label: string; value: number; dot: string }[] = [
@@ -208,9 +216,28 @@ export const ParcelsBoardView: React.FC<Props> = ({
     { key: 'all', label: 'Tous les colis', value: own.length, dot: 'bg-[#623387]' },
   ];
 
+  /** « Exporter »: every parcel of the current filter, all pages. */
+  const exportParcels = () =>
+    downloadCsv(
+      `colis-${hub.toLowerCase()}`,
+      ['N° de suivi', 'Transporteur', 'Fournisseur', 'Factures', 'Commande Amazon', 'Statut', 'Livraison prévue', 'Reçu le', 'Reçu par', 'Expédition(s)'],
+      filtered.map((p) => [
+        p.tracking_number,
+        p.carrier_name || (p.carrier !== 'UNKNOWN' ? p.carrier : ''),
+        p.supplier_name,
+        p.invoices.map((i) => i.ref || '—').join(', '),
+        p.invoices.map((i) => i.amazon_order_ref).filter(Boolean).join(', '),
+        parcelStatusLabel(p.status, destination),
+        formatDate(p.expected_delivery),
+        formatDate(p.received_at),
+        p.received_by_email,
+        p.shipment_ids.map((id) => shipmentLabel(shipmentById.get(id), id)).join(', '),
+      ])
+    );
+
   const selectedParcels = filtered.filter((p) => selected.has(p.id));
   const toConfirm = selectedParcels.filter((p) => p.status === 'to_receive' || p.status === 'lost');
-  const allSelected = filtered.length > 0 && filtered.every((p) => selected.has(p.id));
+  const allSelected = shown.length > 0 && shown.every((p) => selected.has(p.id));
   const toShip = invoicesToShip(selectedParcels.filter((p) => p.status === 'received'));
   const toggleMany = (list: Parcel[], on: boolean) =>
     setSelected((prev) => {
@@ -362,6 +389,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
         </div>
       )}
 
+      <AmazonPendingBanner destination={destination} refreshKey={parcels} canEdit={isSupplyChain} />
+
       <div className="flex flex-col gap-3 rounded-2xl border border-[#E7E4EC] bg-white p-4 lg:flex-row lg:items-center dark:border-slate-800 dark:bg-slate-900">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -415,6 +444,15 @@ export const ParcelsBoardView: React.FC<Props> = ({
           className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualiser
+        </button>
+        <button
+          type="button"
+          onClick={exportParcels}
+          disabled={filtered.length === 0}
+          title="Tous les colis du filtre en cours (toutes les pages), en fichier Excel"
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300"
+        >
+          <Download className="h-3.5 w-3.5" /> Exporter ({filtered.length})
         </button>
       </div>
 
@@ -475,6 +513,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
         </div>
       )}
 
+      <Pagination
+        page={pager.page}
+        pageCount={pager.pageCount}
+        size={pager.size}
+        total={pager.total}
+        onPage={pager.setPage}
+        onSize={pager.setSize}
+        unit="colis"
+      />
+
       <div className="overflow-hidden rounded-2xl border border-[#E7E4EC] bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -486,7 +534,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       type="checkbox"
                       aria-label="Sélectionner les colis affichés"
                       checked={allSelected}
-                      onChange={() => setSelected(allSelected ? new Set() : new Set(filtered.map((p) => p.id)))}
+                      onChange={() => toggleMany(shown, !allSelected)}
                       className="h-4 w-4 cursor-pointer accent-emerald-600"
                     />
                   </th>
@@ -747,6 +795,16 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      <Pagination
+        page={pager.page}
+        pageCount={pager.pageCount}
+        size={pager.size}
+        total={pager.total}
+        onPage={pager.setPage}
+        onSize={pager.setSize}
+        unit="colis"
+      />
 
       {mergeOf && (
         <MergeParcelModal
