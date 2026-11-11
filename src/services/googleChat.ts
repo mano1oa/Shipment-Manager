@@ -1,12 +1,13 @@
 import { chatWebhooksFor } from '../db/chatWebhooks.js';
-import { chatWebhookPurposeLabel } from '../lib/chatWebhooks.js';
+import { chatWebhookPurposeLabel, usesEnvFallback } from '../lib/chatWebhooks.js';
 import type { ChatWebhookPurpose } from '../lib/chatWebhooks.js';
 
 /**
  * Posts a message on every active Google Chat webhook of a type (Paramètres ›
  * Webhooks Google Chat). Until a webhook of that type is created in the app,
  * the old server variable GOOGLE_CHAT_WEBHOOK_URL is used, so nothing stops
- * while the webhooks are being configured. A type whose webhooks are all
+ * while the webhooks are being configured (except the types added after that
+ * screen, e.g. the weekly summary). A type whose webhooks are all
  * deactivated sends nothing.
  */
 
@@ -36,7 +37,7 @@ export async function postToWebhook(url: string, text: string): Promise<string |
 export async function sendChatMessage(purpose: ChatWebhookPurpose, text: string): Promise<ChatSendResult> {
   const { active, any } = await chatWebhooksFor(purpose);
   const targets = active.map((w) => ({ name: w.name, url: w.url }));
-  if (!any && process.env.GOOGLE_CHAT_WEBHOOK_URL) {
+  if (!any && process.env.GOOGLE_CHAT_WEBHOOK_URL && usesEnvFallback(purpose)) {
     targets.push({ name: 'GOOGLE_CHAT_WEBHOOK_URL', url: process.env.GOOGLE_CHAT_WEBHOOK_URL });
   }
   if (targets.length === 0) {
