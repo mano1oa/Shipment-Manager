@@ -1,24 +1,24 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 
 import LoginView from './components/LoginView';
 import { Navbar } from './components/Navbar';
 import { Sidebar, NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { TransportTrackingView } from './components/TransportTrackingView';
-import { ShipmentDetailModal } from './components/ShipmentDetailModal';
-import { AlertsCenterView } from './components/AlertsCenterView';
-import { AnalyticsView } from './components/AnalyticsView';
+const ShipmentDetailModal = lazy(() => import('./components/ShipmentDetailModal').then((m) => ({ default: m.ShipmentDetailModal })));
+const AlertsCenterView = lazy(() => import('./components/AlertsCenterView').then((m) => ({ default: m.AlertsCenterView })));
+const AnalyticsView = lazy(() => import('./components/AnalyticsView').then((m) => ({ default: m.AnalyticsView })));
 import { AIAssistantBubble } from './components/AIAssistantBubble';
-import { SettingsView } from './components/SettingsView';
-import { DigiInvoicesView } from './components/DigiInvoicesView';
-import { ReceivedArticlesView } from './components/ReceivedArticlesView';
+const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
+const DigiInvoicesView = lazy(() => import('./components/DigiInvoicesView').then((m) => ({ default: m.DigiInvoicesView })));
+const ReceivedArticlesView = lazy(() => import('./components/ReceivedArticlesView').then((m) => ({ default: m.ReceivedArticlesView })));
 import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
 import { evaluateParcelAlerts } from './lib/parcelAlerts';
 import { DEFAULT_TRACKING_SETTINGS } from './lib/parcelTracking';
 import type { TrackingSettings } from './lib/parcelTracking';
 import { buildDigiValueLookup, DigiInvoiceForValue, DigiValueMatch } from './lib/digiShipmentValue';
-import { ShipmentInvoicesModal } from './components/ShipmentInvoicesModal';
-import { ImportExcelModal } from './components/ImportExcelModal';
+const ShipmentInvoicesModal = lazy(() => import('./components/ShipmentInvoicesModal').then((m) => ({ default: m.ShipmentInvoicesModal })));
+const ImportExcelModal = lazy(() => import('./components/ImportExcelModal').then((m) => ({ default: m.ImportExcelModal })));
 import { ui } from './lib/ui';
 import { evaluateShipmentRules } from './lib/rulesEngine';
 import { DashboardTab, LOGIN_PATH, pathForRoute, routeFromPath, titleForRoute } from './lib/routes';
@@ -661,6 +661,14 @@ if (!authUser) {
         {/* Content Area */}
         <main className="min-w-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           <div className="mx-auto w-full max-w-[1400px]">
+          {/* Secondary screens load on first opening (lighter start) */}
+          <Suspense
+            fallback={
+              <div className="flex justify-center py-16" aria-label="Chargement">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-[#ECE9F0] border-t-[#623387]" />
+              </div>
+            }
+          >
           {shipmentsError && (
             <div className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 shadow-sm dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-300">
               <div className="flex items-center gap-3">
@@ -798,10 +806,12 @@ if (!authUser) {
             />
           )}
           {activeTab === 'settings' && currentRole === 'supply_chain' && <SettingsView currentUserId={authUser.id} />}
+          </Suspense>
           </div>
         </main>
       </div>
 
+      <Suspense fallback={null}>
       {/* Excel imports, one entry point: invoices or Amazon shipment report */}
       {showImport && (
         <ImportExcelModal
@@ -862,6 +872,7 @@ if (!authUser) {
           }}
         />
       )}
+      </Suspense>
 
       {/* Floating Notification Toast */}
       {notification && (

@@ -30,7 +30,7 @@ import { ParcelContentsPreview } from './ParcelContentsPreview';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { ReceiveParcelModal } from './ReceiveParcelModal';
-import { ReceptionPointView } from './ReceptionPointView';
+const ReceptionPointView = React.lazy(() => import('./ReceptionPointView').then((m) => ({ default: m.ReceptionPointView })));
 import { useParcelStatusActions } from './useParcelStatusActions';
 import { Shipment, shipmentLabel } from '../types';
 import DateInput from './DateInput';
@@ -892,6 +892,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
       )}
 
       {pointOpen && (
+        <React.Suspense fallback={null}>
         <ReceptionPointView
           destination={destination}
           parcels={parcels || []}
@@ -901,6 +902,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
           }}
           onChanged={onReload}
         />
+        </React.Suspense>
       )}
     </div>
   );
