@@ -16,6 +16,7 @@ import {
   Undo2,
   X,
   Download,
+  Package,
 } from 'lucide-react';
 import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
@@ -36,6 +37,7 @@ import DateInput from './DateInput';
 import { Pagination, usePagination } from './Pagination';
 import { SavedFilters } from './SavedFilters';
 import { HelpTip } from './HelpTip';
+import { EmptyState, SkeletonRows } from './EmptyState';
 import { downloadCsv } from '../lib/exportCsv';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
@@ -572,15 +574,40 @@ export const ParcelsBoardView: React.FC<Props> = ({
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
               {parcels === null || (loading && own.length === 0) ? (
-                <tr>
-                  <td colSpan={columns} className="px-4 py-10 text-center">
-                    <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-400" />
-                  </td>
-                </tr>
+                <SkeletonRows columns={columns} />
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={columns} className="px-4 py-10 text-center text-slate-500">
-                    {own.length === 0 ? `Aucun colis vers ${hub}.` : 'Aucun colis ne correspond à vos filtres.'}
+                  <td colSpan={columns}>
+                    {own.length === 0 ? (
+                      <EmptyState
+                        icon={Package}
+                        title={`Aucun colis vers ${hub} pour le moment`}
+                        detail="Les colis se créent depuis Factures fournisseurs, avec « + Colis »."
+                      />
+                    ) : search.trim() || globalSearch.trim() || supplierFilter !== 'all' || receivedOn ? (
+                      <EmptyState
+                        icon={Search}
+                        title="Aucun colis ne correspond à votre recherche"
+                        detail="Vérifiez le n° de suivi ou retirez un filtre."
+                        action={{
+                          label: 'Effacer les filtres',
+                          onClick: () => {
+                            setSearch('');
+                            setSupplierFilter('all');
+                            setReceivedOn('');
+                          },
+                        }}
+                      />
+                    ) : statusFilter === 'open' ? (
+                      <EmptyState icon={CheckCircle2} title="Aucun colis à recevoir" detail={`Tous les colis attendus à ${hub} sont arrivés.`} />
+                    ) : statusFilter === 'lost' || statusFilter === 'search' ? (
+                      <EmptyState
+                        icon={CheckCircle2}
+                        title={statusFilter === 'lost' ? `Aucun colis perdu avant ${hub}` : 'Aucun avis de recherche en cours'}
+                      />
+                    ) : (
+                      <EmptyState icon={Package} title="Aucun colis dans cette vue" />
+                    )}
                   </td>
                 </tr>
               ) : (
