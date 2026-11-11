@@ -13,7 +13,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ui } from '../lib/ui';
-import { Shipment, ShipmentAlert, MetricSummary } from '../types';
+import { Shipment, ShipmentAlert, MetricSummary, shipmentLabel } from '../types';
 import { formatDate } from '../lib/dateFormat';
 import type { ParcelsOverview } from './digiApi';
 import { journeyStage } from './InTransitParcelsList';
@@ -551,14 +551,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               }}
                               className={`font-semibold hover:underline ${ui.title}`}
                             >
-                              {shp.order_reference}
+                              {shp.order_reference?.trim() || shipmentLabel(shp)}
                             </button>
                             {shp.tracking_no && <div className={`text-[11px] ${ui.muted}`}>{shp.tracking_no}</div>}
                           </div>
                         </div>
                       </td>
-                      <td className={`px-3 py-3.5 ${ui.text}`}>{shp.supplier}</td>
-                      <td className={`px-3 py-3.5 ${ui.muted}`}>{shp.carrier}</td>
+                      <td className={`px-3 py-3.5 ${ui.text}`}>{!shp.supplier || /^0 fournisseurs?$/.test(shp.supplier) ? '—' : shp.supplier}</td>
+                      <td className={`px-3 py-3.5 ${ui.muted}`}>{shp.carrier || '—'}</td>
                       <td className="px-3 py-3.5">
                         <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${statusPill(shp.global_status)}`}>
                           {shp.global_status}
