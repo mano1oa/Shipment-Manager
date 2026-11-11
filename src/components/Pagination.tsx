@@ -3,8 +3,8 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ui } from '../lib/ui';
 
 /** Rows per page offered (0 = everything, like Odoo's "show all"). */
-export const PAGE_SIZES = [80, 100, 200, 0] as const;
-const DEFAULT_PAGE_SIZE = 80;
+export const PAGE_SIZES = [100, 200, 0] as const;
+const DEFAULT_PAGE_SIZE = 100;
 
 const readSize = (key: string) => {
   try {
@@ -58,7 +58,7 @@ interface PaginationProps {
   className?: string;
 }
 
-/** "1–80 sur 284 colis · ‹ › · Lignes par page [80]". */
+/** "1–100 sur 284 colis · ‹ › · Lignes par page [100]". */
 export const Pagination: React.FC<PaginationProps> = ({ page, pageCount, size, total, onPage, onSize, unit, className = '' }) => {
   if (total === 0) return null;
   const from = size === 0 ? 1 : (page - 1) * size + 1;

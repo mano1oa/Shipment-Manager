@@ -240,7 +240,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
     [own, statusFilter, supplierFilter, search, globalSearch, settings, receivedOn]
   );
 
-  // Pages of 80 / 100 / 200 rows, or everything (remembered per hub)
+  // Pages of 100 / 200 rows, or everything (remembered per hub)
   const pager = usePagination(filtered, `parcels-${destination}`, `${statusFilter}|${supplierFilter}|${search}|${globalSearch}|${receivedOn}`);
   const shown = pager.pageItems;
 
