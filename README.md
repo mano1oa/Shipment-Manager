@@ -569,6 +569,13 @@ Premier compte administrateur (SUPPLY_CHAIN), une fois la base créée :
 ADMIN_EMAIL=... ADMIN_PASSWORD='12 caractères minimum' npx tsx scripts/create-admin.ts
 ```
 
+Noms des fournisseurs des expéditions existantes (une seule fois, « Fournisseur A, Fournisseur B » au lieu de « 3 fournisseurs ») :
+
+```bash
+npx tsx scripts/backfill-shipment-suppliers.ts          # aperçu, n'écrit rien
+npx tsx scripts/backfill-shipment-suppliers.ts --apply  # enregistre
+```
+
 ### Déploiement
 
 - GitHub → Vercel. Les routes `/api/*` sont servies par `api/index.ts`.
