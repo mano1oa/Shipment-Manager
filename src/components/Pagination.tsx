@@ -6,21 +6,13 @@ import { ui } from '../lib/ui';
 export const PAGE_SIZES = [100, 200, 0] as const;
 const DEFAULT_PAGE_SIZE = 100;
 
-const readSize = (key: string) => {
-  try {
-    const v = Number(localStorage.getItem(`page_size:${key}`));
-    return (PAGE_SIZES as readonly number[]).includes(v) ? v : DEFAULT_PAGE_SIZE;
-  } catch {
-    return DEFAULT_PAGE_SIZE;
-  }
-};
-
 /**
- * Long lists in pages. The page size is remembered per list in this browser;
- * `resetKey` (filters, search…) brings the list back to its first page.
+ * Long lists in pages. Every visit starts at 100 rows (another size, « Tout »
+ * included, lasts for the visit only); `resetKey` (filters, search…) brings
+ * the list back to its first page.
  */
 export function usePagination<T>(items: T[], storageKey: string, resetKey: unknown) {
-  const [size, setSizeState] = useState(() => readSize(storageKey));
+  const [size, setSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [page, setPage] = useState(1);
   const pageCount = size === 0 ? 1 : Math.max(1, Math.ceil(items.length / size));
 
@@ -34,14 +26,14 @@ export function usePagination<T>(items: T[], storageKey: string, resetKey: unkno
     [items, page, size]
   );
 
-  const setSize = (next: number) => {
-    setSizeState(next);
+  // Size remembered by the previous version: forgotten, so 100 applies again
+  useEffect(() => {
     try {
-      localStorage.setItem(`page_size:${storageKey}`, String(next));
+      localStorage.removeItem(`page_size:${storageKey}`);
     } catch {
-      // storage unavailable: the size applies for this visit only
+      // storage unavailable: nothing to clean
     }
-  };
+  }, [storageKey]);
 
   return { pageItems, page, setPage, pageCount, size, setSize, total: items.length };
 }
