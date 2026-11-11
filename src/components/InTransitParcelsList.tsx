@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, Camera, CheckCircle2, ChevronDown, ChevronRight, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
 import type { ParcelDestination } from '../lib/parcelTracking';
+import { parcelStage } from '../lib/parcelJourney';
+import type { ParcelStage } from '../lib/parcelJourney';
 import { Shipment, shipmentLabel } from '../types';
 import { compareDateDesc } from '../lib/dateFormat';
 import { Parcel, formatDate } from './digiApi';
@@ -11,8 +13,7 @@ import { ParcelPhotosModal } from './ParcelPhotosModal';
 import { AmazonOrdersCell, parcelMatches } from './ParcelsBoardView';
 import { useParcelStatusActions } from './useParcelStatusActions';
 
-/** Where a parcel stands between the supplier and Madagascar. */
-type Stage = 'to_hub' | 'at_hub' | 'to_mada' | 'customs' | 'search' | 'lost';
+type Stage = ParcelStage;
 
 const STAGE_LABELS: Record<Stage, (hub: string) => string> = {
   to_hub: (hub) => `En route vers ${hub}`,
@@ -32,20 +33,7 @@ const STAGE_BADGES: Record<Stage, string> = {
   lost: 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300',
 };
 
-/**
- * Stage of a parcel, or null once its shipment is delivered to the Madagascar
- * warehouse. Lost parcels and "avis de recherche" stay listed: they never
- * reached Madagascar.
- */
-function stageOf(p: Parcel, shipments: Shipment[]): Stage | null {
-  if (p.status === 'lost') return 'lost';
-  if (p.status === 'search') return 'search';
-  if (p.status === 'to_receive') return 'to_hub';
-  if (shipments.some((s) => s.global_status === 'Livrée entrepôt')) return null;
-  if (shipments.some((s) => s.global_status === 'Bloquée douane')) return 'customs';
-  if (shipments.some((s) => s.global_status === 'Expédiée vers Mada')) return 'to_mada';
-  return 'at_hub';
-}
+const stageOf = parcelStage;
 
 export type JourneyStage = Stage | 'delivered';
 

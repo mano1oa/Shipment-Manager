@@ -163,6 +163,7 @@ import { findConfirmedShipmentOfInvoices, nextInternalRef } from './db/shipments
 import { listReceivedArticles, setLineReceipt } from './db/lineReceipts.js';
 import { runDigiOdooSync, getDestinationFilter } from './services/odoo/digiInvoiceSync.js';
 import { runInvoicesWithoutParcelDigest } from './services/invoicesWithoutParcelNotifier.js';
+import { buildWeeklySummary, runWeeklySummary } from './services/weeklySummaryNotifier.js';
 import { postToWebhook, sendChatMessage } from './services/googleChat.js';
 import { createChatWebhook, deleteChatWebhook, getChatWebhook, listChatWebhooks, updateChatWebhook } from './db/chatWebhooks.js';
 import type { ChatWebhookInput } from './db/chatWebhooks.js';
@@ -615,6 +616,29 @@ export function createServerApp(): Express {
     } catch (err: any) {
       console.error('[DIGI Cron] Failed:', err);
       return res.status(500).json({ success: false, error: 'DIGI invoices sync failed' });
+    }
+  });
+
+  // Weekly summary for the management, Monday morning (same CRON_SECRET rules as above).
+  app.get('/api/cron/weekly-summary', async (req, res) => {
+    const cronSecret = process.env.CRON_SECRET;
+
+    if (!cronSecret) {
+      console.error('[Weekly Cron] CRON_SECRET is not configured: job not run.');
+      return res.status(500).json({ success: false, error: 'Cron configuration error' });
+    }
+
+    if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    try {
+      const result = await runWeeklySummary();
+      console.log('[Weekly Cron]', JSON.stringify(result));
+      return res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error('[Weekly Cron] Failed:', err);
+      return res.status(500).json({ success: false, error: 'Weekly summary failed' });
     }
   });
 
@@ -1130,6 +1154,24 @@ app.put(
     } catch (err: any) {
       console.error('[Chat webhooks] Digest error:', err);
       return res.status(500).json({ success: false, error: 'Impossible d’envoyer la liste' });
+    }
+  });
+
+  // Preview of the Monday summary, sent now on one webhook only (even inactive)
+  app.post('/api/settings/chat-webhooks/:id/send-weekly-summary', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+    try {
+      const webhook = await getChatWebhook(req.params.id);
+      if (!webhook || webhook.purpose !== 'weekly_summary') {
+        return res.status(404).json({ success: false, error: 'Webhook introuvable' });
+      }
+      const { text } = await buildWeeklySummary();
+      const error = await postToWebhook(webhook.url, text);
+      if (error) return res.status(502).json({ success: false, error });
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('[Chat webhooks] Weekly summary error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d’envoyer l’aperçu' });
     }
   });
 
