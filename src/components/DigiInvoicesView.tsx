@@ -8,7 +8,6 @@ import {
   FilePlus2,
   Loader2,
   Pencil,
-  ReceiptText,
   RefreshCw,
   Search,
   Trash2,
@@ -45,6 +44,7 @@ import {
 } from './digiApi';
 import { Shipment, shipmentLabel } from '../types';
 import { downloadCsv } from '../lib/exportCsv';
+import { HelpTip } from './HelpTip';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
 import { ParcelFormModal } from './ParcelFormModal';
@@ -747,15 +747,18 @@ export const DigiInvoicesView: React.FC<Props> = ({
       {/* Header */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-extrabold text-slate-900 dark:text-white">
-            <ReceiptText className="h-6 w-6 text-[#623387]" /> Factures fournisseurs
+          <h1 className="flex items-center gap-2 text-[30px] font-semibold leading-tight tracking-tight text-[#17111F] dark:text-white">
+            Factures fournisseurs
+            <HelpTip label="Comment ça marche ?">
+              Factures DIGI LOGISTIC à destination de <strong>{destination}</strong> (Odoo, import Excel, saisie) et
+              factures hors DIGI. Triez chaque facture DIGI : <strong>marchandises</strong> (ses colis sont suivis
+              jusqu'à Orly) ou <strong>services</strong> (pas de colis). Ajoutez ensuite les colis (n° de suivi) : une
+              facture est reçue à Orly quand tous ses colis sont confirmés par Antoine. Les factures hors DIGI saisies
+              par le Sourcing sont validées par la Supply Chain.
+            </HelpTip>
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Factures DIGI LOGISTIC à destination de <strong>{destination}</strong> (Odoo, import Excel, saisie) et
-            factures hors DIGI. Triez chaque facture DIGI : <strong>marchandises</strong> (ses colis sont suivis jusqu'à
-            Orly) ou <strong>services</strong> (pas de colis). Ajoutez ensuite les colis (n° de suivi) : une facture est
-            reçue à Orly quand tous ses colis sont confirmés par Antoine. Les factures hors DIGI saisies par le Sourcing
-            sont validées par la Supply Chain.
+          <p className="mt-1 text-sm text-[#5E5869] dark:text-slate-400">
+            Factures à destination de <strong>{destination}</strong> : triez-les, puis ajoutez leurs colis.
           </p>
           {config?.odoo_configured && (
             <p className="mt-0.5 text-[11px] text-slate-400">

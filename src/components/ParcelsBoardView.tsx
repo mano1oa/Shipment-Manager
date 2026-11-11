@@ -35,6 +35,7 @@ import { Shipment, shipmentLabel } from '../types';
 import DateInput from './DateInput';
 import { Pagination, usePagination } from './Pagination';
 import { SavedFilters } from './SavedFilters';
+import { HelpTip } from './HelpTip';
 import { downloadCsv } from '../lib/exportCsv';
 
 type StatusFilter = 'open' | ParcelStatus | 'no_invoice' | 'all';
@@ -265,16 +266,18 @@ export const ParcelsBoardView: React.FC<Props> = ({
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <p className="text-xs text-slate-500 dark:text-slate-400">
+        <p className="flex items-center gap-1 text-[13px] text-[#5E5869] dark:text-slate-400">
           Colis livrés par les fournisseurs {destination === 'ORLY' ? 'chez Antoine à Orly' : 'au quai de Rouen'}, avant
-          leur expédition vers Madagascar. Ils se créent depuis Factures fournisseurs (« + Colis »). Un colis non confirmé
-          à temps passe automatiquement « Perdu avant {hub} » (livraison prévue +{' '}
-          {settings?.parcel_loss_days_after_eta ?? 7} j, sinon date de facture +{' '}
-          {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
-          {isSupplyChain &&
-            (destination === 'ORLY'
-              ? ' Au point avec Antoine : « Point Antoine » pour déposer toutes ses photos puis les rattacher (la réception est confirmée) ; les colis confirmés sans photo se cochent ici.'
-              : ' Cochez les colis reçus au quai et confirmez leur réception.')}
+          leur départ vers Madagascar.
+          <HelpTip label="Comment ça marche ?">
+            Les colis se créent depuis Factures fournisseurs (« + Colis »). Un colis non confirmé à temps passe
+            automatiquement « Perdu avant {hub} » (livraison prévue + {settings?.parcel_loss_days_after_eta ?? 7} j,
+            sinon date de facture + {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
+            {isSupplyChain &&
+              (destination === 'ORLY'
+                ? ' Au point avec Antoine : « Point Antoine » pour déposer toutes ses photos puis les rattacher (la réception est confirmée) ; les colis confirmés sans photo se cochent ici.'
+                : ' Cochez les colis reçus au quai et confirmez leur réception.')}
+          </HelpTip>
         </p>
         {isSupplyChain && (
           <div className="flex shrink-0 flex-wrap gap-2">
