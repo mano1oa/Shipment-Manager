@@ -104,8 +104,8 @@ export const Navbar: React.FC<NavbarProps> = ({
           onClick={onRefreshDb}
           title={
             dbConnected
-              ? 'Connecté à la base Neon PostgreSQL. Cliquez pour recharger.'
-              : 'Base Neon non joignable : aucune donnée chargée. Cliquez pour réessayer.'
+              ? 'Données chargées. Cliquez pour recharger.'
+              : 'Base de données non joignable : aucune donnée chargée. Cliquez pour réessayer.'
           }
           className="hidden h-11 items-center gap-2 rounded-xl px-2.5 text-xs font-medium text-[#5E5869] transition hover:bg-[#F5F4F7] dark:text-slate-400 dark:hover:bg-slate-800 xl:flex"
         >
