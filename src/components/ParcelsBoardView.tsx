@@ -373,7 +373,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
 
       {/* « À traiter »: one compact row, a colored chip per alert, its detail under the row */}
       {(suspects.length > 0 ||
-        (counts.no_invoice > 0 && statusFilter !== 'no_invoice') ||
+        counts.no_invoice > 0 ||
         invoicesWithoutParcel.length > 0 ||
         amazonPending.pending.length > 0) && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs dark:border-amber-900/60 dark:bg-amber-950/20">
@@ -391,14 +391,18 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 onClick={() => toggleAlert('suspects')}
               />
             )}
-            {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
+            {counts.no_invoice > 0 && (
               <AlertChip
                 tone="amber"
                 count={counts.no_invoice}
                 label="colis reçu(s) sans facture"
-                title="Afficher ces colis dans la liste"
-                open={false}
-                onClick={() => setStatusFilter('no_invoice')}
+                title={
+                  statusFilter === 'no_invoice'
+                    ? 'Revenir aux colis à recevoir'
+                    : 'Afficher ces colis dans la liste'
+                }
+                open={statusFilter === 'no_invoice'}
+                onClick={() => setStatusFilter(statusFilter === 'no_invoice' ? 'open' : 'no_invoice')}
               />
             )}
             {invoicesWithoutParcel.length > 0 && (
@@ -925,16 +929,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
           </table>
         </div>
       </div>
-
-      <Pagination
-        page={pager.page}
-        pageCount={pager.pageCount}
-        size={pager.size}
-        total={pager.total}
-        onPage={pager.setPage}
-        onSize={pager.setSize}
-        unit="colis"
-      />
 
       {mergeOf && (
         <MergeParcelModal
