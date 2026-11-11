@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ClipboardCheck, Loader2, Plane, RefreshCw, Search, Ship } from 'lucide-react';
+import { ClipboardCheck, Download, Loader2, Plane, RefreshCw, Search, Ship } from 'lucide-react';
+import { downloadCsv } from '../lib/exportCsv';
 import { formatDate, formatQuantity } from './digiApi';
 import { ReceivedArticle, articleKey, fetchReceivedArticles, receivedGap } from './shipmentApi';
 import { ReceivedQuantityInput } from './ReceivedQuantityInput';
@@ -100,6 +101,7 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
             Articles des expéditions confirmées : saisissez la quantité reçue de chaque article à l'arrivée.
           </p>
         </div>
+        <div className="flex flex-wrap gap-2">
         <button
           onClick={load}
           disabled={loading}
@@ -107,6 +109,36 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Actualiser
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            downloadCsv(
+              'reception-madagascar',
+              ['Expédition', 'Mode', 'Facture', 'Fournisseur', 'Article', 'Quantité facturée', 'Quantité reçue', 'Écart', 'Saisi par', 'Saisi le'],
+              groups.flat().map((a) => {
+                const gap = receivedGap(a);
+                return [
+                  shipmentName(a),
+                  a.shipment_mode === 'Air' ? 'Aérien' : 'Maritime',
+                  a.invoice_ref,
+                  a.supplier,
+                  a.name,
+                  a.quantity,
+                  a.quantity_received,
+                  gap,
+                  a.received_by_email,
+                  formatDate(a.received_updated_at),
+                ];
+              })
+            )
+          }
+          disabled={groups.length === 0}
+          title="Les articles du filtre en cours, en fichier Excel"
+          className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+        >
+          <Download className="h-3.5 w-3.5" /> Exporter
+        </button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">

@@ -19,6 +19,7 @@ import {
   Package,
   ShieldCheck,
   ShieldX,
+  Download,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -43,6 +44,7 @@ import {
   fetchTrackingSettings,
 } from './digiApi';
 import { Shipment, shipmentLabel } from '../types';
+import { downloadCsv } from '../lib/exportCsv';
 import { DigiInvoiceFormModal } from './DigiInvoiceFormModal';
 import { DirectInvoiceFormModal } from './DirectInvoiceFormModal';
 import { ParcelFormModal } from './ParcelFormModal';
@@ -797,6 +799,33 @@ export const DigiInvoicesView: React.FC<Props> = ({
             className={`${button} border border-[#623387] bg-white text-[#623387] hover:bg-[#F8EEFF] dark:bg-slate-800 dark:text-[#B688FF]`}
           >
             <FileText className="h-4 w-4" /> Facture hors DIGI
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              downloadCsv(
+                'factures-fournisseurs',
+                ['Facture', 'Fournisseur', 'Date', 'Commande Amazon', 'Montant', 'Devise', 'Origine', 'Tri', 'Colis reçus', 'Colis', 'Expédition'],
+                filtered.map((inv) => [
+                  inv.ref,
+                  inv.supplier_display,
+                  formatDate(inv.invoice_date),
+                  inv.amazon_order_ref,
+                  inv.amount_total,
+                  inv.currency,
+                  inv.is_digi ? (inv.source === 'odoo' ? 'Odoo DIGI' : 'DIGI (import / saisie)') : 'Hors DIGI',
+                  inv.triage === 'goods' ? 'Marchandises' : inv.triage === 'services' ? 'Services' : 'À trier',
+                  inv.parcel_received_count,
+                  inv.parcel_count,
+                  inv.shipment_id ? shipmentLabel(shipments.find((s) => s.id === inv.shipment_id), inv.shipment_id) : '',
+                ])
+              )
+            }
+            disabled={filtered.length === 0}
+            title="Toutes les factures du filtre en cours, en fichier Excel"
+            className={`${button} border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200`}
+          >
+            <Download className="h-4 w-4" /> Exporter ({filtered.length})
           </button>
         </div>
       </div>
