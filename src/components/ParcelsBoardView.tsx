@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Clock,
   Camera,
   CheckCircle2,
   ChevronDown,
@@ -23,7 +24,7 @@ import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/p
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
 import { BoxesBadge } from './BoxesBadge';
-import { AmazonPendingBanner } from './AmazonPendingBanner';
+import { AmazonPendingTable, useAmazonPending } from './AmazonPendingBanner';
 import { MergeParcelModal } from './MergeParcelModal';
 import { findMergeSuspects } from '../lib/parcelBoxes';
 import { ParcelContentsPreview } from './ParcelContentsPreview';
@@ -88,6 +89,46 @@ export const AmazonOrdersCell: React.FC<{ parcel: Parcel }> = ({ parcel }) => {
   );
 };
 
+/** Chip of the « À traiter » row: the count stands out in a filled circle. */
+const AlertChip: React.FC<{
+  tone: 'amber' | 'sky';
+  count: number;
+  label: string;
+  open: boolean;
+  onClick: () => void;
+  icon?: React.ReactNode;
+  title?: string;
+}> = ({ tone, count, label, open, onClick, icon, title }) => {
+  const tones = {
+    amber: {
+      chip: 'border-amber-300 bg-white text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-slate-900 dark:text-amber-200',
+      on: 'ring-2 ring-amber-400',
+      count: 'bg-amber-500 text-white',
+    },
+    sky: {
+      chip: 'border-sky-300 bg-white text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900 dark:text-sky-200',
+      on: 'ring-2 ring-sky-400',
+      count: 'bg-sky-600 text-white',
+    },
+  }[tone];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-expanded={open}
+      className={`flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 font-semibold transition ${tones.chip} ${open ? tones.on : ''}`}
+    >
+      <span className={`flex h-5 min-w-[1.25rem] items-center justify-center rounded-full px-1.5 text-[11px] font-bold tabular-nums ${tones.count}`}>
+        {count}
+      </span>
+      {icon}
+      {label}
+      {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+    </button>
+  );
+};
+
 export const parcelMatches = (p: Parcel, query: string) => {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -128,7 +169,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [supplierFilter, setSupplierFilter] = useState('all');
-  const [showWithout, setShowWithout] = useState(false);
+  /** Alert of the « À traiter » row whose detail is shown. */
+  const [openAlert, setOpenAlert] = useState<'suspects' | 'without' | 'pending' | null>(null);
+  const toggleAlert = (key: 'suspects' | 'without' | 'pending') => setOpenAlert((cur) => (cur === key ? null : key));
+  const amazonPending = useAmazonPending(destination, parcels);
   const today = new Date().toISOString().slice(0, 10);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [receptionDate, setReceptionDate] = useState(today);
@@ -139,7 +183,6 @@ export const ParcelsBoardView: React.FC<Props> = ({
   const [openId, setOpenId] = useState<string | null>(null);
   /** "Fusionner dans le colis principal…": the parcel to merge, and the main parcel proposed. */
   const [mergeOf, setMergeOf] = useState<{ parcel: Parcel; principalId: string | null } | null>(null);
-  const [showSuspects, setShowSuspects] = useState(false);
   /** Received: only the parcels received on this date ('' = every date). */
   const [receivedOn, setReceivedOn] = useState('');
   /** Date groups opened or closed by hand (by default only the latest one is open). */
@@ -328,76 +371,117 @@ export const ParcelsBoardView: React.FC<Props> = ({
         })}
       </div>
 
-      {suspects.length > 0 && (
-        <div className="rounded-2xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-200">
-          <button onClick={() => setShowSuspects((v) => !v)} className="flex w-full items-center gap-2 text-left font-bold">
-            <Combine className="h-4 w-4 shrink-0" />
-            Colis à fusionner ? {suspects.length} facture(s) ont un colis perdu et des colis créés au point (même fournisseur,
-            même transporteur) : ce sont peut-être les boîtes d'un même envoi.
-            {showSuspects ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
-          </button>
-          {showSuspects && (
-            <ul className="mt-2 space-y-2">
-              {suspects.map((s) => (
-                <li key={`${s.invoice_id}-${s.principal.id}`} className="rounded-xl bg-white/70 p-2 dark:bg-slate-900/40">
-                  <div>
-                    Facture <strong>{s.invoice_ref || '—'}</strong> · {s.principal.supplier_name || '—'} · perdu :{' '}
-                    <span className="font-mono font-bold">{s.principal.tracking_number || 'sans n°'}</span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-1.5">
-                    {s.boxes.map((b) => (
-                      <button
-                        key={b.id}
-                        onClick={() => setMergeOf({ parcel: b, principalId: s.principal.id })}
-                        className="flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-2 py-1 font-semibold hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900"
-                      >
-                        <Combine className="h-3.5 w-3.5" /> Fusionner{' '}
-                        <span className="font-mono">{b.tracking_number || 'sans n°'}</span>
-                        {b.received_at ? ` (reçu le ${formatDate(b.received_at)})` : ''}
-                      </button>
-                    ))}
-                  </div>
-                </li>
-              ))}
-            </ul>
+      {/* « À traiter »: one compact row, a colored chip per alert, its detail under the row */}
+      {(suspects.length > 0 ||
+        (counts.no_invoice > 0 && statusFilter !== 'no_invoice') ||
+        invoicesWithoutParcel.length > 0 ||
+        amazonPending.pending.length > 0) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs dark:border-amber-900/60 dark:bg-amber-950/20">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1.5 font-bold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+              <AlertTriangle className="h-4 w-4" /> À traiter
+            </span>
+            {suspects.length > 0 && (
+              <AlertChip
+                tone="sky"
+                count={suspects.length}
+                label="colis à fusionner ?"
+                icon={<Combine className="h-3.5 w-3.5" />}
+                open={openAlert === 'suspects'}
+                onClick={() => toggleAlert('suspects')}
+              />
+            )}
+            {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
+              <AlertChip
+                tone="amber"
+                count={counts.no_invoice}
+                label="colis reçu(s) sans facture"
+                title="Afficher ces colis dans la liste"
+                open={false}
+                onClick={() => setStatusFilter('no_invoice')}
+              />
+            )}
+            {invoicesWithoutParcel.length > 0 && (
+              <AlertChip
+                tone="amber"
+                count={invoicesWithoutParcel.length}
+                label="facture(s) sans colis"
+                open={openAlert === 'without'}
+                onClick={() => toggleAlert('without')}
+              />
+            )}
+            {amazonPending.pending.length > 0 && (
+              <AlertChip
+                tone="sky"
+                count={amazonPending.pending.length}
+                label="en attente de facture (Amazon)"
+                icon={<Clock className="h-3.5 w-3.5" />}
+                open={openAlert === 'pending'}
+                onClick={() => toggleAlert('pending')}
+              />
+            )}
+          </div>
+
+          {openAlert === 'suspects' && suspects.length > 0 && (
+            <div className="mt-2 text-sky-900 dark:text-sky-200">
+              <p className="mb-2">
+                Ces factures ont un colis perdu et des colis créés au point (même fournisseur, même transporteur) : ce sont
+                peut-être les boîtes d'un même envoi.
+              </p>
+              <ul className="space-y-2">
+                {suspects.map((s) => (
+                  <li key={`${s.invoice_id}-${s.principal.id}`} className="rounded-xl bg-white/70 p-2 dark:bg-slate-900/40">
+                    <div>
+                      Facture <strong>{s.invoice_ref || '—'}</strong> · {s.principal.supplier_name || '—'} · perdu :{' '}
+                      <span className="font-mono font-bold">{s.principal.tracking_number || 'sans n°'}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1.5">
+                      {s.boxes.map((b) => (
+                        <button
+                          key={b.id}
+                          onClick={() => setMergeOf({ parcel: b, principalId: s.principal.id })}
+                          className="flex items-center gap-1 rounded-lg border border-sky-300 bg-white px-2 py-1 font-semibold hover:bg-sky-100 dark:border-sky-800 dark:bg-slate-900"
+                        >
+                          <Combine className="h-3.5 w-3.5" /> Fusionner{' '}
+                          <span className="font-mono">{b.tracking_number || 'sans n°'}</span>
+                          {b.received_at ? ` (reçu le ${formatDate(b.received_at)})` : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {openAlert === 'without' && invoicesWithoutParcel.length > 0 && (
+            <div className="mt-2 text-amber-900 dark:text-amber-200">
+              <p className="mb-2">
+                Factures en marchandises sans colis : n° de suivi à saisir dans Factures fournisseurs (destination encore
+                inconnue).
+              </p>
+              <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                {invoicesWithoutParcel.map((i) => (
+                  <li key={i.id}>
+                    <strong>{i.supplier_display || '—'}</strong> · {i.ref || '—'} · {formatDate(i.invoice_date)}
+                    {!i.is_digi && ' · hors DIGI'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {openAlert === 'pending' && amazonPending.pending.length > 0 && (
+            <div className="mt-2 text-sky-900 dark:text-sky-200">
+              <p className="mb-2">
+                N° de suivi du rapport Amazon dont la commande n'a pas encore de facture : le colis sera créé automatiquement
+                dès que la facture sera saisie, importée ou synchronisée depuis Odoo.
+              </p>
+              <AmazonPendingTable data={amazonPending} canEdit={isSupplyChain} />
+            </div>
           )}
         </div>
       )}
-
-      {counts.no_invoice > 0 && statusFilter !== 'no_invoice' && (
-        <button
-          onClick={() => setStatusFilter('no_invoice')}
-          className="flex w-full items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-left text-xs font-bold text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          {counts.no_invoice} colis reçu(s) sans facture : la facture leur sera rattachée quand elle sera saisie avec
-          leur n° (« + Colis ») ou par « Importer Excel » › Expéditions (rapport Amazon). Voir la liste
-          <ChevronRight className="ml-auto h-4 w-4" />
-        </button>
-      )}
-
-      {invoicesWithoutParcel.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-200">
-          <button onClick={() => setShowWithout((v) => !v)} className="flex w-full items-center gap-2 font-bold">
-            <AlertTriangle className="h-4 w-4 shrink-0" />
-            {invoicesWithoutParcel.length} facture(s) en marchandises sans colis : n° de suivi à saisir dans Factures
-            fournisseurs (destination encore inconnue).
-            {showWithout ? <ChevronDown className="ml-auto h-4 w-4" /> : <ChevronRight className="ml-auto h-4 w-4" />}
-          </button>
-          {showWithout && (
-            <ul className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
-              {invoicesWithoutParcel.map((i) => (
-                <li key={i.id}>
-                  <strong>{i.supplier_display || '—'}</strong> · {i.ref || '—'} · {formatDate(i.invoice_date)}
-                  {!i.is_digi && ' · hors DIGI'}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
-
-      <AmazonPendingBanner destination={destination} refreshKey={parcels} canEdit={isSupplyChain} />
 
       <SavedFilters<ParcelFilters>
         storageKey={`parcels-${destination}`}
