@@ -19,7 +19,7 @@ import {
   Download,
   Package,
 } from 'lucide-react';
-import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
+import { isParcelOverdue, parcelLossDeadline, parcelPlace, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { compareDateDesc } from '../lib/dateFormat';
 import { InvoiceWithoutParcel, Parcel, formatDate } from './digiApi';
@@ -286,6 +286,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
 
   const selectedParcels = filtered.filter((p) => selected.has(p.id));
   const toConfirm = selectedParcels.filter((p) => p.status === 'to_receive' || p.status === 'lost');
+  /** Sea: the city of the checked parcels when they share one, else « au lieu de positionnement ». */
+  const confirmCities = Array.from(new Set(toConfirm.map(parcelPlace)));
+  const receptionPlace =
+    destination === 'ORLY' ? `à ${hub}` : confirmCities.length === 1 ? `à ${confirmCities[0]}` : 'au lieu de positionnement';
   const allSelected = shown.length > 0 && shown.every((p) => selected.has(p.id));
   const toShip = invoicesToShip(selectedParcels.filter((p) => p.status === 'received'));
   const toggleMany = (list: Parcel[], on: boolean) =>
@@ -301,7 +305,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
       else next.add(id);
       return next;
     });
-  const columns = 7 + (destination === 'ROUEN' ? 1 : 0) + (destination === 'ORLY' ? 1 : 0) + (isSupplyChain ? 1 : 0) + 1;
+  const columns = 6 + (destination === 'ROUEN' ? 1 : 0) + (destination === 'ORLY' ? 1 : 0) + (isSupplyChain ? 1 : 0) + 1;
   const iconButton =
     'rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-700';
 
@@ -605,7 +609,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                 disabled={toConfirm.length === 0}
                 className="flex items-center gap-1.5 rounded-lg bg-[#2E9E5B] px-3 py-2 text-xs font-semibold text-white hover:bg-[#268a4f] disabled:opacity-40"
               >
-                <CheckCircle2 className="h-3.5 w-3.5" /> Confirmer la réception à {hub} ({toConfirm.length})
+                <CheckCircle2 className="h-3.5 w-3.5" /> Confirmer la réception {receptionPlace} ({toConfirm.length})
               </button>
               {onGroupInShipment && (
                 <button
@@ -648,14 +652,14 @@ export const ParcelsBoardView: React.FC<Props> = ({
                     />
                   </th>
                 )}
-                <th className="px-3 py-3">N° de suivi</th>
-                <th className="px-3 py-3">Transporteur</th>
+                {/* Order asked on 17/11: date, supplier, invoice, (Amazon), tracking, stage, shipment */}
+                <th className="px-3 py-3" title="Date de livraison prévue">Livraison prévue</th>
                 <th className="px-3 py-3">Fournisseur</th>
                 <th className="px-3 py-3">Factures</th>
                 {destination === 'ORLY' && <th className="px-3 py-3">Commande Amazon</th>}
-                <th className="px-3 py-3">Livraison prévue</th>
-                <th className="px-3 py-3">État</th>
-                {destination === 'ROUEN' && <th className="px-3 py-3">Colisage / volume</th>}
+                <th className="px-3 py-3">N° de suivi</th>
+                <th className="px-3 py-3">Étape</th>
+                {destination === 'ROUEN' && <th className="px-3 py-3">Lieu, colisage / volume</th>}
                 <th className="px-3 py-3">Expédition</th>
                 <th className="px-3 py-3 text-right">Actions</th>
               </tr>
@@ -778,7 +782,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                           />
                         </td>
                       )}
-                      <td className="px-3 py-2.5 font-mono font-semibold">
+                      <td className="whitespace-nowrap px-3 py-2.5">
                         <button
                           onClick={() => setOpenId(openId === p.id ? null : p.id)}
                           title={openId === p.id ? 'Masquer le contenu' : 'Voir le contenu de la facture / du colis'}
@@ -787,9 +791,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
                         >
                           {openId === p.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                         </button>
-                        {p.tracking_number || '— (inconnu)'}
+                        {formatDate(p.expected_delivery)}
                       </td>
-                      <td className="px-3 py-2.5">{p.carrier_name || '—'}</td>
                       <td className="px-3 py-2.5 font-semibold">{p.supplier_name || '—'}</td>
                       <td className="px-3 py-2.5">
                         {p.invoices.length === 0 ? (
@@ -804,7 +807,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
                         )}
                       </td>
                       {destination === 'ORLY' && <AmazonOrdersCell parcel={p} />}
-                      <td className="px-3 py-2.5">{formatDate(p.expected_delivery)}</td>
+                      <td className="px-3 py-2.5">
+                        <span className="font-mono font-semibold">{p.tracking_number || '— (inconnu)'}</span>
+                        {p.carrier_name && <span className="ml-1 text-[10px] text-slate-400">{p.carrier_name}</span>}
+                      </td>
                       <td className="px-3 py-2.5">
                         <span
                           title={parcelStatusHint(p.status, p.destination)}
@@ -831,7 +837,12 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       </td>
                       {destination === 'ROUEN' && (
                         <td className="px-3 py-2.5">
-                          {[p.delivery_type, p.packing_info, p.volume_m3 != null ? `${p.volume_m3} m³` : null]
+                          {[
+                            p.position_city ? [p.position_city, p.position_country].filter(Boolean).join(', ') : null,
+                            p.delivery_type,
+                            p.packing_info,
+                            p.volume_m3 != null ? `${p.volume_m3} m³` : null,
+                          ]
                             .filter(Boolean)
                             .join(' · ') || '—'}
                         </td>
@@ -892,7 +903,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                             <button
                               onClick={() => backToReceive(p)}
                               disabled={busy !== null}
-                              title="Remettre à recevoir"
+                              title={p.status === 'search' ? "Annuler l’avis de recherche (retour à « Reçu »)" : 'Remettre à recevoir'}
                               className={`${iconButton} hover:text-[#623387]`}
                             >
                               <Undo2 className="h-4 w-4" />

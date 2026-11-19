@@ -299,6 +299,9 @@ export interface Parcel {
   packing_info: string | null;
   volume_m3: number | null;
   delivery_type: DeliveryType | null;
+  /** Sea: positioning place, null = Rouen, France. */
+  position_city: string | null;
+  position_country: string | null;
   /** Shipments of its invoices (or the shipment it was taken from). */
   shipment_ids: string[];
   invoices: {
@@ -460,7 +463,7 @@ export type PointPhotoLink =
       };
     } & PointBoxFields)
   /** Received before its invoice is in the base: linked to it later by the same number. */
-  | ({ new_parcel: { tracking_number: string; supplier_name: string; without_invoice: true } } & PointBoxFields);
+  | ({ new_parcel: { tracking_number: string; supplier_name: string; expected_delivery?: string | null; without_invoice: true } } & PointBoxFields);
 
 /** Matches a photo to a parcel (confirms its reception at the point date), or detaches it. */
 export const linkPointPhoto = (pointId: string, photoId: string, link: PointPhotoLink) =>

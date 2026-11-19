@@ -30,6 +30,8 @@ export interface ReceivedArticle {
   shipment_global_status: string | null;
   confirmed_at: string | null;
   orly_scan_date: string | null;
+  /** Date de récep Mada of the shipment. */
+  mada_receipt_date: string | null;
   invoice_id: string;
   invoice_ref: string | null;
   supplier: string | null;

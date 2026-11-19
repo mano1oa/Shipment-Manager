@@ -42,6 +42,8 @@ interface ShipmentsViewProps {
   canEdit: boolean;
   onUpdateShipment?: (updated: Shipment) => void;
   onNewShipment?: () => void;
+  /** Sourcing: no "Générer réclamation" (read only, 17/11). */
+  canGenerateClaim?: boolean;
   /** Value from the linked DIGI LOGISTIC invoice (matched on Ref FA / invoice n°). */
   digiValueFor?: (shipment: Shipment) => DigiValueMatch | null;
 }
@@ -119,6 +121,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
   onUpdateShipment,
   onNewShipment,
   digiValueFor,
+  canGenerateClaim = true,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedCarrier, setSelectedCarrier] = useState('all');
@@ -337,6 +340,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
           )}
 
           {/* Claim Button */}
+          {canGenerateClaim && (
           <button
             id="shipments-btn-generate-claim"
             onClick={() => setShowClaimModal(true)}
@@ -350,6 +354,7 @@ export const ShipmentsView: React.FC<ShipmentsViewProps> = ({
               </span>
             )}
           </button>
+          )}
 
           <button
             id="shipments-btn-export-csv"

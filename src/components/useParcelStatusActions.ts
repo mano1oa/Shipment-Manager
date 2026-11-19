@@ -33,7 +33,8 @@ export function useParcelStatusActions(hub: string, onReload: () => void, onDone
   };
 
   const confirmReception = (list: Parcel[], receivedAt: string) => {
-    if (!window.confirm(`Confirmer la réception à ${hub} de ${list.length} colis, le ${formatDate(receivedAt)} ?`)) return;
+    const place = hub === 'Rouen' ? 'au lieu de positionnement' : `à ${hub}`;
+    if (!window.confirm(`Confirmer la réception ${place} de ${list.length} colis, le ${formatDate(receivedAt)} ?`)) return;
     changeStatus(list, 'received', 'Réception confirmée', receivedAt);
   };
 
@@ -47,7 +48,17 @@ export function useParcelStatusActions(hub: string, onReload: () => void, onDone
     changeStatus([p], 'lost', `Déclaré perdu avant ${hub}`);
   };
 
+  /**
+   * Back to the previous state: an avis de recherche concerns a parcel already
+   * received, so it goes back to "received" (reception kept); a received or
+   * lost parcel goes back to "to receive".
+   */
   const backToReceive = (p: Parcel) => {
+    if (p.status === 'search') {
+      if (!window.confirm(`Annuler l'avis de recherche du colis ${p.tracking_number || ''} ? Il redevient « reçu » à ${hub}.`)) return;
+      changeStatus([p], 'received', 'Avis de recherche annulé');
+      return;
+    }
     if (!window.confirm(`Remettre le colis ${p.tracking_number || ''} « à recevoir » ? La date de réception est effacée.`)) return;
     changeStatus([p], 'to_receive', 'Remis à recevoir');
   };

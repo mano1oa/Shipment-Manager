@@ -12,7 +12,11 @@ import { AIAssistantBubble } from './components/AIAssistantBubble';
 const SettingsView = lazy(() => import('./components/SettingsView').then((m) => ({ default: m.SettingsView })));
 const DigiInvoicesView = lazy(() => import('./components/DigiInvoicesView').then((m) => ({ default: m.DigiInvoicesView })));
 const ReceivedArticlesView = lazy(() => import('./components/ReceivedArticlesView').then((m) => ({ default: m.ReceivedArticlesView })));
-import { apiJson, fetchAllParcels, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
+import { apiJson, DigiInvoice, fetchAllParcels, fetchDigiInvoices, fetchTrackingSettings, ParcelsOverview } from './components/digiApi';
+import { parcelMatches } from './components/ParcelsBoardView';
+import { matchesSearch } from './components/ShipmentsView';
+import { invoiceMatches } from './lib/invoiceSearch';
+import type { GlobalSearchResult } from './components/Navbar';
 import { evaluateParcelAlerts } from './lib/parcelAlerts';
 import { DEFAULT_TRACKING_SETTINGS } from './lib/parcelTracking';
 import type { TrackingSettings } from './lib/parcelTracking';
@@ -514,6 +518,9 @@ useEffect(() => {
   };
 
   const canEdit = currentRole === 'supply_chain' || currentRole === 'sourcing';
+  // Suivi aérien / maritime: Sourcing reads only (remarques du 17/11); it keeps
+  // the receptions in Madagascar and the supplier invoices (canEdit).
+  const canEditTracking = currentRole === 'supply_chain';
 
   // Role permissions mapping
   const allowedTabsByRole: Record<UserRole, NavTab[]> = useMemo(() => ({
@@ -549,13 +556,45 @@ useEffect(() => {
     }
   };
 
-  // The navbar search filters the Air / Sea lists: jump to one when typing elsewhere
-  const handleGlobalSearchChange = (value: string) => {
-    setGlobalSearch(value);
-    if (value.trim() && activeTab !== 'air' && activeTab !== 'sea') {
-      navigateTab('air');
-    }
-  };
+  // The navbar search applies on every screen (remarques du 17/11): it filters the
+  // lists of the current screen, and its menu shows how many results each section holds.
+  const handleGlobalSearchChange = (value: string) => setGlobalSearch(value);
+
+  // Invoices, read once for the counts of the search menu
+  const [searchInvoices, setSearchInvoices] = useState<DigiInvoice[] | null>(null);
+  const searchActive = globalSearch.trim().length > 0;
+  useEffect(() => {
+    if (!searchActive || searchInvoices !== null || !allowedTabs.includes('digi')) return;
+    fetchDigiInvoices()
+      .then(setSearchInvoices)
+      .catch(() => setSearchInvoices([]));
+  }, [searchActive, searchInvoices, allowedTabs]);
+  // Read again after an import (new invoices)
+  useEffect(() => setSearchInvoices(null), [invoicesRefreshKey]);
+
+  const searchResults: GlobalSearchResult[] = useMemo(() => {
+    if (!searchActive) return [];
+    const q = globalSearch;
+    const parcels = parcelsOverview?.parcels ?? null;
+    const byMode = (mode: 'Air' | 'Sea') => {
+      const destination = mode === 'Air' ? 'ORLY' : 'ROUEN';
+      const parcelCount = parcels ? parcels.filter((p) => p.destination === destination && parcelMatches(p, q)).length : null;
+      const shipmentCount = shipmentsWithAlerts.filter((s) => s.mode === mode && matchesSearch(s, q)).length;
+      return parcelCount === null ? null : parcelCount + shipmentCount;
+    };
+    const list: GlobalSearchResult[] = [
+      { tab: 'air', label: 'Suivi aérien', count: byMode('Air'), detail: 'colis et expéditions' },
+      { tab: 'sea', label: 'Suivi maritime', count: byMode('Sea'), detail: 'colis et expéditions' },
+      {
+        tab: 'digi',
+        label: 'Factures fournisseurs',
+        count: searchInvoices ? searchInvoices.filter((i) => invoiceMatches(i, q)).length : null,
+        detail: 'factures',
+      },
+      { tab: 'received', label: 'Réception Madagascar', count: null, detail: 'articles reçus' },
+    ];
+    return list.filter((r) => allowedTabs.includes(r.tab));
+  }, [searchActive, globalSearch, parcelsOverview, shipmentsWithAlerts, searchInvoices, allowedTabs]);
 
   // Ensure active tab stays within allowed tabs for the current role
   useEffect(() => {
@@ -648,6 +687,9 @@ if (!authUser) {
         onToggleDarkMode={() => setDarkMode(!darkMode)}
         globalSearch={globalSearch}
         onSearchChange={handleGlobalSearchChange}
+        searchResults={searchResults}
+        activeTab={activeTab}
+        onOpenSearchResult={navigateTab}
         showSearch={allowedTabsByRole[currentRole].includes('air')}
         alertsCount={allAlertsWithResolved.filter((a) => !a.resolved).length}
         onOpenAssistant={() => setAssistantOpen(true)}
@@ -766,8 +808,9 @@ if (!authUser) {
               onReloadParcels={loadParcels}
               settings={trackingSettings}
               isSupplyChain={currentRole === 'supply_chain'}
-              canEdit={canEdit}
-              onUpdateShipment={canEdit ? handleSaveShipment : undefined}
+              canEdit={canEditTracking}
+              canGenerateClaim={currentRole !== 'sourcing'}
+              onUpdateShipment={canEditTracking ? handleSaveShipment : undefined}
               onNewShipment={
                 currentRole === 'supply_chain' ? () => openNewShipment(activeTab === 'air' ? 'Air' : 'Sea') : undefined
               }
@@ -789,10 +832,11 @@ if (!authUser) {
               shipments={shipmentsWithAlerts}
               onDeleteShipment={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
               refreshKey={invoicesRefreshKey}
+              globalSearch={globalSearch}
             />
           )}
 
-          {activeTab === 'received' && <ReceivedArticlesView canEdit={canEdit} onOpenShipment={openShipmentById} />}
+          {activeTab === 'received' && <ReceivedArticlesView canEdit={canEdit} onOpenShipment={openShipmentById} globalSearch={globalSearch} />}
 
           {activeTab === 'alerts' && (
             <AlertsCenterView
@@ -839,7 +883,8 @@ if (!authUser) {
           key={selectedShipment.id}
           shipment={selectedShipment}
           onClose={() => setSelectedShipment(null)}
-          canEdit={canEdit}
+          canEdit={canEditTracking}
+          canEditReceipts={canEdit}
           onSave={handleSaveShipment}
           onDelete={currentRole === 'supply_chain' ? handleDeleteShipment : undefined}
           onDispatchGoogleChat={handleDispatchGoogleChat}

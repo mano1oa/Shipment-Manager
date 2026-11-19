@@ -1,6 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Bell, Search, Sun, Moon, RefreshCw, Menu, X, FileSpreadsheet } from 'lucide-react';
 import { UserRole } from '../types';
+import type { NavTab } from './Sidebar';
+
+/** One section of the search menu: count = null while unknown (not loaded, or not counted). */
+export interface GlobalSearchResult {
+  tab: NavTab;
+  label: string;
+  count: number | null;
+  detail: string;
+}
 import { UserProfileMenu } from './UserProfileMenu';
 import nexthopeLogotype from '../assets/nexthope-logotype.png';
 
@@ -20,6 +29,10 @@ interface NavbarProps {
   globalSearch: string;
   onSearchChange: (search: string) => void;
   showSearch?: boolean;
+  /** Sections where the search finds something (menu under the search field). */
+  searchResults?: GlobalSearchResult[];
+  activeTab?: NavTab;
+  onOpenSearchResult?: (tab: NavTab) => void;
   alertsCount: number;
   onOpenAssistant: () => void;
   onOpenAlerts: () => void;
@@ -47,6 +60,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   globalSearch,
   onSearchChange,
   showSearch = true,
+  searchResults = [],
+  activeTab,
+  onOpenSearchResult,
   alertsCount,
   onOpenAssistant,
   onOpenAlerts,
@@ -57,6 +73,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleMobileNav,
   mobileNavOpen,
 }) => {
+  /** Search menu: open while the field has the focus and something is typed. */
+  const [searchFocused, setSearchFocused] = useState(false);
+  const showResults = searchFocused && globalSearch.trim().length > 0 && searchResults.length > 0;
+
   const roleLabel =
     currentRole === 'supply_chain' ? 'Supply Chain' : currentRole === 'sourcing' ? 'Sourcing' : 'Direction';
 
@@ -81,17 +101,59 @@ export const Navbar: React.FC<NavbarProps> = ({
         draggable={false}
       />
 
-      {/* Global Search (filters the Air / Sea lists) */}
+      {/* Global Search: filters the lists of every screen, the menu shows each section's results */}
       {showSearch && (
         <label className="relative order-last w-full sm:order-none sm:w-auto sm:max-w-[520px] sm:flex-1">
           <span className="sr-only">Rechercher</span>
           <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f6979]" />
+          {showResults && (
+            <div
+              role="listbox"
+              aria-label="Résultats de la recherche par section"
+              className="absolute inset-x-0 top-full z-50 mt-1.5 overflow-hidden rounded-xl border border-[#E1DDE7] bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+            >
+              <p className="border-b border-[#EFECF3] px-3.5 py-2 text-[11px] font-medium text-[#6f6979] dark:border-slate-800 dark:text-slate-400">
+                Rechercher « {globalSearch.trim()} » dans toute l’application
+              </p>
+              {searchResults.map((r) => (
+                <button
+                  key={r.tab}
+                  type="button"
+                  role="option"
+                  aria-selected={r.tab === activeTab}
+                  // Before the field loses the focus (the menu would close first)
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    onOpenSearchResult?.(r.tab);
+                    setSearchFocused(false);
+                  }}
+                  className={`flex w-full items-center justify-between gap-3 px-3.5 py-2.5 text-left text-sm transition hover:bg-[#F8F7FA] dark:hover:bg-slate-800 ${
+                    r.tab === activeTab ? 'font-semibold text-[#623387] dark:text-[#B688FF]' : 'text-[#17111F] dark:text-slate-100'
+                  }`}
+                >
+                  <span>
+                    {r.label}
+                    {r.tab === activeTab && <span className="ml-1.5 text-[11px] font-normal text-[#6f6979]">(écran ouvert)</span>}
+                  </span>
+                  <span className={`shrink-0 text-xs tabular-nums ${r.count ? 'font-bold text-[#623387] dark:text-[#B688FF]' : 'text-[#6f6979]'}`}>
+                    {r.count === null ? 'chercher' : `${r.count} ${r.detail}`}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <input
             id="global-search-input"
             type="search"
-            placeholder="Rechercher par n° de suivi, BL/AWB, fournisseur…"
+            placeholder="Rechercher dans toute l’application : n° de suivi, BL/AWB, facture, fournisseur…"
             value={globalSearch}
-            onChange={(e) => onSearchChange(e.target.value)}
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => setSearchFocused(false)}
+            onKeyDown={(e) => e.key === 'Escape' && setSearchFocused(false)}
+            onChange={(e) => {
+              onSearchChange(e.target.value);
+              setSearchFocused(true);
+            }}
             className="h-11 w-full rounded-xl border border-[#E1DDE7] bg-[#F8F7FA] pl-10 pr-4 text-sm text-[#17111F] placeholder-[#6f6979] transition focus:border-[#623387] focus:bg-white focus:outline-none focus:ring-4 focus:ring-[#623387]/10 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:placeholder-slate-400 dark:focus:bg-slate-900"
           />
         </label>

@@ -31,6 +31,7 @@ import type { ParcelDestination } from '../lib/parcelTracking';
 import { PARCEL_NUMBER_KIND_LABELS, boxSummary, invoiceBoxesLabel, parcelNumberKindText } from '../lib/parcelBoxes';
 import type { ParcelNumberKind } from '../lib/parcelBoxes';
 import {
+  AmazonPendingParcel,
   DigiInvoice,
   Parcel,
   PointPhoto,
@@ -40,6 +41,7 @@ import {
   createReceptionPoint,
   deleteReceptionPoint,
   deletePointPhoto,
+  fetchAmazonPending,
   fetchDigiInvoices,
   fetchReceptionPoint,
   fetchReceptionPoints,
@@ -159,12 +161,21 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
 
   useEffect(loadPoints, [loadPoints]);
 
-  // Tracked invoices still waiting for parcels: for parcels not announced
+  // Tracked invoices, for parcels not announced. Those already received are not
+  // listed, but stay findable by search (another parcel can arrive another day).
   useEffect(() => {
     fetchDigiInvoices()
-      .then((list) => setInvoices(list.filter((i) => isGoodsInvoice(i) && !isInvoiceReceived(i))))
+      .then((list) => setInvoices(list.filter(isGoodsInvoice)))
       .catch(() => setInvoices([]));
   }, []);
+
+  // Numbers of the Amazon report waiting for their invoice: found here too
+  const [amazonWaiting, setAmazonWaiting] = useState<AmazonPendingParcel[]>([]);
+  useEffect(() => {
+    fetchAmazonPending(destination)
+      .then(setAmazonWaiting)
+      .catch(() => setAmazonWaiting([]));
+  }, [destination]);
 
   const openPoint = async (id: string, keepIndex = false) => {
     setError(null);
@@ -252,6 +263,64 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     else setMessage(`${list.length} photo(s) ajoutée(s) : rattachez-les une à une.`);
     await openPoint(current.point.id, true);
   };
+
+  // ---- Drag and drop: anywhere on the page while a point is open ----
+  const [dragging, setDragging] = useState(false);
+  const handleFilesRef = useRef(handleFiles);
+  handleFilesRef.current = handleFiles;
+  const uploading = progress !== null;
+  useEffect(() => {
+    if (!current) return;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    let depth = 0;
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      setDragging(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      // Without it the browser opens the photo instead of sending it
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = uploading ? 'none' : 'copy';
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      if (uploading || !e.dataTransfer) return;
+      // Some apps only fill "items": the files are read from there too
+      const fromItems = Array.from(e.dataTransfer.items ?? [])
+        .filter((it) => it.kind === 'file')
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => f !== null);
+      const files = e.dataTransfer.files.length > 0 ? Array.from(e.dataTransfer.files) : fromItems;
+      const images = files.filter((f) => f.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|webp)$/i.test(f.name));
+      if (images.length === 0) {
+        setError('Aucune photo dans ce qui a été déposé (formats acceptés : JPG, PNG, HEIC, WEBP).');
+        return;
+      }
+      handleFilesRef.current(images);
+    };
+    window.addEventListener('dragenter', onEnter);
+    window.addEventListener('dragover', onOver);
+    window.addEventListener('dragleave', onLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onEnter);
+      window.removeEventListener('dragover', onOver);
+      window.removeEventListener('dragleave', onLeave);
+      window.removeEventListener('drop', onDrop);
+      setDragging(false);
+    };
+  }, [current?.point.id, uploading]);
 
   // ---- Navigation between photos ----
   const visible = useMemo(
@@ -359,6 +428,12 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       )
       .slice(0, 8);
   }, [number, typed, parcels, destination]);
+  /** Number of the Amazon report still waiting for its invoice (banner « en attente de facture »). */
+  const amazonPending = useMemo(() => {
+    const keys = [compact(number), compact(typed)].filter((k) => k.length >= 6);
+    if (keys.length === 0) return null;
+    return amazonWaiting.find((a) => keys.includes(compact(a.tracking_number))) ?? null;
+  }, [amazonWaiting, number, typed]);
   /** Selected without a click only on the exact main number (never on another number). */
   const exact = matches[0]?.score === 4 && matches[0].matched === 'primary' ? matches[0].parcel : null;
   /** Parcel picked in the list (or the exact match): the one to link. */
@@ -407,9 +482,9 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
   const suppliers = useMemo(
     () =>
       Array.from(
-        new Set<string>([...(invoices || []).map(supplierOf), ...waitingWithoutNumber.map((p) => p.supplier_name || '—')])
+        new Set<string>([...(invoices || []).filter((i) => !isInvoiceReceived(i) || chosenInvoices.has(i.id)).map(supplierOf), ...waitingWithoutNumber.map((p) => p.supplier_name || '—')])
       ).sort((a, b) => a.localeCompare(b, 'fr')),
-    [invoices, waitingWithoutNumber]
+    [invoices, waitingWithoutNumber, chosenInvoices]
   );
 
   /** Links the parcel; a parcel without number gets the one read on the label. */
@@ -417,7 +492,27 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
     !p.tracking_number && number.trim()
       ? link({ parcel_id: p.id, tracking_number: number.trim(), ...boxFields() }, 'N° complété et rattaché')
       : link({ parcel_id: p.id, ...boxFields() }, p.boxes.length > 0 ? 'Boîte suivante rattachée' : 'Rattachée');
-  const supplierInvoices = useMemo(() => (invoices || []).filter((i) => supplierOf(i) === supplier), [invoices, supplier]);
+  const supplierInvoices = useMemo(
+    () => (invoices || []).filter((i) => supplierOf(i) === supplier && (!isInvoiceReceived(i) || chosenInvoices.has(i.id))),
+    [invoices, supplier, chosenInvoices]
+  );
+  /** Invoice already received, searched by its n° or supplier (Grosbill 4344965…). */
+  const [invoiceSearch, setInvoiceSearch] = useState('');
+  const foundReceived = useMemo(() => {
+    const key = compact(invoiceSearch);
+    if (key.length < 3) return [];
+    return (invoices || [])
+      .filter((i) => isInvoiceReceived(i) && !chosenInvoices.has(i.id))
+      .filter((i) => compact(`${i.ref || ''} ${supplierOf(i)}`).includes(key))
+      .slice(0, 8);
+  }, [invoices, invoiceSearch, chosenInvoices]);
+  /** Picks a received invoice: its supplier becomes the one of the form. */
+  const pickReceivedInvoice = (inv: DigiInvoice) => {
+    const s = supplierOf(inv);
+    setSupplier(s);
+    setChosenInvoices((prev) => new Set(supplier === s ? [...prev, inv.id] : [inv.id]));
+    setInvoiceSearch('');
+  };
   const supplierName = supplier === OTHER_SUPPLIER ? otherSupplier.trim() : supplier;
 
   /** After a match: refresh, then the next photo to match. */
@@ -468,7 +563,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       );
       // Invoices may now be fully received
       fetchDigiInvoices()
-        .then((list) => setInvoices(list.filter((i) => isGoodsInvoice(i) && !isInvoiceReceived(i))))
+        .then((list) => setInvoices(list.filter(isGoodsInvoice)))
         .catch(() => {});
       return true;
     } catch (err: any) {
@@ -723,13 +818,17 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:flex-row">
           {/* Photo viewer */}
           <div
-            className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              handleFiles(e.dataTransfer.files);
-            }}
+            className={`relative flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border bg-white dark:bg-slate-900 ${
+              dragging ? 'border-2 border-dashed border-[#623387] dark:border-purple-400' : 'border-slate-200 dark:border-slate-800'
+            }`}
           >
+            {dragging && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-[#623387]/10 backdrop-blur-[1px]">
+                <span className="flex items-center gap-2 rounded-xl bg-white px-4 py-2 font-bold text-[#623387] shadow dark:bg-slate-900 dark:text-purple-300">
+                  <Upload className="h-4 w-4" /> Lâchez les photos pour les ajouter au point
+                </span>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-3 dark:border-slate-800">
               <input
                 ref={fileInput}
@@ -1146,7 +1245,41 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
 
                 {!chosen && (
                   <>
-                    {typed && matches.length === 0 && (
+                    {matches.length === 0 && amazonPending && (
+                      <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+                        <p className="font-bold text-amber-900 dark:text-amber-200">
+                          N° du rapport Amazon, en attente de facture
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-amber-800 dark:text-amber-300">
+                          Commande(s) {amazonPending.sources.map((s) => s.order_ref).filter(Boolean).join(', ') || '—'}
+                          {amazonPending.carrier_text ? ` · ${amazonPending.carrier_text}` : ''}
+                          {amazonPending.expected_delivery ? ` · prévu le ${formatDate(amazonPending.expected_delivery)}` : ''}.
+                          Le colis est reçu maintenant ; sa facture s’y rattachera toute seule à son arrivée.
+                        </p>
+                        <button
+                          onClick={() =>
+                            link(
+                              {
+                                new_parcel: {
+                                  tracking_number: amazonPending.tracking_number,
+                                  supplier_name: 'Amazon',
+                                  expected_delivery: amazonPending.expected_delivery,
+                                  without_invoice: true,
+                                },
+                                ...boxFields(),
+                              },
+                              'Colis Amazon reçu (facture en attente)'
+                            )
+                          }
+                          disabled={saving}
+                          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 font-bold text-white hover:bg-[#522870] disabled:opacity-40"
+                        >
+                          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link2 className="h-4 w-4" />}
+                          Rattacher — reçu le {formatDate(current.point.point_date)}
+                        </button>
+                      </div>
+                    )}
+                    {typed && matches.length === 0 && !amazonPending && (
                       <p className="rounded-lg bg-amber-50 px-2.5 py-2 text-[11px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                         Aucun colis en base avec ce n°. Vérifiez la saisie, sinon choisissez le fournisseur : ce colis est
                         peut-être annoncé sans n° de suivi ou avec un autre n° (ce n° est alors son BL), ou il faut le
@@ -1274,6 +1407,38 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                           ))}
                         </div>
                       )}
+                      <div className="mt-2">
+                        <span className={label}>Facture déjà reçue (autre colis arrivé un autre jour) ?</span>
+                        <input
+                          value={invoiceSearch}
+                          onChange={(e) => setInvoiceSearch(e.target.value)}
+                          placeholder="N° de facture ou fournisseur"
+                          className={inputClass}
+                        />
+                        {foundReceived.length > 0 && (
+                          <div className="mt-1 max-h-40 space-y-1 overflow-y-auto">
+                            {foundReceived.map((inv) => (
+                              <button
+                                key={inv.id}
+                                type="button"
+                                onClick={() => pickReceivedInvoice(inv)}
+                                className="flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 text-left hover:border-[#623387] dark:border-slate-700"
+                              >
+                                <span className="min-w-0 truncate">
+                                  <span className="font-semibold">{inv.ref || '—'}</span>
+                                  <span className="ml-1 text-slate-500">
+                                    {supplierOf(inv)} · {formatDate(inv.invoice_date)} · {inv.parcel_received_count}/{inv.parcel_count} reçu(s)
+                                  </span>
+                                </span>
+                                <span className="shrink-0 text-[11px] font-bold text-[#623387] dark:text-purple-300">Choisir</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {invoiceSearch.trim().length >= 3 && foundReceived.length === 0 && (
+                          <span className="mt-1 block text-[10px] text-slate-400">Aucune facture déjà reçue ne correspond.</span>
+                        )}
+                      </div>
                       <button
                         onClick={() => openParcelForm(null)}
                         disabled={saving || chosenInvoices.size === 0}

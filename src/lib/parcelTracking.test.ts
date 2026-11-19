@@ -7,6 +7,7 @@ import {
   convertLegacyShipmentStatus,
   isParcelOverdue,
   parcelLossDeadline,
+  parcelPlace,
   parcelStatusLabel,
   validateParcelInput,
 } from './parcelTracking.js';
@@ -114,6 +115,8 @@ test('validation d’un colis', () => {
     packing_info: null,
     volume_m3: null,
     delivery_type: null,
+    position_city: null,
+    position_country: null,
   });
   const full = validateParcelInput({
     carrier_name: '  UPS  ',
@@ -128,6 +131,15 @@ test('validation d’un colis', () => {
   assert.equal(full.value?.notes, 'fragile');
   assert.equal(full.value?.volume_m3, 1.235);
   assert.equal(full.value?.destination, 'ROUEN');
+
+  // Sea: positioning place kept; Orly: always null
+  const sea = validateParcelInput({ destination: 'ROUEN', position_city: ' Shenzhen ', position_country: 'Chine' });
+  assert.equal(sea.value?.position_city, 'Shenzhen');
+  assert.equal(sea.value?.position_country, 'Chine');
+  assert.equal(validateParcelInput({ destination: 'ORLY', position_city: 'Lyon' }).value?.position_city, null);
+  assert.equal(parcelPlace({ destination: 'ROUEN', position_city: null }), 'Rouen');
+  assert.equal(parcelPlace({ destination: 'ROUEN', position_city: 'Shenzhen' }), 'Shenzhen');
+  assert.equal(parcelPlace({ destination: 'ORLY', position_city: 'Lyon' }), 'Orly');
 
   const bad = validateParcelInput({
     expected_delivery: '10/10/2026',
