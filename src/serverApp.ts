@@ -2919,7 +2919,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         return res.status(409).json({ success: false, error: 'Les deux colis n\'ont pas le même fournisseur : fusion impossible.' });
       }
       if (merged.destination !== principal.destination) {
-        return res.status(409).json({ success: false, error: 'Les deux colis ne vont pas au même hub (Orly / Rouen) : fusion impossible.' });
+        return res.status(409).json({ success: false, error: 'Les deux colis ne vont pas au même hub (Orly / maritime) : fusion impossible.' });
       }
       if (merged.status === 'search') {
         return res.status(409).json({ success: false, error: 'Ce colis est en avis de recherche : fusion impossible.' });
@@ -3188,7 +3188,7 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
         if (!point) return res.status(404).json({ success: false, error: 'Point introuvable' });
         let folderId = point.drive_folder_id;
         if (!folderId) {
-          const hub = point.destination === 'ORLY' ? 'Point Antoine' : 'Réception Rouen';
+          const hub = point.destination === 'ORLY' ? 'Point Antoine' : 'Réception maritime';
           folderId = await setPointFolder(point.id, await createPhotoFolder(`${hub} ${point.point_date} (${point.id.slice(0, 8)})`));
         }
         const ext = contentType === 'image/png' ? 'png' : contentType === 'image/webp' ? 'webp' : 'jpg';

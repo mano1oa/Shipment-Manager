@@ -917,6 +917,8 @@ export interface LostParcelToNotify {
   supplier_name: string | null;
   carrier_name: string | null;
   destination: ParcelDestination;
+  /** Sea: positioning city (null = Rouen). */
+  position_city: string | null;
   expected_delivery: string | null;
   invoice_refs: string[];
 }
@@ -926,7 +928,7 @@ export async function listLostParcelsToNotify(): Promise<LostParcelToNotify[]> {
   await ensureDigiInvoicesSchema();
   const sql = getDb();
   const rows = await sql`
-    SELECT p.id, p.tracking_number, p.supplier_name, p.carrier_name, p.destination,
+    SELECT p.id, p.tracking_number, p.supplier_name, p.carrier_name, p.destination, p.position_city,
       TO_CHAR(p.expected_delivery, 'YYYY-MM-DD') AS expected_delivery,
       COALESCE(
         (SELECT array_agg(COALESCE(i.ref, '—') ORDER BY i.ref) FROM parcel_invoices pi

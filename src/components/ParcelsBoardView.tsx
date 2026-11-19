@@ -340,7 +340,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
               title="Déposer toutes les photos du point, puis les rattacher une à une (confirme les réceptions)"
               className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
             >
-              <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
+              <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception maritime (photos)'}
             </button>
             <button
               onClick={() => setReceiving(true)}

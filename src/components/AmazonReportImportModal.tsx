@@ -124,7 +124,7 @@ export const AmazonReportImportModal: React.FC<Props> = ({ destination, onClose,
       <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-slate-900">
         <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <h2 className="flex items-center gap-2 text-base font-bold text-slate-900 dark:text-white">
-            <FileSpreadsheet className="h-5 w-5 text-[#623387]" /> Import du rapport d'expédition Amazon — colis vers {hub}
+            <FileSpreadsheet className="h-5 w-5 text-[#623387]" /> Import du rapport d'expédition Amazon — {destination === 'ORLY' ? `colis vers ${hub}` : 'colis maritimes'}
           </h2>
           <button onClick={onClose} className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
             <X className="h-5 w-5" />

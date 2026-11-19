@@ -59,7 +59,7 @@ test('point hebdo : message', () => {
   const lines = text.split('\n');
   assert.equal(lines[0], '*Point hebdo Shipment Manager — lundi 16 novembre*');
   assert.equal(lines[1], '• 31 colis attendus des fournisseurs (dont 4 en retard)');
-  assert.equal(lines[2], '• 20 au hub (Orly 14 · Rouen 6)');
+  assert.equal(lines[2], '• 20 au hub (Orly 14 · Maritime 6)');
   assert.match(lines[3], /^• 12 en route vers Madagascar · valeur 184\s320\s€$/);
   assert.equal(lines[4], '• 2 perdus, 1 avis de recherche');
   assert.equal(lines[5], '• 1 expédition bloquée en douane');

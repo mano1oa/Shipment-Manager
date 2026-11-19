@@ -22,11 +22,13 @@ import { sendChatMessage } from './googleChat.js';
 /** Messages are cut to stay under the Google Chat text limit. */
 const MAX_LINES = 40;
 
-const hubOf = (destination: string) => (destination === 'ORLY' ? 'Orly' : 'Rouen');
+/** Orly, or the sea positioning city (Rouen by default). */
+const hubOf = (p: { destination: string; position_city?: string | null }) =>
+  p.destination === 'ORLY' ? 'Orly' : p.position_city?.trim() || 'Rouen';
 
 export function lostParcelsMessage(parcels: LostParcelToNotify[]): string {
   const lines = parcels.slice(0, MAX_LINES).map((p) => {
-    const hub = hubOf(p.destination);
+    const hub = hubOf(p);
     return `- ${p.supplier_name || 'Fournisseur inconnu'} · ${p.tracking_number || 'sans n° de suivi'}${
       p.carrier_name ? ` (${p.carrier_name})` : ''
     } · facture(s) ${p.invoice_refs.join(', ') || '—'} · non reçu à ${hub}${
@@ -42,9 +44,7 @@ export function partialParcelsMessage(parcels: ParcelRecord[]): string {
     const expected = p.boxes_expected ?? 0;
     return `- ${p.supplier_name || 'Fournisseur inconnu'} · ${p.tracking_number || 'sans n° de suivi'}${
       p.carrier_name ? ` (${p.carrier_name})` : ''
-    } · facture(s) ${p.invoices.map((i) => i.ref || '—').join(', ') || '—'} · ${p.boxes.length}/${expected} boîtes reçues à ${hubOf(
-      p.destination
-    )}, ${expected - p.boxes.length} manquante(s)`;
+    } · facture(s) ${p.invoices.map((i) => i.ref || '—').join(', ') || '—'} · ${p.boxes.length}/${expected} boîtes reçues à ${hubOf(p)}, ${expected - p.boxes.length} manquante(s)`;
   });
   const more = parcels.length > MAX_LINES ? `\n… et ${parcels.length - MAX_LINES} autre(s) : voir le centre d'alertes.` : '';
   return `📦 *Colis incomplets — ${parcels.length} à vérifier*\n${lines.join('\n')}${more}`;

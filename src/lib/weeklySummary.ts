@@ -98,7 +98,7 @@ export function weeklySummaryMessage(s: WeeklySummary, dateLabel: string): strin
       : `${s.customsBlocked} ${plural(s.customsBlocked, 'expédition bloquée', 'expéditions bloquées')} en douane`;
   const lines = [
     `${s.toHub} colis ${plural(s.toHub, 'attendu', 'attendus')} des fournisseurs${s.late > 0 ? ` (dont ${s.late} en retard)` : ''}`,
-    `${s.atHubOrly + s.atHubRouen} au hub (Orly ${s.atHubOrly} · Rouen ${s.atHubRouen})`,
+    `${s.atHubOrly + s.atHubRouen} au hub (Orly ${s.atHubOrly} · Maritime ${s.atHubRouen})`,
     `${s.toMada} en route vers Madagascar${s.valueInTransit > 0 ? ` · valeur ${formatEuros(s.valueInTransit)}` : ''}`,
     lostLine,
     customsLine,

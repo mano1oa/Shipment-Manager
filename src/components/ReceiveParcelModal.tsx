@@ -98,10 +98,10 @@ export const ReceiveParcelModal: React.FC<Props> = ({ destination, onClose, onSa
               <PackageCheck className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">Colis reçu à {hub}, non annoncé</h2>
+              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">{destination === 'ORLY' ? `Colis reçu à ${hub}, non annoncé` : 'Colis maritime reçu, non annoncé'}</h2>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Colis confirmé {destination === 'ORLY' ? 'par Antoine' : 'au quai de Rouen'} sans n° de suivi saisi :
-                il est créé directement « Reçu à {hub} ».
+                Colis confirmé {destination === 'ORLY' ? 'par Antoine' : 'au lieu de positionnement'} sans n° de suivi saisi :
+                il est créé directement « {destination === 'ORLY' ? `Reçu à ${hub}` : 'Reçu'} ».
               </p>
             </div>
           </div>
