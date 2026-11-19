@@ -26,7 +26,7 @@ import { ZoomableImage } from './ZoomableImage';
 import { PointParcelModal } from './PointParcelModal';
 import type { PointParcelFields } from './PointParcelModal';
 import { compareDateDesc } from '../lib/dateFormat';
-import { parcelStatusLabel } from '../lib/parcelTracking';
+import { parcelStatusLabel, parcelPlace } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { PARCEL_NUMBER_KIND_LABELS, boxSummary, invoiceBoxesLabel, parcelNumberKindText } from '../lib/parcelBoxes';
 import type { ParcelNumberKind } from '../lib/parcelBoxes';
@@ -101,7 +101,9 @@ const OTHER_SUPPLIER = '__other__';
 
 export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onClose, onChanged }) => {
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
-  const title = destination === 'ORLY' ? 'Point Antoine' : 'Réception Rouen';
+  // Sea parcels are not always at Rouen (positioning place)
+  const atHub = destination === 'ORLY' ? `à ${hub}` : 'au lieu de positionnement';
+  const title = destination === 'ORLY' ? 'Point Antoine' : 'Réception maritime';
 
   const [points, setPoints] = useState<ReceptionPoint[] | null>(null);
   const [configured, setConfigured] = useState(true);
@@ -553,7 +555,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
       await afterLink(
         p
           ? `${label} : colis ${p.tracking_number || 'sans n°'} (${p.supplier_name || '—'})${
-              r.reception_confirmed ? ` reçu à ${hub} le ${formatDate(current.point.point_date)}` : ''
+              r.reception_confirmed ? ` reçu ${atHub} le ${formatDate(current.point.point_date)}` : ''
             }${boxes?.label ? ` · ${boxes.label}` : ''}${
               r.duplicate_box_index ? ' — attention : ce n° de boîte était déjà reçu (doublon probable)' : ''
             }${boxes?.over ? ' — attention : plus de boîtes que prévu (doublon de photo ?)' : ''}.`
@@ -715,7 +717,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
             <p className="mt-1 text-slate-500">
               {destination === 'ORLY'
                 ? 'Date du point avec Antoine : vous déposerez ensuite toutes ses photos, puis les rattacherez une à une.'
-                : 'Date de la réception au quai de Rouen : vous déposerez ensuite toutes les photos.'}
+                : 'Date de la réception au lieu de positionnement : vous déposerez ensuite toutes les photos.'}
             </p>
             <div className="mt-3 flex items-end gap-2">
               <label>
@@ -1127,7 +1129,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                     <ParcelCard parcel={chosen} />
                     {chosen.destination !== destination && (
                       <p className="text-[11px] font-semibold text-amber-600">
-                        Ce colis était attendu à {chosen.destination === 'ORLY' ? 'Orly' : 'Rouen'}.
+                        Ce colis était attendu à {parcelPlace(chosen)}.
                       </p>
                     )}
                     {chosenMatch && chosenMatch.matched !== 'primary' && (
@@ -1228,14 +1230,14 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate font-mono font-semibold">{s.tracking_number}</span>
                             <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PARCEL_STATUS_BADGES[s.status]}`}>
-                              {parcelStatusLabel(s.status, s.destination)}
+                              {parcelStatusLabel(s.status, s.destination, parcelPlace(s))}
                             </span>
                           </div>
                           <div className="mt-0.5 truncate text-[10px] text-slate-500">
                             {matched === 'primary' ? 'N° principal' : `${PARCEL_NUMBER_KIND_LABELS[matched]} ${value}`} ·{' '}
                             {s.supplier_name || '—'} · Facture(s) {s.invoices.map((inv) => inv.ref || '—').join(', ') || '—'}
                             {boxSummary(s).label && ` · ${boxSummary(s).label}`}
-                            {s.destination !== destination && ` · attendu à ${s.destination === 'ORLY' ? 'Orly' : 'Rouen'}`}
+                            {s.destination !== destination && ` · attendu à ${parcelPlace(s)}`}
                           </div>
                         </button>
                       ))}
@@ -1294,7 +1296,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                       </h4>
                       {waitingWithoutNumber.length > 0 && !supplier && (
                         <p className="mt-1 text-[10px] text-slate-500">
-                          {waitingWithoutNumber.length} colis attendu(s) à {hub} sans n° de suivi.
+                          {waitingWithoutNumber.length} colis attendu(s) {atHub} sans n° de suivi.
                         </p>
                       )}
                       <label className="mt-2 block">
@@ -1465,7 +1467,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                             <PackagePlus className="h-4 w-4" /> Facture pas encore en base : colis reçu sans facture
                           </button>
                           <p className="mt-1 text-[10px] text-slate-500">
-                            Le colis {typed} ({supplierName}) est marqué reçu à {hub}. Sa facture lui sera rattachée quand
+                            Le colis {typed} ({supplierName}) est marqué reçu {atHub}. Sa facture lui sera rattachée quand
                             elle sera saisie avec ce n° (« + Colis ») ou par l’import du rapport Amazon ; il ne pourra
                             partir dans une expédition qu’ensuite.
                           </p>
@@ -1525,7 +1527,7 @@ const ParcelCard: React.FC<{ parcel: Parcel }> = ({ parcel }) => (
       <span className="flex items-center gap-1">
         <BoxesBadge parcel={parcel} />
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[parcel.status]}`}>
-          {parcelStatusLabel(parcel.status, parcel.destination)}
+          {parcelStatusLabel(parcel.status, parcel.destination, parcelPlace(parcel))}
         </span>
       </span>
     </div>

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Camera, Loader2, Package, Pencil, Plus, Unlink } from 'lucide-react';
-import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
+import { isParcelOverdue, parcelLossDeadline, parcelStatusHint, parcelStatusLabel, parcelPlace } from '../lib/parcelTracking';
 import type { ParcelStatus, TrackingSettings } from '../lib/parcelTracking';
 import { DigiInvoice, Parcel, fetchInvoiceParcels, formatDate, unlinkParcel } from './digiApi';
 import { BoxesBadge } from './BoxesBadge';
@@ -111,10 +111,10 @@ export const InvoiceParcelsPanel: React.FC<Props> = ({ invoice, canEdit, isSuppl
                   <td className="py-1.5 pr-3">{formatDate(p.expected_delivery)}</td>
                   <td className="py-1.5 pr-3">
                     <span
-                      title={parcelStatusHint(p.status, p.destination)}
+                      title={parcelStatusHint(p.status, p.destination, parcelPlace(p))}
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}
                     >
-                      {parcelStatusLabel(p.status, p.destination)}
+                      {parcelStatusLabel(p.status, p.destination, parcelPlace(p))}
                     </span>{' '}
                     <BoxesBadge parcel={p} />
                     {p.status === 'received' && p.received_at && (

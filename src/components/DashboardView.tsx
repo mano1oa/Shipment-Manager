@@ -181,7 +181,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         key: 'at_hub',
         label: 'Au hub',
         value: atHub.length,
-        detail: `Orly ${count(atHub, 'ORLY')} · Rouen ${count(atHub, 'ROUEN')}`,
+        detail: `Orly ${count(atHub, 'ORLY')} · Maritime ${count(atHub, 'ROUEN')}`,
         color: '#E8A33D',
       },
       {
@@ -465,13 +465,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {
               label: 'Colis au hub, à expédier',
               value: pending ?? `${pm.atHubOrly + pm.atHubRouen}`,
-              detail: `Orly ${pm.atHubOrly} · Rouen ${pm.atHubRouen}${pm.atHubOverdue > 0 ? ` · ${pm.atHubOverdue} depuis plus de ${HUB_OVERDUE_DAYS} j` : ''}`,
+              detail: `Orly ${pm.atHubOrly} · Maritime ${pm.atHubRouen}${pm.atHubOverdue > 0 ? ` · ${pm.atHubOverdue} depuis plus de ${HUB_OVERDUE_DAYS} j` : ''}`,
               alert: false,
             },
             {
               label: 'Attendus sous 7 jours',
               value: pending ?? `${pm.expectedWeek}`,
-              detail: `Orly ${pm.expectedWeekOrly} · Rouen ${pm.expectedWeekRouen}`,
+              detail: `Orly ${pm.expectedWeekOrly} · Maritime ${pm.expectedWeekRouen}`,
               alert: false,
             },
             {

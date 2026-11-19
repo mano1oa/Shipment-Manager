@@ -16,7 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import { Shipment, shipmentLabel } from '../types';
-import { parcelStatusHint, parcelStatusLabel } from '../lib/parcelTracking';
+import { parcelStatusHint, parcelStatusLabel, parcelPlace } from '../lib/parcelTracking';
 import {
   DigiInvoice,
   Parcel,
@@ -377,10 +377,10 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
                   <td className="py-1.5 pr-2 text-slate-500">{p.invoices.map((i) => i.ref || '—').join(', ')}</td>
                   <td className="py-1.5 pr-2">
                     <span
-                      title={parcelStatusHint(p.status, p.destination)}
+                      title={parcelStatusHint(p.status, p.destination, parcelPlace(p))}
                       className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}
                     >
-                      {parcelStatusLabel(p.status, p.destination)}
+                      {parcelStatusLabel(p.status, p.destination, parcelPlace(p))}
                     </span>
                   </td>
                   <td className="py-1.5 text-right">

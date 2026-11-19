@@ -86,7 +86,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, parcels
         {/* Carrier SLA Table */}
         <div className="lg:col-span-2 rounded-2xl border border-slate-200 bg-white p-5 shadow-xs dark:border-slate-800 dark:bg-slate-800">
           <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 pb-3 dark:border-slate-700">
-            <Award className="h-4 w-4 text-[#9E1B65]" /> SLA transporteurs (fournisseur → Orly / Rouen)
+            <Award className="h-4 w-4 text-[#9E1B65]" /> SLA transporteurs (fournisseur → Orly / maritime)
           </h2>
           <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
             Colis reçus au hub au plus tard à leur date de livraison prévue. Les colis perdus sont comptés à part.
@@ -142,7 +142,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, parcels
                     <td className="px-3 py-3">
                       <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700 dark:bg-slate-700 dark:text-slate-300">
                         {item.destination === 'ORLY' ? <Plane className="h-3 w-3" /> : <Ship className="h-3 w-3" />}{' '}
-                        {item.destination === 'ORLY' ? 'Orly' : 'Rouen'}
+                        {item.destination === 'ORLY' ? 'Orly' : 'Maritime'}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-center font-mono font-bold text-slate-800 dark:text-slate-200">
@@ -233,7 +233,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ shipments, parcels
             <div className="mt-3 space-y-2">
               {[
                 { label: 'Aérien (Orly → Madagascar)', t: transitAir },
-                { label: 'Maritime (Rouen → Madagascar)', t: transitSea },
+                { label: 'Maritime (→ Madagascar)', t: transitSea },
               ].map(({ label, t }) => (
                 <div key={label} className="flex justify-between text-xs">
                   <span className="text-slate-500">{label}</span>

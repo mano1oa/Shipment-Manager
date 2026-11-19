@@ -30,6 +30,10 @@ export async function initParcelSchema(): Promise<void> {
   // Manual sort of DIGI invoices: to_sort → goods (tracked) or services
   await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS triage VARCHAR(10);`;
   await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS triaged_at TIMESTAMPTZ;`;
+  // Invoice refunded by the supplier: nothing will come (set by Supply Chain, with a reason)
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS refunded_at TIMESTAMPTZ;`;
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS refunded_by_email VARCHAR(255);`;
+  await sql`ALTER TABLE digi_invoices ADD COLUMN IF NOT EXISTS refund_reason TEXT;`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS parcels (

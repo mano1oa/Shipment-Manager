@@ -1,5 +1,6 @@
 import type { ShipmentAlert } from '../types';
 import { formatDate } from './dateFormat';
+import { parcelPlace } from './parcelTracking';
 import type { ParcelDestination, ParcelStatus, TrackingSettings } from './parcelTracking';
 import { isPartialOverdue, lossDeadline } from './parcelBoxes';
 import type { ParcelBox } from './parcelBoxes';
@@ -11,6 +12,8 @@ export interface ParcelForAlerts {
   carrier_name: string | null;
   supplier_name: string | null;
   destination: ParcelDestination;
+  /** Sea: positioning city (null = Rouen). */
+  position_city?: string | null;
   status: ParcelStatus;
   expected_delivery: string | null;
   received_at: string | null;
@@ -22,7 +25,8 @@ export interface ParcelForAlerts {
   boxes_expected: number | null;
 }
 
-const hubOf = (d: ParcelDestination) => (d === 'ORLY' ? 'Orly' : 'Rouen');
+/** Orly, or the sea positioning city (Rouen by default). */
+const hubOf = (p: ParcelForAlerts) => parcelPlace(p);
 
 /**
  * Parcel alerts, shown in the Alerts center next to the shipment alerts:
@@ -36,7 +40,7 @@ export function evaluateParcelAlerts(parcels: ParcelForAlerts[], settings: Track
   const alerts: ShipmentAlert[] = [];
 
   for (const p of parcels) {
-    const hub = hubOf(p.destination);
+    const hub = hubOf(p);
     const refs = p.invoices.map((i) => i.ref || '—').join(', ') || 'N/A';
     const tracking = p.tracking_number || 'sans n° de suivi';
 

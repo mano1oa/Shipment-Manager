@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { parcelPlace } from '../lib/parcelTracking';
 import type { ParcelStatus } from '../lib/parcelTracking';
 import { Parcel, formatDate, setParcelStatus } from './digiApi';
 
@@ -39,7 +40,7 @@ export function useParcelStatusActions(hub: string, onReload: () => void, onDone
   };
 
   const openSearch = (p: Parcel) => {
-    if (!window.confirm(`Ouvrir un avis de recherche : le colis ${p.tracking_number || ''} a été reçu à ${hub} mais n'est pas arrivé à Madagascar ?`)) return;
+    if (!window.confirm(`Ouvrir un avis de recherche : le colis ${p.tracking_number || ''} a été reçu à ${parcelPlace(p)} mais n'est pas arrivé à Madagascar ?`)) return;
     changeStatus([p], 'search', 'Avis de recherche ouvert');
   };
 

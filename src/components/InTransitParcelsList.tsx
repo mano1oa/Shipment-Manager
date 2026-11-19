@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, Camera, CheckCircle2, ChevronDown, ChevronRight, Loader2, PackageX, Pencil, RefreshCw, Search, SearchX, Undo2 } from 'lucide-react';
+import { parcelPlace } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { parcelStage } from '../lib/parcelJourney';
 import type { ParcelStage } from '../lib/parcelJourney';
@@ -15,13 +16,14 @@ import { useParcelStatusActions } from './useParcelStatusActions';
 
 type Stage = ParcelStage;
 
-const STAGE_LABELS: Record<Stage, (hub: string) => string> = {
-  to_hub: (hub) => `En route vers ${hub}`,
-  at_hub: (hub) => `À ${hub}, en attente de départ`,
+/** Sea parcels are not always at Rouen (positioning place): neutral wording. */
+const STAGE_LABELS: Record<Stage, (sea: boolean) => string> = {
+  to_hub: (sea) => (sea ? 'En route vers le lieu de positionnement' : 'En route vers Orly'),
+  at_hub: (sea) => (sea ? 'Au lieu de positionnement, en attente de départ' : 'À Orly, en attente de départ'),
   to_mada: () => 'En route vers Madagascar',
   customs: () => 'Bloqué en douane',
   search: () => 'Avis de recherche',
-  lost: (hub) => `Perdu avant ${hub}`,
+  lost: (sea) => (sea ? 'Perdu avant réception' : 'Perdu avant Orly'),
 };
 
 const STAGE_BADGES: Record<Stage, string> = {
@@ -129,8 +131,8 @@ export const InTransitParcelsList: React.FC<Props> = ({
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500 dark:text-slate-400">
-        Tous les colis vers {hub} pas encore arrivés à Madagascar : en route vers {hub}, en attente de départ, puis en
-        route vers Madagascar — y compris les colis perdus avant {hub} et les avis de recherche.
+        Tous les colis {destination === 'ORLY' ? 'vers Orly' : 'maritimes'} pas encore arrivés à Madagascar : en route vers {destination === 'ORLY' ? 'Orly' : 'leur lieu de positionnement'}, en attente de départ, puis en
+        route vers Madagascar — y compris les colis perdus avant réception et les avis de recherche.
       </p>
       <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-xs lg:flex-row lg:flex-wrap lg:items-center dark:border-slate-800 dark:bg-slate-800">
         <div className="relative min-w-0 flex-1 sm:min-w-[16rem]">
@@ -150,7 +152,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
           <option value="all">Toutes les étapes ({rows.length})</option>
           {(Object.keys(STAGE_LABELS) as Stage[]).map((s) => (
             <option key={s} value={s}>
-              {STAGE_LABELS[s](hub)} ({counts[s]})
+              {STAGE_LABELS[s](destination !== 'ORLY')} ({counts[s]})
             </option>
           ))}
         </select>
@@ -228,7 +230,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                     {air && <AmazonOrdersCell parcel={p} />}
                     <td className="px-3 py-2.5">
                       <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold ${STAGE_BADGES[stage]}`}>
-                        {STAGE_LABELS[stage](hub)}
+                        {STAGE_LABELS[stage](destination !== 'ORLY')}
                       </span>{' '}
                       <BoxesBadge parcel={p} />
                       {p.status === 'received' && p.received_at && (
@@ -267,7 +269,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                           <button
                             onClick={() => confirmReception([p], today)}
                             disabled={busy !== null}
-                            title={`Reçu à ${hub} aujourd'hui`}
+                            title={`Reçu à ${parcelPlace(p)} aujourd'hui`}
                             className={`${iconButton} text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40`}
                           >
                             <CheckCircle2 className="h-4 w-4" />
@@ -287,7 +289,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                           <button
                             onClick={() => declareLost(p)}
                             disabled={busy !== null}
-                            title={`Déclarer perdu avant ${hub}`}
+                            title={`Déclarer perdu avant ${parcelPlace(p)}`}
                             className={`${iconButton} text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40`}
                           >
                             <PackageX className="h-4 w-4" />

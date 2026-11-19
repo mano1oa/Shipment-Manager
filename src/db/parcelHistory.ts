@@ -9,7 +9,7 @@ export async function getParcelHistory(parcelId: string): Promise<ParcelHistoryE
   await ensureDigiInvoicesSchema();
   const sql = getDb();
   const rows = await sql`
-    SELECT p.status, p.destination, p.status_changed_at, p.created_at, p.created_by_email, p.boxes_expected,
+    SELECT p.status, p.destination, p.position_city, p.status_changed_at, p.created_at, p.created_by_email, p.boxes_expected,
       (SELECT TO_CHAR(rp.point_date, 'YYYY-MM-DD') FROM reception_points rp WHERE rp.id = p.created_at_point_id) AS created_point_date
     FROM parcels p WHERE p.id = ${parcelId}
   `;
@@ -56,6 +56,7 @@ export async function getParcelHistory(parcelId: string): Promise<ParcelHistoryE
     parcel: {
       status: parcel.status,
       destination: parcel.destination,
+      position_city: parcel.position_city ?? null,
       status_changed_at: parcel.status_changed_at,
       created_at: parcel.created_at,
       created_by_email: parcel.created_by_email,

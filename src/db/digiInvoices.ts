@@ -89,6 +89,10 @@ export interface DigiInvoiceRecord {
   /** Manual sort: only "goods" invoices are tracked (parcels, loss alerts). */
   triage: InvoiceTriage;
   triaged_at: string | null;
+  /** Refunded by the supplier: nothing will come (left out of "sans colis", values, shipments). */
+  refunded_at: string | null;
+  refunded_by_email: string | null;
+  refund_reason: string | null;
   parcel_count: number;
   parcel_received_count: number;
   /** Boxes received for its parcels (one per photo matched at a point). */
@@ -323,6 +327,9 @@ function mapInvoiceRow(row: any): DigiInvoiceRecord {
     validated_at: row.validated_at ?? null,
     triage: (row.triage as InvoiceTriage) || (row.no_shipment ? 'services' : 'goods'),
     triaged_at: row.triaged_at ?? null,
+    refunded_at: row.refunded_at ?? null,
+    refunded_by_email: row.refunded_by_email ?? null,
+    refund_reason: row.refund_reason ?? null,
     parcel_count: Number(row.parcel_count) || 0,
     parcel_received_count: Number(row.parcel_received_count) || 0,
     box_received_count: Number(row.box_received_count) || 0,
@@ -345,6 +352,7 @@ const SELECT_WITH_LINES = `
     i.shipment_id, i.no_shipment,
     i.is_digi, i.amount, i.currency, i.buyer, i.validation_status, i.rejection_reason,
     i.validated_by_email, i.validated_at, i.triage, i.triaged_at,
+    i.refunded_at, i.refunded_by_email, i.refund_reason,
     (SELECT COUNT(*)::int FROM parcel_invoices pi WHERE pi.invoice_id = i.id) AS parcel_count,
     (
       SELECT COUNT(*)::int FROM parcel_invoices pi JOIN parcels p ON p.id = pi.parcel_id
@@ -1062,6 +1070,39 @@ export async function setInvoiceValidation(
     WHERE id = ${id}
   `;
   return { previous: before[0].validation_status as ValidationStatus };
+}
+
+export class RefundError extends Error {}
+
+/**
+ * Marks an invoice refunded by the supplier (reason required) or cancels the
+ * mark (reason null). Refused while the invoice has a parcel or a shipment:
+ * they are removed first. Returns false when the invoice does not exist.
+ */
+export async function setInvoiceRefund(id: string, reason: string | null, actorEmail: string): Promise<boolean> {
+  await ensureDigiInvoicesSchema();
+  const sql = getDb();
+  const rows = await sql`
+    SELECT i.id,
+      EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.invoice_id = i.id) AS has_parcel,
+      EXISTS (SELECT 1 FROM shipments s WHERE s.id = i.shipment_id) AS has_shipment
+    FROM digi_invoices i WHERE i.id = ${id}
+  `;
+  if (!rows[0]) return false;
+  if (reason !== null) {
+    if (rows[0].has_parcel) throw new RefundError('Cette facture a un colis : retirez-le d\'abord.');
+    if (rows[0].has_shipment) throw new RefundError('Cette facture est dans une expédition : retirez-la d\'abord.');
+  }
+  await sql`
+    UPDATE digi_invoices SET
+      refunded_at = ${reason === null ? null : new Date().toISOString()},
+      refunded_by_email = ${reason === null ? null : actorEmail},
+      refund_reason = ${reason},
+      updated_by_email = ${actorEmail},
+      updated_at = NOW()
+    WHERE id = ${id}
+  `;
+  return true;
 }
 
 export async function listDigiInvoicesForShipment(shipmentId: string): Promise<DigiInvoiceRecord[]> {

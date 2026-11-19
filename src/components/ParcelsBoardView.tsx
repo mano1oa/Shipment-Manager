@@ -166,6 +166,11 @@ export const ParcelsBoardView: React.FC<Props> = ({
 }) => {
   const shipmentById = useMemo(() => new Map(shipments.map((s) => [s.id, s])), [shipments]);
   const hub = destination === 'ORLY' ? 'Orly' : 'Rouen';
+  // Sea parcels are not always at Rouen (positioning place): neutral wording when several
+  const sea = destination === 'ROUEN';
+  const receivedTitle = sea ? 'Reçus' : `Reçus à ${hub}`;
+  const lostTitle = sea ? 'Perdus avant réception' : `Perdus avant ${hub}`;
+  const atHub = sea ? 'au lieu de positionnement' : `à ${hub}`;
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
   const [supplierFilter, setSupplierFilter] = useState('all');
@@ -259,8 +264,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
   // Late parcels are turned "lost" by the server when the list is loaded
   const tiles: { key: StatusFilter; label: string; value: number; dot: string }[] = [
     { key: 'open', label: 'À recevoir', value: counts.to_receive, dot: 'bg-[#9A93A5]' },
-    { key: 'received', label: `Reçus à ${hub}`, value: counts.received, dot: 'bg-[#2E9E5B]' },
-    { key: 'lost', label: `Perdus avant ${hub}`, value: counts.lost, dot: 'bg-[#D9534F]' },
+    { key: 'received', label: receivedTitle, value: counts.received, dot: 'bg-[#2E9E5B]' },
+    { key: 'lost', label: lostTitle, value: counts.lost, dot: 'bg-[#D9534F]' },
     { key: 'search', label: 'Avis de recherche', value: counts.search, dot: 'bg-[#E8A33D]' },
     { key: 'all', label: 'Tous les colis', value: own.length, dot: 'bg-[#623387]' },
   ];
@@ -276,7 +281,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
         p.supplier_name,
         p.invoices.map((i) => i.ref || '—').join(', '),
         p.invoices.map((i) => i.amazon_order_ref).filter(Boolean).join(', '),
-        parcelStatusLabel(p.status, destination),
+        parcelStatusLabel(p.status, destination, parcelPlace(p)),
         formatDate(p.expected_delivery),
         formatDate(p.received_at),
         p.received_by_email,
@@ -316,11 +321,11 @@ export const ParcelsBoardView: React.FC<Props> = ({
     <div className="space-y-4">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <p className="flex items-center gap-1 text-[13px] text-[#5E5869] dark:text-slate-400">
-          Colis livrés par les fournisseurs {destination === 'ORLY' ? 'chez Antoine à Orly' : 'au quai de Rouen'}, avant
+          Colis livrés par les fournisseurs {destination === 'ORLY' ? 'chez Antoine à Orly' : 'au quai de Rouen ou à leur lieu de positionnement'}, avant
           leur départ vers Madagascar.
           <HelpTip label="Comment ça marche ?">
             Les colis se créent depuis Factures fournisseurs (« + Colis »). Un colis non confirmé à temps passe
-            automatiquement « Perdu avant {hub} » (livraison prévue + {settings?.parcel_loss_days_after_eta ?? 7} j,
+            automatiquement « {sea ? 'Perdu avant réception' : `Perdu avant ${hub}`} » (livraison prévue + {settings?.parcel_loss_days_after_eta ?? 7} j,
             sinon date de facture + {settings?.parcel_loss_days_without_eta ?? 14} j) et apparaît dans les alertes.
             {isSupplyChain &&
               (destination === 'ORLY'
@@ -335,7 +340,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
               title="Déposer toutes les photos du point, puis les rattacher une à une (confirme les réceptions)"
               className="flex items-center gap-1.5 rounded-xl bg-[#623387] px-3 py-2 text-xs font-bold text-white hover:bg-[#522870]"
             >
-              <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception Rouen (photos)'}
+              <Camera className="h-4 w-4" /> {destination === 'ORLY' ? 'Point Antoine (photos)' : 'Réception maritime (photos)'}
             </button>
             <button
               onClick={() => setReceiving(true)}
@@ -545,8 +550,8 @@ export const ParcelsBoardView: React.FC<Props> = ({
         )}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={selectClass}>
           <option value="open">À recevoir</option>
-          <option value="received">Reçus à {hub}</option>
-          <option value="lost">Perdus avant {hub}</option>
+          <option value="received">{receivedTitle}</option>
+          <option value="lost">{lostTitle}</option>
           <option value="search">Avis de recherche</option>
           <option value="no_invoice">Reçus sans facture</option>
           <option value="all">Tous les colis</option>
@@ -673,7 +678,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                     {own.length === 0 ? (
                       <EmptyState
                         icon={Package}
-                        title={`Aucun colis vers ${hub} pour le moment`}
+                        title={sea ? 'Aucun colis maritime pour le moment' : `Aucun colis vers ${hub} pour le moment`}
                         detail="Les colis se créent depuis Factures fournisseurs, avec « + Colis »."
                       />
                     ) : search.trim() || globalSearch.trim() || supplierFilter !== 'all' || receivedOn ? (
@@ -691,11 +696,11 @@ export const ParcelsBoardView: React.FC<Props> = ({
                         }}
                       />
                     ) : statusFilter === 'open' ? (
-                      <EmptyState icon={CheckCircle2} title="Aucun colis à recevoir" detail={`Tous les colis attendus à ${hub} sont arrivés.`} />
+                      <EmptyState icon={CheckCircle2} title="Aucun colis à recevoir" detail={`Tous les colis attendus ${atHub} sont arrivés.`} />
                     ) : statusFilter === 'lost' || statusFilter === 'search' ? (
                       <EmptyState
                         icon={CheckCircle2}
-                        title={statusFilter === 'lost' ? `Aucun colis perdu avant ${hub}` : 'Aucun avis de recherche en cours'}
+                        title={statusFilter === 'lost' ? sea ? 'Aucun colis perdu avant réception' : `Aucun colis perdu avant ${hub}` : 'Aucun avis de recherche en cours'}
                       />
                     ) : (
                       <EmptyState icon={Package} title="Aucun colis dans cette vue" />
@@ -813,10 +818,10 @@ export const ParcelsBoardView: React.FC<Props> = ({
                       </td>
                       <td className="px-3 py-2.5">
                         <span
-                          title={parcelStatusHint(p.status, p.destination)}
+                          title={parcelStatusHint(p.status, p.destination, parcelPlace(p))}
                           className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}
                         >
-                          {parcelStatusLabel(p.status, p.destination)}
+                          {parcelStatusLabel(p.status, p.destination, parcelPlace(p))}
                         </span>{' '}
                         <BoxesBadge parcel={p} />
                         {p.status === 'received' && p.received_at && (
@@ -873,7 +878,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                             <button
                               onClick={() => confirmReception([p])}
                               disabled={busy !== null}
-                              title={`Reçu à ${hub} le ${formatDate(receptionDate)}`}
+                              title={`Reçu à ${parcelPlace(p)} le ${formatDate(receptionDate)}`}
                               className={`${iconButton} text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40`}
                             >
                               <CheckCircle2 className="h-4 w-4" />
@@ -893,7 +898,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
                             <button
                               onClick={() => declareLost(p)}
                               disabled={busy !== null}
-                              title={`Déclarer perdu avant ${hub}`}
+                              title={`Déclarer perdu avant ${parcelPlace(p)}`}
                               className={`${iconButton} text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40`}
                             >
                               <PackageX className="h-4 w-4" />
@@ -974,7 +979,7 @@ export const ParcelsBoardView: React.FC<Props> = ({
           onClose={() => setReceiving(false)}
           onSaved={(parcel) => {
             setReceiving(false);
-            setActionMessage(`Colis ${parcel.tracking_number || 'sans n° de suivi'} enregistré comme reçu à ${hub}.`);
+            setActionMessage(`Colis ${parcel.tracking_number || 'sans n° de suivi'} enregistré comme reçu à ${parcelPlace(parcel)}.`);
             onReload();
           }}
         />
