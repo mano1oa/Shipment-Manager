@@ -1,6 +1,6 @@
 import { formatDate } from './dateFormat.js';
 import { PARCEL_NUMBER_KIND_LABELS, isParcelNumberKind } from './parcelBoxes.js';
-import { parcelStatusLabel } from './parcelTracking.js';
+import { parcelPlace, parcelStatusLabel } from './parcelTracking.js';
 import type { ParcelDestination, ParcelStatus } from './parcelTracking.js';
 
 /**
@@ -27,6 +27,8 @@ export interface ParcelHistoryInput {
   parcel: {
     status: ParcelStatus;
     destination: ParcelDestination;
+    /** Sea: positioning city (null = Rouen). */
+    position_city?: string | null;
     status_changed_at: string | Date | null;
     created_at: string | Date;
     created_by_email: string | null;
@@ -80,8 +82,9 @@ const COVERED_ACTIONS = new Set(['CREATE_PARCEL', 'LINK_POINT_PHOTO']);
 
 export function buildParcelHistory(input: ParcelHistoryInput): ParcelHistoryEvent[] {
   const { parcel } = input;
-  const hub = parcel.destination === 'ROUEN' ? 'Rouen' : 'Orly';
-  const statusText = (s: unknown) => (isStatus(s) ? parcelStatusLabel(s, parcel.destination) : '—');
+  // Orly, or the sea positioning city (Rouen by default)
+  const hub = parcelPlace(parcel);
+  const statusText = (s: unknown) => (isStatus(s) ? parcelStatusLabel(s, parcel.destination, hub) : '—');
   const events: ParcelHistoryEvent[] = [];
   const push = (e: Omit<ParcelHistoryEvent, 'at'> & { at: string | Date | null | undefined }) => {
     const at = iso(e.at);

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { AlertCircle, Combine, Loader2, X } from 'lucide-react';
-import { parcelStatusLabel } from '../lib/parcelTracking';
+import { parcelStatusLabel, parcelPlace } from '../lib/parcelTracking';
 import { Parcel, inputClass, mergeParcelInto } from './digiApi';
 import { PARCEL_STATUS_BADGES } from './InvoiceParcelsPanel';
 import { BoxesBadge } from './BoxesBadge';
@@ -125,7 +125,7 @@ export const MergeParcelModal: React.FC<Props> = ({ merged, parcels, initialPrin
                 <span className="flex items-center gap-1">
                   <BoxesBadge parcel={p} />
                   <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PARCEL_STATUS_BADGES[p.status]}`}>
-                    {parcelStatusLabel(p.status, p.destination)}
+                    {parcelStatusLabel(p.status, p.destination, parcelPlace(p))}
                   </span>
                 </span>
               </div>

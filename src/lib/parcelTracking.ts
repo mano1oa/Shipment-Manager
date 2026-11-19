@@ -103,24 +103,39 @@ export function isParcelDestination(value: unknown): value is ParcelDestination 
   return (PARCEL_DESTINATIONS as readonly string[]).includes(value as string);
 }
 
-export function parcelStatusLabel(status: ParcelStatus, destination: ParcelDestination = 'ORLY'): string {
-  const hub = HUB_NAMES[destination];
+/**
+ * Sea parcels are not always received at Rouen (positioning place): `place`
+ * names the parcel's own place (parcelPlace); without it (several parcels,
+ * places unknown) the sea wording stays neutral (« Reçu », « Perdu avant réception »).
+ */
+export function parcelStatusLabel(status: ParcelStatus, destination: ParcelDestination = 'ORLY', place?: string): string {
+  const where = destination === 'ORLY' ? HUB_NAMES.ORLY : place;
   return {
     to_receive: 'À recevoir',
-    received: `Reçu à ${hub}`,
-    lost: `Perdu avant ${hub}`,
+    received: where ? `Reçu à ${where}` : 'Reçu',
+    lost: where ? `Perdu avant ${where}` : 'Perdu avant réception',
     search: 'Avis de recherche',
   }[status];
 }
 
-export function parcelStatusHint(status: ParcelStatus, destination: ParcelDestination = 'ORLY'): string {
-  const hub = HUB_NAMES[destination];
+export function parcelStatusHint(status: ParcelStatus, destination: ParcelDestination = 'ORLY', place?: string): string {
+  const where = destination === 'ORLY' ? HUB_NAMES.ORLY : place;
+  const atSea = place ? `à ${place}` : 'au lieu de positionnement';
   return {
-    to_receive: destination === 'ORLY' ? 'Attendu chez Antoine' : 'Attendu au quai de Rouen',
-    received: destination === 'ORLY' ? 'Confirmé par Antoine (photo facultative)' : 'Réception confirmée au quai de Rouen',
+    to_receive: destination === 'ORLY' ? 'Attendu chez Antoine' : `Attendu ${atSea}`,
+    received: destination === 'ORLY' ? 'Confirmé par Antoine (photo facultative)' : `Réception confirmée ${atSea}`,
     lost: 'Pas de confirmation à temps : réclamation fournisseur',
-    search: `Reçu à ${hub} mais absent à l’arrivée à Madagascar : réclamation transitaire`,
+    search: `${where ? `Reçu à ${where}` : 'Reçu'} mais absent à l’arrivée à Madagascar : réclamation transitaire`,
   }[status];
+}
+
+/** Status of one parcel, worded with its own place (Orly, Rouen, or the sea positioning city). */
+export function parcelStatusText(p: { status: ParcelStatus; destination: ParcelDestination; position_city?: string | null }): {
+  label: string;
+  hint: string;
+} {
+  const place = parcelPlace(p);
+  return { label: parcelStatusLabel(p.status, p.destination, place), hint: parcelStatusHint(p.status, p.destination, place) };
 }
 
 /** Sea deliveries: brought by the supplier, or to be collected. */

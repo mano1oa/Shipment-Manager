@@ -96,8 +96,16 @@ test('statut automatique selon les dates', () => {
 
 test('libellés de statut colis par hub', () => {
   assert.equal(parcelStatusLabel('received'), 'Reçu à Orly');
-  assert.equal(parcelStatusLabel('lost', 'ROUEN'), 'Perdu avant Rouen');
   assert.equal(parcelStatusLabel('search', 'ROUEN'), 'Avis de recherche');
+});
+
+test('maritime : le lieu de positionnement du colis, neutre sans lieu', () => {
+  assert.equal(parcelStatusLabel('lost', 'ROUEN', 'Rouen'), 'Perdu avant Rouen');
+  assert.equal(parcelStatusLabel('received', 'ROUEN', 'Shanghai'), 'Reçu à Shanghai');
+  assert.equal(parcelStatusLabel('received', 'ROUEN'), 'Reçu');
+  assert.equal(parcelStatusLabel('lost', 'ROUEN'), 'Perdu avant réception');
+  // Orly ignores the place
+  assert.equal(parcelStatusLabel('received', 'ORLY', 'Rouen'), 'Reçu à Orly');
 });
 
 test('validation d’un colis', () => {

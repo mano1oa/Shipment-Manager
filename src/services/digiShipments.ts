@@ -82,6 +82,9 @@ async function checkInvoices(
     if (inv.triage !== 'goods' || inv.no_shipment) {
       throw new ShipmentGroupingError(`${name} : elle n'est pas classée en marchandises.`, 409);
     }
+    if (inv.refunded_at) {
+      throw new ShipmentGroupingError(`${name} : elle est marquée remboursée.`, 409);
+    }
     if (inv.validation_status !== 'validated') {
       throw new ShipmentGroupingError(`${name} : facture hors DIGI pas encore validée par la Supply Chain.`, 409);
     }

@@ -76,6 +76,8 @@ import {
   createDirectInvoice,
   updateDirectInvoice,
   setInvoiceValidation,
+  setInvoiceRefund,
+  RefundError,
   setInvoiceTriage,
 } from './db/digiInvoices.js';
 import { getTrackingSettings, validateTrackingSettings, saveTrackingSettings } from './db/settings.js';
@@ -131,6 +133,7 @@ import {
   findByTrackingNumber,
   findAmazonOrderInvoices,
   linkParcelInvoices,
+  linkInvoicesToKnownParcel,
   describeParcelOwner,
   receiveBox,
   removeBoxOfPhoto,
@@ -2370,6 +2373,31 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
   });
 
+  /** Invoice refunded by the supplier: { refunded: true, reason } or { refunded: false } to cancel. */
+  app.patch('/api/digi-invoices/:id/refund', requireRole('SUPPLY_CHAIN'), async (req: any, res) => {
+    if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+    const refunded = req.body?.refunded;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 1000) : '';
+    if (typeof refunded !== 'boolean') return res.status(400).json({ success: false, error: 'Demande invalide.' });
+    if (refunded && !reason) return res.status(400).json({ success: false, error: 'Le motif du remboursement est obligatoire.' });
+    try {
+      const found = await setInvoiceRefund(req.params.id, refunded ? reason : null, req.user.email);
+      if (!found) return res.status(404).json({ success: false, error: 'Facture introuvable' });
+      await writeAuditLog({
+        entityType: 'DIGI_INVOICE',
+        entityId: req.params.id,
+        action: refunded ? 'MARK_INVOICE_REFUNDED' : 'CANCEL_INVOICE_REFUND',
+        actor: req.user,
+        details: { reason: refunded ? reason : null },
+      });
+      return res.json({ success: true, invoice: await getDigiInvoice(req.params.id) });
+    } catch (err: any) {
+      if (err instanceof RefundError) return res.status(409).json({ success: false, error: err.message });
+      console.error('[Invoices] Refund error:', err);
+      return res.status(500).json({ success: false, error: 'Impossible d\'enregistrer le remboursement' });
+    }
+  });
+
   // Sort of an invoice: goods (tracked, the default) / services
   app.patch('/api/digi-invoices/:id/triage', requireRole('SUPPLY_CHAIN', 'SOURCING'), async (req: any, res) => {
     if (!UUID_RE.test(req.params.id)) return res.status(404).json({ success: false, error: 'Facture introuvable' });
@@ -2420,6 +2448,10 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
     }
     if (invoices.some((inv) => inv!.triage === 'services')) {
       res.status(409).json({ success: false, error: 'Une facture classée en services n\'a pas de colis.' });
+      return undefined;
+    }
+    if (invoices.some((inv) => inv!.refunded_at)) {
+      res.status(409).json({ success: false, error: 'Une facture remboursée n\'a pas de colis : annulez d\'abord le remboursement.' });
       return undefined;
     }
     if (await refuseIfConfirmed(invoiceIds, res)) return undefined;
@@ -2583,7 +2615,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       }
       const receivedAt = receivedNow ? parseReceptionDate(req.body?.received_at) : null;
       if (receivedAt === undefined) return res.status(400).json({ success: false, error: 'Date de réception invalide.' });
-      // BL typed in the form: another number of the parcel, refused when another parcel has it
+      // BL typed in the form: another number of the parcel. A BL already known
+      // means the same parcel (one parcel can cover several invoices).
       const bl =
         typeof req.body?.bl_number === 'string' && req.body.bl_number.trim()
           ? normalizeParcelNumber('supplier', req.body.bl_number)
@@ -2591,11 +2624,26 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
       if (bl && bl.length > 100) return res.status(400).json({ success: false, error: 'BL : 100 caractères maximum.' });
       const blOwner = bl ? (await findByTrackingNumber(bl))?.id ?? null : null;
       const numberOwner = value.tracking_number ? (await findByTrackingNumber(value.tracking_number))?.id ?? null : null;
-      if (blOwner && blOwner !== numberOwner) {
-        return res.status(409).json({ success: false, error: `Le BL ${bl} est déjà utilisé par le ${await describeParcelOwner(blOwner)}.` });
-      }
 
-      const { id, existed, matched } = await createParcel(value, invoiceIds, supplier, req.user.email);
+      let created: Awaited<ReturnType<typeof createParcel>>;
+      if (blOwner && blOwner !== numberOwner) {
+        // Refused only when the tracking number says it is another parcel:
+        // it belongs to another parcel, or the BL's parcel already has another number
+        const blParcel = await getParcel(blOwner);
+        const blParcelHasOtherNumber = !!value.tracking_number && !!blParcel?.tracking_number?.trim();
+        if (numberOwner || blParcelHasOtherNumber) {
+          return res.status(409).json({ success: false, error: `Le BL ${bl} est déjà utilisé par le ${await describeParcelOwner(blOwner)}.` });
+        }
+        // Parcel found by its BL: the invoices are linked to it (and it gets the tracking number typed)
+        if (value.tracking_number) {
+          await assignParcelTrackingNumber(blOwner, value.tracking_number, value.carrier, req.user.email);
+        }
+        await linkInvoicesToKnownParcel(blOwner, invoiceIds, supplier);
+        created = { id: blOwner, existed: true, matched: 'supplier' };
+      } else {
+        created = await createParcel(value, invoiceIds, supplier, req.user.email);
+      }
+      const { id, existed, matched } = created;
       if (bl && blOwner !== id) {
         try {
           await addParcelNumber(id, bl, 'supplier', req.user.email);

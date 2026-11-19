@@ -19,6 +19,8 @@ import {
   ShieldCheck,
   ShieldX,
   Download,
+  Undo2,
+  BadgeEuro,
 } from 'lucide-react';
 import {
   DigiConfig,
@@ -37,9 +39,11 @@ import {
   isServicesInvoice,
   isAwaitingValidation,
   isGoodsInvoice,
+  isRefundedInvoice,
   isInvoiceReceived,
   setInvoiceTriage,
   setInvoiceValidation,
+  setInvoiceRefund,
   fetchTrackingSettings,
 } from './digiApi';
 import { Shipment, shipmentLabel } from '../types';
@@ -54,6 +58,7 @@ import { VALIDATION_STATUS_LABELS, amountInEur } from '../lib/parcelTracking';
 import type { InvoiceTriage, TrackingSettings } from '../lib/parcelTracking';
 import { invoiceBoxesLabel } from '../lib/parcelBoxes';
 import { invoiceMatches } from '../lib/invoiceSearch';
+import { Pagination, usePagination } from './Pagination';
 
 interface Props {
   canDelete: boolean;
@@ -83,22 +88,24 @@ const sectionsOf = (inv: DigiInvoice): Section[] => {
   if (isServicesInvoice(inv)) return ['services'];
   const sections: Section[] = [];
   if (isAwaitingValidation(inv)) sections.push('validation');
-  if (isGoodsInvoice(inv)) sections.push('goods');
+  // Refunded invoices stay in the goods tab, greyed (filter « Remboursées »)
+  if (isGoodsInvoice(inv) || isRefundedInvoice(inv)) sections.push('goods');
   return sections;
 };
 
 /** Where a tracked invoice stands on the way to Orly. */
-type ParcelFilter = 'all' | 'no_parcel' | 'waiting' | 'received';
+type ParcelFilter = 'all' | 'no_parcel' | 'waiting' | 'received' | 'refunded';
 
 const PARCEL_FILTER_LABELS: Record<ParcelFilter, string> = {
   all: 'Tous les colis',
   no_parcel: 'Sans colis',
   waiting: 'Colis pas tous reçus',
   received: 'Reçue à Orly (tous les colis)',
+  refunded: 'Remboursées',
 };
 
 const parcelState = (inv: DigiInvoice): Exclude<ParcelFilter, 'all'> =>
-  inv.parcel_count === 0 ? 'no_parcel' : isInvoiceReceived(inv) ? 'received' : 'waiting';
+  inv.refunded_at ? 'refunded' : inv.parcel_count === 0 ? 'no_parcel' : isInvoiceReceived(inv) ? 'received' : 'waiting';
 
 const NO_SUPPLIER = '— Sans fournisseur —';
 const supplierOf = (inv: DigiInvoice) => inv.supplier_display || NO_SUPPLIER;
@@ -278,6 +285,27 @@ export const DigiInvoicesView: React.FC<Props> = ({
     if (done > 0) setMessage(`${done} facture(s) refusée(s).`);
   };
 
+  /** Refunded by the supplier (reason asked) / mark cancelled. */
+  const handleRefund = async (inv: DigiInvoice, refunded: boolean) => {
+    let reason: string | null = null;
+    if (refunded) {
+      reason = window.prompt(`Facture ${inv.ref ?? ''} remboursée par le fournisseur : motif (avoir, commande annulée…) ?`)?.trim() || null;
+      if (!reason) return;
+    } else if (!window.confirm(`Annuler le remboursement de la facture ${inv.ref ?? ''} ? Elle sera de nouveau suivie (colis).`)) {
+      return;
+    }
+    setBusyId(inv.id);
+    setError(null);
+    try {
+      replaceInvoice(await setInvoiceRefund(inv.id, reason));
+      setMessage(refunded ? `Facture ${inv.ref ?? ''} marquée remboursée.` : `Remboursement de la facture ${inv.ref ?? ''} annulé.`);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   /** A parcel covers invoices of one supplier only. */
   const openParcelForm = (list: DigiInvoice[]) => {
     const names = new Set(list.map(supplierOf));
@@ -333,6 +361,21 @@ export const DigiInvoicesView: React.FC<Props> = ({
     return Array.from(bySupplier.entries()).sort(([a], [b]) => a.localeCompare(b, 'fr'));
   }, [filtered]);
 
+  // Pages of 100 invoices (like the parcels lists); grouped, a supplier's
+  // invoices follow each other and its header keeps the counts of all of them
+  const ordered = useMemo(() => (groupBySupplier ? groups.flatMap(([, list]) => list) : filtered), [groupBySupplier, groups, filtered]);
+  const pager = usePagination(
+    ordered,
+    `invoices-${destination}`,
+    `${section}|${search}|${globalSearch}|${sourceFilter}|${supplierFilter}|${parcelFilter}|${groupBySupplier}`
+  );
+  const pageGroups = useMemo(() => {
+    const onPage = new Set(pager.pageItems.map((i) => i.id));
+    return groups
+      .map(([supplier, list]) => [supplier, list, list.filter((i) => onPage.has(i.id))] as const)
+      .filter(([, , shown]) => shown.length > 0);
+  }, [groups, pager.pageItems]);
+
   // A supplier picked in one tab may not exist in the other
   useEffect(() => {
     if (supplierFilter !== 'all' && !suppliers.includes(supplierFilter)) setSupplierFilter('all');
@@ -342,9 +385,10 @@ export const DigiInvoicesView: React.FC<Props> = ({
   useEffect(() => setSelected(new Set()), [section]);
 
   const selectedInvoices = useMemo(() => filtered.filter((i) => selected.has(i.id)), [filtered, selected]);
-  // In EUR: USD amounts converted with the rate of the settings (left out without rate)
+  // In EUR: USD amounts converted with the rate of the settings (left out without
+  // rate); refunded invoices are worth nothing
   const eurTotal = (list: DigiInvoice[]) =>
-    list.reduce((sum, i) => sum + (amountInEur(i.amount_total, i.currency, settings?.usd_eur_rate ?? null) ?? 0), 0);
+    list.filter((i) => !i.refunded_at).reduce((sum, i) => sum + (amountInEur(i.amount_total, i.currency, settings?.usd_eur_rate ?? null) ?? 0), 0);
   const selectedTotal = eurTotal(selectedInvoices);
 
   const setSelection = (ids: string[], on: boolean) =>
@@ -455,6 +499,16 @@ export const DigiInvoicesView: React.FC<Props> = ({
   /** Parcels received at Orly / expected, for a tracked invoice. */
   const renderParcelsCell = (inv: DigiInvoice) => {
     if (isServicesInvoice(inv)) return <span className="text-slate-400">Service</span>;
+    if (isRefundedInvoice(inv)) {
+      return (
+        <span
+          title={inv.refund_reason || undefined}
+          className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+        >
+          Remboursée
+        </span>
+      );
+    }
     if (!isGoodsInvoice(inv)) return <span className="text-slate-400">—</span>;
     if (inv.parcel_count === 0) {
       return (
@@ -495,7 +549,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
       <React.Fragment key={inv.id}>
         <tr
           onClick={() => toggle(inv.id)}
-          className={`cursor-pointer transition ${
+          className={`cursor-pointer transition ${inv.refunded_at ? 'opacity-60 ' : ''}${
             isSelected
               ? 'bg-[#F8EEFF]/70 hover:bg-[#F8EEFF] dark:bg-purple-950/30 dark:hover:bg-purple-950/40'
               : 'hover:bg-slate-50/90 dark:hover:bg-slate-700/40'
@@ -607,6 +661,26 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   <Package className="h-4 w-4" />
                 </button>
               )}
+              {isSupplyChain && isGoodsInvoice(inv) && inv.parcel_count === 0 && !(inv.shipment_id && inv.shipment_exists) && (
+                <button
+                  onClick={() => handleRefund(inv, true)}
+                  disabled={busyId === inv.id}
+                  title="Marquer remboursée : le fournisseur a remboursé, rien n'arrivera"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
+                >
+                  <BadgeEuro className="h-4 w-4" />
+                </button>
+              )}
+              {isSupplyChain && isRefundedInvoice(inv) && (
+                <button
+                  onClick={() => handleRefund(inv, false)}
+                  disabled={busyId === inv.id}
+                  title="Annuler le remboursement : suivre de nouveau ses colis"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#623387] disabled:opacity-50 dark:hover:bg-slate-700"
+                >
+                  <Undo2 className="h-4 w-4" />
+                </button>
+              )}
               {canBackToGoods(inv) && (
                 <button
                   onClick={() => handleTriage(inv, 'goods')}
@@ -652,6 +726,15 @@ export const DigiInvoicesView: React.FC<Props> = ({
           <tr className="bg-slate-50/60 dark:bg-slate-900/40">
             <td colSpan={2} />
             <td colSpan={11} className="px-3 py-3">
+              {inv.refunded_at && (
+                <div className="mb-3 rounded-xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-800">
+                  <div className="text-[10px] uppercase text-slate-500">Remboursée par le fournisseur</div>
+                  <div className="font-semibold">{inv.refund_reason || '—'}</div>
+                  <div className="text-[10px] text-slate-400">
+                    {inv.refunded_by_email} le {formatDateTime(inv.refunded_at)}
+                  </div>
+                </div>
+              )}
               {isGoodsInvoice(inv) && (
                 <InvoiceParcelsPanel
                   invoice={inv}
@@ -1034,6 +1117,16 @@ export const DigiInvoicesView: React.FC<Props> = ({
         </div>
       )}
 
+      <Pagination
+        page={pager.page}
+        pageCount={pager.pageCount}
+        size={pager.size}
+        total={pager.total}
+        onPage={pager.setPage}
+        onSize={pager.setSize}
+        unit="factures"
+      />
+
       {/* Table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xs dark:border-slate-800 dark:bg-slate-800">
         <div className="overflow-x-auto">
@@ -1077,7 +1170,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
                   </td>
                 </tr>
               ) : groupBySupplier ? (
-                groups.map(([supplier, list]) => {
+                pageGroups.map(([supplier, list, shown]) => {
                   const collapsed = collapsedGroups.has(supplier);
                   const state = selectionState(list);
                   const withoutParcel = list.filter((i) => isGoodsInvoice(i) && i.parcel_count === 0).length;
@@ -1120,12 +1213,12 @@ export const DigiInvoicesView: React.FC<Props> = ({
                         </td>
                         <td colSpan={2} />
                       </tr>
-                      {!collapsed && list.map(renderInvoice)}
+                      {!collapsed && shown.map(renderInvoice)}
                     </React.Fragment>
                   );
                 })
               ) : (
-                filtered.map(renderInvoice)
+                pager.pageItems.map(renderInvoice)
               )}
             </tbody>
           </table>
@@ -1179,7 +1272,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
             );
             setMessage(
               existed
-                ? `Le colis ${parcel.tracking_number} existait déjà : les factures y sont rattachées.`
+                ? `Le colis ${parcel.tracking_number || 'sans n° de suivi'} existait déjà : les factures y sont rattachées.`
                 : `Colis ${parcel.tracking_number || 'sans n° de suivi'} ajouté à ${parcelFor.length} facture(s).`
             );
             reloadInvoices();

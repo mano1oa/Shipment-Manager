@@ -63,6 +63,10 @@ export interface DigiInvoice {
   validated_at: string | null;
   triage: InvoiceTriage;
   triaged_at: string | null;
+  /** Refunded by the supplier: nothing will come. */
+  refunded_at: string | null;
+  refunded_by_email: string | null;
+  refund_reason: string | null;
   parcel_count: number;
   parcel_received_count: number;
   /** Boxes received for its parcels (one per photo matched at a point). */
@@ -250,9 +254,13 @@ export const isServicesInvoice = (inv: DigiInvoice) =>
 /** "Hors DIGI" invoice not validated by Supply Chain yet (pending or refused). */
 export const isAwaitingValidation = (inv: DigiInvoice) => !inv.is_digi && inv.validation_status !== 'validated';
 
-/** Tracked invoice: sorted as goods (DIGI) or "hors DIGI" not refused. */
+/** Goods invoice refunded by the supplier: shown greyed, no longer tracked. */
+export const isRefundedInvoice = (inv: DigiInvoice) =>
+  !isServicesInvoice(inv) && inv.triage === 'goods' && inv.validation_status !== 'rejected' && !!inv.refunded_at;
+
+/** Tracked invoice: sorted as goods (DIGI) or "hors DIGI" not refused, not refunded. */
 export const isGoodsInvoice = (inv: DigiInvoice) =>
-  !isServicesInvoice(inv) && inv.triage === 'goods' && inv.validation_status !== 'rejected';
+  !isServicesInvoice(inv) && inv.triage === 'goods' && inv.validation_status !== 'rejected' && !inv.refunded_at;
 
 /** Received at Orly: every parcel confirmed by Antoine. */
 export const isInvoiceReceived = (inv: DigiInvoice) =>
@@ -276,6 +284,13 @@ export const setInvoiceValidation = (id: string, decision: 'validated' | 'reject
   apiJson<{ invoice: DigiInvoice }>(`/api/digi-invoices/${id}/validation`, {
     method: 'PATCH',
     body: JSON.stringify({ decision, reason }),
+  }).then((d) => d.invoice);
+
+/** Reason: marks the invoice refunded; null: cancels the mark. */
+export const setInvoiceRefund = (id: string, reason: string | null) =>
+  apiJson<{ invoice: DigiInvoice }>(`/api/digi-invoices/${id}/refund`, {
+    method: 'PATCH',
+    body: JSON.stringify(reason === null ? { refunded: false } : { refunded: true, reason }),
   }).then((d) => d.invoice);
 
 // ---- Parcels ----

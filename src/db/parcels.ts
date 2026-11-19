@@ -331,6 +331,21 @@ export async function commonSupplierOf(invoiceIds: string[]): Promise<{ supplier
 }
 
 /**
+ * Links invoices to a parcel already known (found by one of its numbers). A
+ * parcel received without invoice takes the supplier of its first invoices.
+ */
+export async function linkInvoicesToKnownParcel(parcelId: string, invoiceIds: string[], supplierName: string | null): Promise<void> {
+  const sql = getDb();
+  if (supplierName && invoiceIds.length > 0) {
+    await sql`
+      UPDATE parcels p SET supplier_name = ${supplierName}
+      WHERE p.id = ${parcelId} AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
+    `;
+  }
+  await linkParcelInvoices(parcelId, invoiceIds);
+}
+
+/**
  * Creates a parcel for the invoices. When the tracking number already belongs
  * to a parcel, the invoices are linked to that parcel instead (one parcel can
  * cover several invoices): `existed` is then true.
@@ -349,14 +364,7 @@ export async function createParcel(
     // Main number or another number (supplier, carrier, box): same parcel, same invoices
     const existing = await findByTrackingNumber(input.tracking_number);
     if (existing) {
-      // Parcel received without invoice: it takes the supplier of its first invoices
-      if (supplierName && invoiceIds.length > 0) {
-        await sql`
-          UPDATE parcels p SET supplier_name = ${supplierName}
-          WHERE p.id = ${existing.id} AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.parcel_id = p.id)
-        `;
-      }
-      await linkParcelInvoices(existing.id, invoiceIds);
+      await linkInvoicesToKnownParcel(existing.id, invoiceIds, supplierName);
       return { id: existing.id, existed: true, matched: existing.matched };
     }
   }
@@ -999,6 +1007,7 @@ export async function listGoodsInvoicesWithoutParcel(): Promise<InvoiceWithoutPa
     WHERE i.triage = 'goods'
       AND NOT i.no_shipment
       AND i.validation_status <> 'rejected'
+      AND i.refunded_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM parcel_invoices pi WHERE pi.invoice_id = i.id)
       AND NOT EXISTS (SELECT 1 FROM shipments s WHERE s.id = i.shipment_id)
       -- fee-only DIGI invoices (DEEE, port…) are services: nothing to ship

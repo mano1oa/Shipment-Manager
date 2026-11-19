@@ -26,7 +26,7 @@ import { ZoomableImage } from './ZoomableImage';
 import { PointParcelModal } from './PointParcelModal';
 import type { PointParcelFields } from './PointParcelModal';
 import { compareDateDesc } from '../lib/dateFormat';
-import { parcelStatusLabel } from '../lib/parcelTracking';
+import { parcelStatusLabel, parcelPlace } from '../lib/parcelTracking';
 import type { ParcelDestination } from '../lib/parcelTracking';
 import { PARCEL_NUMBER_KIND_LABELS, boxSummary, invoiceBoxesLabel, parcelNumberKindText } from '../lib/parcelBoxes';
 import type { ParcelNumberKind } from '../lib/parcelBoxes';
@@ -1228,7 +1228,7 @@ export const ReceptionPointView: React.FC<Props> = ({ destination, parcels, onCl
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate font-mono font-semibold">{s.tracking_number}</span>
                             <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${PARCEL_STATUS_BADGES[s.status]}`}>
-                              {parcelStatusLabel(s.status, s.destination)}
+                              {parcelStatusLabel(s.status, s.destination, parcelPlace(s))}
                             </span>
                           </div>
                           <div className="mt-0.5 truncate text-[10px] text-slate-500">
@@ -1525,7 +1525,7 @@ const ParcelCard: React.FC<{ parcel: Parcel }> = ({ parcel }) => (
       <span className="flex items-center gap-1">
         <BoxesBadge parcel={parcel} />
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${PARCEL_STATUS_BADGES[parcel.status]}`}>
-          {parcelStatusLabel(parcel.status, parcel.destination)}
+          {parcelStatusLabel(parcel.status, parcel.destination, parcelPlace(parcel))}
         </span>
       </span>
     </div>
