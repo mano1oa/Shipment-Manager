@@ -273,8 +273,9 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment,
                   </span>
                 )}
                 {!isOpen && (
-                  <span className="ml-auto min-w-0 truncate text-[11px] text-slate-400">
-                    {suppliers.length > 3 ? `${suppliers.length} fournisseurs` : suppliers.join(', ')}
+                  <span title={suppliers.join(', ')} className="ml-auto min-w-0 max-w-[45%] truncate text-[11px] text-slate-400">
+                    {/* Every supplier by name; too long: cut, full list on hover */}
+                    {suppliers.join(', ')}
                   </span>
                 )}
               </div>
