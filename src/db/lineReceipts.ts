@@ -43,6 +43,8 @@ export interface ReceivedArticle {
   shipment_global_status: string | null;
   confirmed_at: string | null;
   orly_scan_date: string | null;
+  /** Date de récep Mada of the shipment (free text, usually YYYY-MM-DD). */
+  mada_receipt_date: string | null;
   invoice_id: string;
   invoice_ref: string | null;
   supplier: string | null;
@@ -62,7 +64,7 @@ export async function listReceivedArticles(shipmentId?: string): Promise<Receive
   const sql = getDb();
   const rows = await sql.query(
     `SELECT s.id AS shipment_id, s.ref_fa_digi_nxt, s.internal_ref, s.mode AS shipment_mode, s.global_status AS shipment_global_status,
-       s.confirmed_at, s.orly_scan_date,
+       s.confirmed_at, s.orly_scan_date, s.mada_receipt_date,
        i.id AS invoice_id, COALESCE(i.ref, i.odoo_move_name) AS invoice_ref, i.supplier_name, i.amazon_order_ref,
        l.position, l.name, l.quantity, r.quantity_received, r.updated_by_email, r.updated_at
      FROM shipments s
@@ -81,6 +83,7 @@ export async function listReceivedArticles(shipmentId?: string): Promise<Receive
     shipment_global_status: r.shipment_global_status ?? null,
     confirmed_at: r.confirmed_at ? new Date(r.confirmed_at).toISOString() : null,
     orly_scan_date: r.orly_scan_date || null,
+    mada_receipt_date: r.mada_receipt_date || null,
     invoice_id: r.invoice_id,
     invoice_ref: r.invoice_ref ?? null,
     supplier: trackingSupplierName(r.supplier_name, r.amazon_order_ref),

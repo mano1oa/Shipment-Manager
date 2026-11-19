@@ -146,6 +146,21 @@ export interface ParcelInput {
   packing_info: string | null; // number of parcels, dimensions, weight
   volume_m3: number | null;
   delivery_type: DeliveryType | null;
+  /**
+   * Sea: where the parcel is positioned (Rouen quay, at the supplier, another
+   * country…); null = Rouen, France. Always null for Orly.
+   */
+  position_city: string | null;
+  position_country: string | null;
+}
+
+/** Default positioning place of a sea parcel. */
+export const DEFAULT_SEA_PLACE = { city: 'Rouen', country: 'France' } as const;
+
+/** Where a parcel is received: Orly, or the city typed for a sea parcel (Rouen by default). */
+export function parcelPlace(p: { destination: ParcelDestination; position_city?: string | null }): string {
+  if (p.destination === 'ORLY') return 'Orly';
+  return p.position_city?.trim() || DEFAULT_SEA_PLACE.city;
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -211,6 +226,8 @@ export function validateParcelInput(raw: any): { value: ParcelInput | null; erro
             packing_info: text(raw.packing_info, 500),
             volume_m3: volume,
             delivery_type: deliveryType,
+            position_city: destination === 'ROUEN' ? text(raw.position_city, 100) : null,
+            position_country: destination === 'ROUEN' ? text(raw.position_country, 100) : null,
           }
         : null,
     errors,

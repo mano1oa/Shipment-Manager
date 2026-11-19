@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ClipboardCheck, Download, Loader2, Plane, RefreshCw, Search, Ship } from 'lucide-react';
+import { ChevronDown, ChevronRight, ClipboardCheck, Download, Loader2, Plane, RefreshCw, Search, Ship } from 'lucide-react';
 import { downloadCsv } from '../lib/exportCsv';
+import { compareDateDesc } from '../lib/dateFormat';
 import { formatDate, formatQuantity } from './digiApi';
 import { ReceivedArticle, articleKey, fetchReceivedArticles, receivedGap } from './shipmentApi';
 import { ReceivedQuantityInput } from './ReceivedQuantityInput';
@@ -11,7 +12,14 @@ interface Props {
   /** Sourcing and Supply Chain type the received quantities; Direction reads. */
   canEdit: boolean;
   onOpenShipment: (shipmentId: string) => void;
+  /** Search of the top bar (applies on every screen). */
+  globalSearch?: string;
 }
+
+const articleMatches = (a: ReceivedArticle, query: string) => {
+  const q = query.trim().toLowerCase();
+  return !q || [a.name, a.supplier, a.invoice_ref, a.ref_fa_digi_nxt, a.internal_ref].some((v) => v && v.toLowerCase().includes(q));
+};
 
 const STATE_FILTERS: { id: StateFilter; label: string }[] = [
   { id: 'all', label: 'Tous' },
@@ -35,13 +43,24 @@ const shipmentName = (a: ReceivedArticle) =>
  * Arrival check in Madagascar, every confirmed shipment: the articles of
  * their invoices, with the quantity received typed by Sourcing / Supply Chain.
  */
-export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment }) => {
+export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment, globalSearch = '' }) => {
   const [articles, setArticles] = useState<ReceivedArticle[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [shipmentFilter, setShipmentFilter] = useState('all');
   const [state, setState] = useState<StateFilter>('all');
+  /** Shipments unfolded by a click: folded by default, so they do not mix as they pile up. */
+  const [opened, setOpened] = useState<Set<string>>(new Set());
+  const toggleOpened = (id: string) =>
+    setOpened((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  /** A search or a filter shows the matching articles right away. */
+  const filteredView = Boolean(search.trim() || globalSearch.trim() || shipmentFilter !== 'all' || state !== 'all');
 
   const load = () => {
     setLoading(true);
@@ -61,19 +80,19 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
   }, [articles]);
 
   const groups = useMemo(() => {
-    const q = search.trim().toLowerCase();
     const byShipment = new Map<string, ReceivedArticle[]>();
     (articles || [])
       .filter(
         (a) =>
           (shipmentFilter === 'all' || a.shipment_id === shipmentFilter) &&
           matchesState(a, state) &&
-          (!q ||
-            [a.name, a.supplier, a.invoice_ref, a.ref_fa_digi_nxt, a.internal_ref].some((v) => v && v.toLowerCase().includes(q)))
+          articleMatches(a, search) &&
+          articleMatches(a, globalSearch)
       )
       .forEach((a) => byShipment.set(a.shipment_id, [...(byShipment.get(a.shipment_id) ?? []), a]));
-    return Array.from(byShipment.values());
-  }, [articles, search, shipmentFilter, state]);
+    // Most recent Madagascar reception first, shipments not received yet last
+    return Array.from(byShipment.values()).sort((x, y) => compareDateDesc(x[0].mada_receipt_date, y[0].mada_receipt_date));
+  }, [articles, search, globalSearch, shipmentFilter, state]);
 
   const counts = useMemo(() => {
     const all = articles || [];
@@ -114,12 +133,13 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
           onClick={() =>
             downloadCsv(
               'reception-madagascar',
-              ['Expédition', 'Mode', 'Facture', 'Fournisseur', 'Article', 'Quantité facturée', 'Quantité reçue', 'Écart', 'Saisi par', 'Saisi le'],
+              ['Expédition', 'Mode', 'Récep Mada', 'Facture', 'Fournisseur', 'Article', 'Quantité facturée', 'Quantité reçue', 'Écart', 'Saisi par', 'Saisi le'],
               groups.flat().map((a) => {
                 const gap = receivedGap(a);
                 return [
                   shipmentName(a),
                   a.shipment_mode === 'Air' ? 'Aérien' : 'Maritime',
+                  a.mada_receipt_date ? formatDate(a.mada_receipt_date) : '',
                   a.invoice_ref,
                   a.supplier,
                   a.name,
@@ -191,34 +211,74 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
             : 'Aucun article ne correspond aux filtres.'}
         </p>
       ) : (
-        groups.map((list) => {
+        groups.map((list, groupIndex) => {
           const first = list[0];
           const checked = list.filter((a) => a.quantity_received !== null).length;
+          const gapCount = list.filter((a) => matchesState(a, 'gaps')).length;
+          const invoiceCount = new Set(list.map((a) => a.invoice_id)).size;
+          const suppliers = Array.from(new Set(list.map((a) => a.supplier || '—')));
+          // Latest reception open by default (as in Colis vers Orly); a click flips it
+          const isOpen = filteredView || (groupIndex === 0) !== opened.has(first.shipment_id);
           return (
             <div
               key={first.shipment_id}
               className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900"
             >
-              <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2.5 text-xs dark:border-slate-800 dark:bg-slate-900/60">
+              <div
+                onClick={() => !filteredView && toggleOpened(first.shipment_id)}
+                aria-expanded={isOpen}
+                title={filteredView ? undefined : isOpen ? 'Masquer les articles' : 'Voir les articles'}
+                className={`flex flex-wrap items-center gap-2 bg-slate-50 px-4 py-2.5 dark:bg-slate-900/50 ${
+                  isOpen ? 'border-b border-slate-100 dark:border-slate-800' : ''
+                } ${filteredView ? '' : 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-900'}`}
+              >
+                {!filteredView &&
+                  (isOpen ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />)}
+                {/* Like « Reçus le … » of Colis vers Orly: the Madagascar reception date first */}
+                <span
+                  title="Date de récep Mada, saisie dans l'expédition"
+                  className="text-[11px] font-extrabold text-slate-800 dark:text-slate-100"
+                >
+                  {first.mada_receipt_date ? `Récep du ${formatDate(first.mada_receipt_date)}` : 'Récep Mada pas encore saisie'}
+                </span>
                 {first.shipment_mode === 'Sea' ? (
-                  <Ship className="h-4 w-4 text-slate-400" />
+                  <Ship className="h-3.5 w-3.5 text-slate-400" />
                 ) : (
-                  <Plane className="h-4 w-4 text-slate-400" />
+                  <Plane className="h-3.5 w-3.5 text-slate-400" />
                 )}
                 <button
-                  onClick={() => onOpenShipment(first.shipment_id)}
-                  className="font-mono font-bold text-[#623387] hover:underline dark:text-[#B688FF]"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenShipment(first.shipment_id);
+                  }}
+                  title="Ouvrir l'expédition"
+                  className="font-mono text-[11px] font-bold text-[#623387] hover:underline dark:text-[#B688FF]"
                 >
                   {shipmentName(first)}
                 </button>
                 {first.orly_scan_date && (
-                  <span className="text-slate-500">remise {first.shipment_mode === 'Sea' ? 'Rouen' : 'Orly'} le {formatDate(first.orly_scan_date)}</span>
+                  <span className="text-[11px] text-slate-500">
+                    remise {first.shipment_mode === 'Sea' ? 'Rouen' : 'Orly'} le {formatDate(first.orly_scan_date)}
+                  </span>
                 )}
-                {first.shipment_global_status && <span className="text-slate-400">· {first.shipment_global_status}</span>}
-                <span className="ml-auto font-semibold text-slate-500">
-                  {checked}/{list.length} contrôlé(s)
+                <span className="text-[11px] text-slate-500">
+                  {invoiceCount} facture(s) · {list.length} article(s) ·{' '}
+                  <span className={checked === list.length ? 'font-semibold text-emerald-600 dark:text-emerald-400' : undefined}>
+                    {checked}/{list.length} contrôlé(s)
+                  </span>
                 </span>
+                {gapCount > 0 && (
+                  <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800 dark:bg-rose-950 dark:text-rose-300">
+                    {gapCount} écart(s)
+                  </span>
+                )}
+                {!isOpen && (
+                  <span className="ml-auto min-w-0 truncate text-[11px] text-slate-400">
+                    {suppliers.length > 3 ? `${suppliers.length} fournisseurs` : suppliers.join(', ')}
+                  </span>
+                )}
               </div>
+              {isOpen && (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="text-[10px] uppercase tracking-wider text-slate-400">
@@ -249,6 +309,15 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
                             }`}
                           >
                             {gap === null ? '—' : gap > 0 ? `+${formatQuantity(gap)}` : formatQuantity(gap)}
+                            {gap !== null && gap !== 0 && (
+                              <button
+                                onClick={() => onOpenShipment(a.shipment_id)}
+                                title="Écart : l'avis de recherche se confirme dans l'expédition (Contrôle à la réception)"
+                                className="block w-full text-right text-[10px] font-semibold text-amber-700 hover:underline dark:text-amber-300"
+                              >
+                                Avis de recherche ?
+                              </button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -256,6 +325,7 @@ export const ReceivedArticlesView: React.FC<Props> = ({ canEdit, onOpenShipment 
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           );
         })

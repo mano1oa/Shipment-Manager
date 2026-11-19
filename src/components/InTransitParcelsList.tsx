@@ -297,7 +297,7 @@ export const InTransitParcelsList: React.FC<Props> = ({
                           <button
                             onClick={() => backToReceive(p)}
                             disabled={busy !== null}
-                            title="Remettre à recevoir"
+                            title={p.status === 'search' ? "Annuler l’avis de recherche (retour à « Reçu »)" : 'Remettre à recevoir'}
                             className={`${iconButton} hover:text-[#623387]`}
                           >
                             <Undo2 className="h-4 w-4" />

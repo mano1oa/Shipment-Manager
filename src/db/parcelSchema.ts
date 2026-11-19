@@ -66,6 +66,9 @@ export async function initParcelSchema(): Promise<void> {
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS packing_info VARCHAR(500);`;
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS volume_m3 NUMERIC(12, 3);`;
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS delivery_type VARCHAR(40);`;
+  // Sea: positioning place (null = Rouen, France)
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS position_city VARCHAR(100);`;
+  await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS position_country VARCHAR(100);`;
   // Lost parcels already announced on Google Chat (daily summary)
   await sql`ALTER TABLE parcels ADD COLUMN IF NOT EXISTS loss_notified_at TIMESTAMPTZ;`;
 

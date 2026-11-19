@@ -7,6 +7,7 @@ import {
   DELIVERY_TYPES,
   PARCEL_DESTINATIONS,
   PARCEL_DESTINATION_LABELS,
+  DEFAULT_SEA_PLACE,
   validateParcelInput,
 } from '../lib/parcelTracking';
 import type { DeliveryType, ParcelDestination } from '../lib/parcelTracking';
@@ -66,6 +67,9 @@ export const ParcelFormModal: React.FC<Props> = ({
   const [packingInfo, setPackingInfo] = useState(parcel?.packing_info ?? '');
   const [volume, setVolume] = useState(parcel?.volume_m3 != null ? String(parcel.volume_m3).replace('.', ',') : '');
   const [description, setDescription] = useState(parcel?.description ?? '');
+  // Sea: positioning place (empty = Rouen, France)
+  const [positionCity, setPositionCity] = useState(parcel?.position_city ?? '');
+  const [positionCountry, setPositionCountry] = useState(parcel?.position_country ?? '');
   const [boxesExpected, setBoxesExpected] = useState(parcel?.boxes_expected ? String(parcel.boxes_expected) : '');
   /** Existing parcel as it is now (other numbers are saved at once). */
   const [live, setLive] = useState<Parcel | null>(parcel ?? null);
@@ -142,6 +146,8 @@ export const ParcelFormModal: React.FC<Props> = ({
       packing_info: sea ? packingInfo : null,
       volume_m3: sea ? parsedVolume : null,
       description: sea ? description : null,
+      position_city: sea ? positionCity : null,
+      position_country: sea ? positionCountry : null,
     });
     const checked = (several ? numbers : [trackingNumber]).map((n) => ({ n, ...inputFor(n) }));
     const invalid = checked.filter((c) => !c.value);
@@ -314,8 +320,32 @@ export const ParcelFormModal: React.FC<Props> = ({
               <span className="mt-1 block text-[11px] text-slate-500">Choisi d’après le n° de suivi</span>
             )}
           </div>
+          {destination === 'ROUEN' && (
+            <>
+              <label>
+                <span className={label}>Lieu de positionnement : ville</span>
+                <input
+                  value={positionCity}
+                  onChange={(e) => setPositionCity(e.target.value)}
+                  placeholder={DEFAULT_SEA_PLACE.city}
+                  className={inputClass}
+                />
+              </label>
+              <label>
+                <span className={label}>Pays</span>
+                <input
+                  value={positionCountry}
+                  onChange={(e) => setPositionCountry(e.target.value)}
+                  placeholder={DEFAULT_SEA_PLACE.country}
+                  className={inputClass}
+                />
+              </label>
+            </>
+          )}
           <label>
-            <span className={label}>Livraison prévue à {destination === 'ROUEN' ? 'Rouen' : 'Orly'}</span>
+            <span className={label}>
+              Livraison prévue à {destination === 'ROUEN' ? positionCity.trim() || DEFAULT_SEA_PLACE.city : 'Orly'}
+            </span>
             <DateInput value={expected} onChange={setExpected} className={inputClass} />
           </label>
           {destination === 'ROUEN' && (

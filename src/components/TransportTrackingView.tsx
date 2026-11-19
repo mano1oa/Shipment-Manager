@@ -40,7 +40,6 @@ export const TransportTrackingView: React.FC<Props> = ({
   ...shipmentsProps
 }) => {
   const destination = mode === 'Air' ? 'ORLY' : 'ROUEN';
-  const hub = mode === 'Air' ? 'Orly' : 'Rouen';
   const [tab, setTab] = useState<Tab>('parcels');
   const parcels = parcelsOverview?.parcels ?? null;
 
@@ -58,14 +57,14 @@ export const TransportTrackingView: React.FC<Props> = ({
   const tabs: { key: Tab; label: string; icon: React.ElementType; count: number; hint: string }[] = [
     {
       key: 'parcels',
-      label: `Colis vers ${hub}`,
+      label: 'Colis vers lieu de positionnement',
       icon: Package,
       count: parcelCount,
       hint: search ? 'trouvé(s)' : 'colis',
     },
     {
       key: 'shipments',
-      label: mode === 'Air' ? 'Expéditions Orly → Mada' : 'Expéditions Rouen → Mada',
+      label: 'Expéditions vers Mada',
       icon: mode === 'Air' ? Plane : Ship,
       count: shipmentCount,
       hint: search ? 'résultat(s)' : '',
@@ -76,7 +75,7 @@ export const TransportTrackingView: React.FC<Props> = ({
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className={`text-[13px] ${ui.muted}`}>Fournisseurs → {hub} → Madagascar</p>
+          <p className={`text-[13px] ${ui.muted}`}>Fournisseurs → {mode === 'Air' ? 'Orly' : 'lieu de positionnement'} → Madagascar</p>
           <h1 className={`text-[30px] font-semibold leading-tight tracking-tight ${ui.title}`}>
             {mode === 'Air' ? 'Suivi aérien' : 'Suivi maritime'}
           </h1>

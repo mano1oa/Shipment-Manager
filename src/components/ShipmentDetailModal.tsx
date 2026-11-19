@@ -43,6 +43,8 @@ interface ShipmentDetailModalProps {
   shipment: Shipment | null;
   onClose: () => void;
   canEdit: boolean;
+  /** Quantities received in Madagascar (Sourcing too, while the shipment itself is read only for it). */
+  canEditReceipts?: boolean;
   onSave: (updatedShipment: Shipment) => void;
   onDelete?: (shipmentId: string) => void;
   onDispatchGoogleChat: (message: string, space?: string) => Promise<void>;
@@ -100,6 +102,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
   shipment,
   onClose,
   canEdit,
+  canEditReceipts = canEdit,
   onSave,
   onDelete,
   onDispatchGoogleChat,
@@ -784,7 +787,7 @@ export const ShipmentDetailModal: React.FC<ShipmentDetailModalProps> = ({
             invoices={invoices}
             invoicesError={invoicesError}
             isSupplyChain={isSupplyChain}
-            canEditReceipts={canEdit}
+            canEditReceipts={canEditReceipts}
             shipments={shipments}
             onChanged={(emptied) => {
               loadInvoices();

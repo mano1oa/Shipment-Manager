@@ -53,6 +53,7 @@ import { DEFAULT_DEST_PARTNER_NAME } from '../lib/digiInvoices';
 import { VALIDATION_STATUS_LABELS, amountInEur } from '../lib/parcelTracking';
 import type { InvoiceTriage, TrackingSettings } from '../lib/parcelTracking';
 import { invoiceBoxesLabel } from '../lib/parcelBoxes';
+import { invoiceMatches } from '../lib/invoiceSearch';
 
 interface Props {
   canDelete: boolean;
@@ -68,6 +69,8 @@ interface Props {
   onDeleteShipment?: (shipmentId: string) => Promise<void> | void;
   /** Bumped by the app after an Excel import of invoices: the list reloads. */
   refreshKey?: number;
+  /** Search of the top bar (applies on every screen). */
+  globalSearch?: string;
 }
 
 /**
@@ -121,6 +124,7 @@ export const DigiInvoicesView: React.FC<Props> = ({
   shipments,
   onDeleteShipment,
   refreshKey = 0,
+  globalSearch = '',
 }) => {
   const [config, setConfig] = useState<DigiConfig | null>(null);
   const [invoices, setInvoices] = useState<DigiInvoice[]>([]);
@@ -312,24 +316,13 @@ export const DigiInvoicesView: React.FC<Props> = ({
   );
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
     return sectionInvoices.filter((inv) => {
       if (sourceFilter !== 'all' && inv.source !== sourceFilter) return false;
       if (supplierFilter !== 'all' && supplierOf(inv) !== supplierFilter) return false;
       if (section === 'goods' && parcelFilter !== 'all' && parcelState(inv) !== parcelFilter) return false;
-      if (!q) return true;
-      return [
-        inv.supplier_name,
-        inv.supplier_display,
-        inv.ref,
-        inv.amazon_order_ref,
-        inv.sale_move_ref,
-        inv.odoo_move_name,
-        inv.buyer,
-        ...inv.lines.map((l) => l.name),
-      ].some((v) => v && v.toLowerCase().includes(q));
+      return invoiceMatches(inv, search) && invoiceMatches(inv, globalSearch);
     });
-  }, [sectionInvoices, search, sourceFilter, supplierFilter, parcelFilter, section]);
+  }, [sectionInvoices, search, globalSearch, sourceFilter, supplierFilter, parcelFilter, section]);
 
   const groups = useMemo(() => {
     const bySupplier = new Map<string, DigiInvoice[]>();

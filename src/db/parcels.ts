@@ -46,6 +46,9 @@ export interface ParcelRecord {
   packing_info: string | null;
   volume_m3: number | null;
   delivery_type: DeliveryType | null;
+  /** Sea: positioning place, null = Rouen, France. */
+  position_city: string | null;
+  position_country: string | null;
   /** Orly → Mada (or sea) shipments of its invoices, else the shipment it was taken from. */
   shipment_ids: string[];
   invoices: ParcelInvoiceRef[];
@@ -96,6 +99,7 @@ const SELECT_PARCELS = `
     p.status, TO_CHAR(p.received_at, 'YYYY-MM-DD') AS received_at, p.received_by_email,
     p.status_changed_at, p.notes, p.legacy_shipment_id, p.destination,
     p.description, p.packing_info, p.volume_m3::float AS volume_m3, p.delivery_type,
+    p.position_city, p.position_country,
     COALESCE(
       (
         SELECT array_agg(DISTINCT i.shipment_id)
@@ -166,6 +170,8 @@ function mapParcelRow(row: any): ParcelRecord {
     packing_info: row.packing_info ?? null,
     volume_m3: row.volume_m3 ?? null,
     delivery_type: row.delivery_type ?? null,
+    position_city: row.position_city ?? null,
+    position_country: row.position_country ?? null,
     shipment_ids: row.shipment_ids || [],
     invoices: (row.invoices || []).map((i: any) => ({
       id: i.id,
@@ -358,11 +364,12 @@ export async function createParcel(
   try {
     const rows = await sql`
       INSERT INTO parcels (tracking_number, carrier, carrier_name, supplier_name, expected_delivery, notes,
-        destination, description, packing_info, volume_m3, delivery_type,
+        destination, description, packing_info, volume_m3, delivery_type, position_city, position_country,
         created_at_point_id, created_by_email, updated_by_email)
       VALUES (${input.tracking_number}, ${input.carrier}, ${input.carrier_name}, ${supplierName}, ${input.expected_delivery},
         ${input.notes}, ${input.destination}, ${input.description}, ${input.packing_info},
-        ${input.volume_m3}, ${input.delivery_type}, ${options.createdAtPointId ?? null}, ${actorEmail}, ${actorEmail})
+        ${input.volume_m3}, ${input.delivery_type}, ${input.position_city ?? null}, ${input.position_country ?? null},
+        ${options.createdAtPointId ?? null}, ${actorEmail}, ${actorEmail})
       RETURNING id
     `;
     const id = rows[0].id as string;
@@ -417,6 +424,8 @@ export async function updateParcel(id: string, input: ParcelInput, actorEmail: s
         packing_info = ${input.packing_info},
         volume_m3 = ${input.volume_m3},
         delivery_type = ${input.delivery_type},
+        position_city = ${input.position_city ?? null},
+        position_country = ${input.position_country ?? null},
         updated_by_email = ${actorEmail},
         updated_at = NOW()
       WHERE id = ${id}

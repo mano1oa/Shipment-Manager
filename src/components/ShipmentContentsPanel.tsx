@@ -216,6 +216,39 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
     }
   };
 
+  /**
+   * Gap on an article at the reception in Madagascar: an avis de recherche is
+   * proposed, a person of the Supply Chain confirms it (remarques du 17/11).
+   * It is opened on the parcels of the invoice received at the hub.
+   */
+  const parcelsOfInvoice = (invoiceId: string) => (parcels || []).filter((p) => p.invoices.some((i) => i.id === invoiceId));
+  const openSearchForGap = async (a: ReceivedArticle) => {
+    const targets = parcelsOfInvoice(a.invoice_id).filter((p) => p.status === 'received');
+    if (targets.length === 0) {
+      setError(`Aucun colis reçu à ${hub} pour la facture ${a.invoice_ref || ''} : avis de recherche impossible.`);
+      return;
+    }
+    const numbers = targets.map((p) => p.tracking_number || 'sans n°').join(', ');
+    if (
+      !window.confirm(
+        `Écart de ${formatQuantity(receivedGap(a))} sur « ${a.name} » (facture ${a.invoice_ref || '—'}).\n` +
+          `Ouvrir un avis de recherche sur ${targets.length > 1 ? 'les colis' : 'le colis'} ${numbers} ?`
+      )
+    )
+      return;
+    setBusy(`gap:${articleKey(a)}`);
+    setError(null);
+    try {
+      for (const p of targets) await setParcelStatus(p.id, 'search', p.received_at);
+      loadParcels();
+      onChanged();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const delivered = shipment.global_status === 'Livrée entrepôt';
 
   return (
@@ -431,6 +464,7 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
                   <th className="w-16 px-2 py-1 text-right">Qté</th>
                   <th className="w-24 px-2 py-1 text-right">Qté reçue</th>
                   <th className="w-14 py-1 pl-2 text-right">Écart</th>
+                  {gaps > 0 && <th className="py-1 pl-2 text-right">Avis de recherche</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60">
@@ -452,6 +486,27 @@ export const ShipmentContentsPanel: React.FC<Props> = ({
                       >
                         {gap === null ? '—' : gap > 0 ? `+${formatQuantity(gap)}` : formatQuantity(gap)}
                       </td>
+                      {gaps > 0 && (
+                        <td className="py-1 pl-2 text-right">
+                          {gap !== null && gap !== 0 &&
+                            (parcelsOfInvoice(a.invoice_id).some((p) => p.status === 'search') ? (
+                              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-bold text-orange-800 dark:bg-orange-950 dark:text-orange-300">
+                                Avis ouvert
+                              </span>
+                            ) : isSupplyChain ? (
+                              <button
+                                onClick={() => openSearchForGap(a)}
+                                disabled={busy !== null}
+                                title="Écart à la réception : proposer un avis de recherche sur les colis de cette facture"
+                                className="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50 dark:text-amber-300 dark:hover:bg-amber-950/40"
+                              >
+                                <SearchX className="h-3.5 w-3.5" /> Ouvrir ?
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400">À confirmer (Supply Chain)</span>
+                            ))}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}

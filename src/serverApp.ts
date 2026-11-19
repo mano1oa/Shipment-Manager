@@ -3643,7 +3643,8 @@ Analyse le lot d'expéditions transmis et produit une synthèse stratégique op�
   // Créer ou mettre à jour une expédition (UPSERT SQL direct)
     app.post(
       '/api/shipments',
-       requireRole('SUPPLY_CHAIN', 'SOURCING'),
+       // Suivi aérien / maritime: read only for Sourcing (remarques du 17/11)
+       requireRole('SUPPLY_CHAIN'),
       async (req, res) => {
   
     try {
